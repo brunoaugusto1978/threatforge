@@ -16,6 +16,7 @@ from app.routers import (
     auth_routes,
     brands,
     intel,
+    invites_routes,
     observables,
     org_routes,
     reports,
@@ -61,6 +62,7 @@ async def security_headers(request: Request, call_next):
 
 app.include_router(org_routes.router)
 app.include_router(tenants_routes.router)
+app.include_router(invites_routes.router)
 app.include_router(auth_routes.router)
 app.include_router(observables.router)
 app.include_router(intel.router)
@@ -102,6 +104,12 @@ def stats(_=Depends(require_viewer), db: Session = Depends(get_db),
 # --- Interface web (SPA single-file) ---
 @app.get("/", include_in_schema=False)
 def index():
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+
+
+@app.get("/invite/accept", include_in_schema=False)
+def invite_accept_page():
+    # mesma SPA; o app.js detecta o token na URL e mostra a tela de aceite
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
 

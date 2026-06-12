@@ -25,6 +25,11 @@ BOOTSTRAP_OPERATOR_EMAIL: str = os.environ.get("BOOTSTRAP_OPERATOR_EMAIL", "")
 BOOTSTRAP_OPERATOR_PASSWORD: str = os.environ.get("BOOTSTRAP_OPERATOR_PASSWORD", "")
 # Header usado pelo operador para atuar dentro de um tenant específico
 TENANT_HEADER: str = "X-Tenant-Id"
+
+# URL base para montar links (convites). Dev: http://localhost:8000 ; prod: HTTPS.
+APP_BASE_URL: str = os.environ.get("APP_BASE_URL", "http://localhost:8000").rstrip("/")
+# Validade do convite (horas)
+INVITE_TTL_HOURS: int = int(os.environ.get("INVITE_TTL_HOURS", "168") or "168")  # 7 dias
 ABUSECH_API_KEY: str = os.environ.get("ABUSECH_API_KEY", "")
 CORS_ORIGINS: list[str] = [
     o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()

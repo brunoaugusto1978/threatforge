@@ -60,7 +60,22 @@ dados de outro. Há duas visões:
 API keys são **por tenant** (header `X-API-Key`); a chave fica presa ao tenant
 dela. A `API_KEY` do `.env` é a chave de plataforma (operador de serviço).
 
-**Teste de isolamento** (prova que Tenant A não vê Tenant B):
+**Convite de acesso do cliente.** Ao criar um tenant **sem senha**, o operador
+gera um **convite por e-mail**: o sistema cria um token único (guardado como
+hash, com expiração e uso único), monta o link com `APP_BASE_URL` e envia por
+SMTP. O cliente abre `…/invite/accept?token=…`, define a senha e é ativado como
+admin **vinculado ao tenant do convite** (não escolhe tenant). Statuses do
+convite: `pending`, `accepted`, `expired`, `revoked` — tudo auditado.
+
+Em dev sem SMTP, o link é exibido no console do operador e no log. Para capturar
+e-mails localmente, suba o **MailHog** (UI em `http://localhost:8025`):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.podman.yml \
+    -f docker-compose.mailhog.yml up -d
+```
+
+**Teste de isolamento** (prova que Tenant A não vê Tenant B, e o fluxo de convite):
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.podman.yml \

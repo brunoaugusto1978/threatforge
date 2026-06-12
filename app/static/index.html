@@ -26,12 +26,12 @@
   label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
   .hidden { display: none !important; }
   /* Login / Criar admin */
-  #login, #createAdmin { max-width: 360px; margin: 12vh auto; background: var(--panel);
+  #login, #createAdmin, #invite { max-width: 380px; margin: 12vh auto; background: var(--panel);
     border: 1px solid var(--line); border-radius: 12px; padding: 28px; }
-  #login h1, #createAdmin h1 { margin: 0 0 4px; font-size: 22px; }
-  #login p.sub, #createAdmin p.sub { margin: 0 0 18px; color: var(--muted); font-size: 13px; }
-  #login button, #createAdmin button { width: 100%; margin-top: 16px; }
-  #createAdmin input { width: 100%; }
+  #login h1, #createAdmin h1, #invite h1 { margin: 0 0 4px; font-size: 22px; }
+  #login p.sub, #createAdmin p.sub, #invite p.sub { margin: 0 0 18px; color: var(--muted); font-size: 13px; }
+  #login button, #createAdmin button, #invite button { width: 100%; margin-top: 16px; }
+  #createAdmin input, #invite input { width: 100%; }
   .srow { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .srow2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; }
   .srow2 input, .srow2 select { width: 100%; }
@@ -137,6 +137,22 @@
       <input id="caPass" type="password" autocomplete="new-password" required>
       <button type="submit">Criar operador</button>
       <div class="err" id="adminErr"></div>
+    </form>
+  </section>
+
+  <!-- ACEITE DE CONVITE -->
+  <section id="invite" class="hidden">
+    <h1>Threat<span style="color:var(--accent)">Forge</span></h1>
+    <p class="sub" id="inviteSub">Convite de acesso</p>
+    <form id="inviteForm">
+      <label>E-mail</label>
+      <input id="invEmail" type="email" disabled>
+      <label for="invPass">Defina sua senha (mín. 10, com letra e número)</label>
+      <input id="invPass" type="password" autocomplete="new-password" required>
+      <label for="invPass2">Confirmar senha</label>
+      <input id="invPass2" type="password" autocomplete="new-password" required>
+      <button type="submit">Ativar acesso</button>
+      <div class="err" id="inviteErr"></div>
     </form>
   </section>
 

@@ -91,11 +91,61 @@ async function logout() {
 }
 
 function showOnly(id) {
-  ["login", "createAdmin", "wizard", "operator", "app"].forEach(s =>
+  ["login", "createAdmin", "invite", "wizard", "operator", "app"].forEach(s =>
     $("#" + s).classList.toggle("hidden", s !== id));
 }
 
+function inviteTokenFromUrl() {
+  const u = new URL(window.location.href);
+  if (u.pathname === "/invite/accept" || u.searchParams.has("token")) {
+    return u.searchParams.get("token");
+  }
+  return null;
+}
+
+let INVITE_TOKEN = null;
+
+async function showInviteAccept(token) {
+  INVITE_TOKEN = token;
+  showOnly("invite");
+  $("#inviteErr").textContent = "";
+  try {
+    const v = await api("GET", `/invites/validate?token=${encodeURIComponent(token)}`);
+    if (!v.valid) {
+      $("#inviteSub").textContent = v.reason || "Convite inválido.";
+      $("#inviteForm").classList.add("hidden");
+      return;
+    }
+    $("#inviteForm").classList.remove("hidden");
+    $("#inviteSub").textContent = `Convite para ${v.tenant_name || "seu tenant"}`;
+    $("#invEmail").value = v.email || "";
+  } catch (e) {
+    $("#inviteSub").textContent = "Não foi possível validar o convite.";
+    $("#inviteForm").classList.add("hidden");
+  }
+}
+
+async function doInviteAccept(e) {
+  e.preventDefault();
+  $("#inviteErr").textContent = "";
+  if ($("#invPass").value !== $("#invPass2").value) {
+    $("#inviteErr").textContent = "As senhas não conferem."; return;
+  }
+  try {
+    await api("POST", "/invites/accept", { token: INVITE_TOKEN, password: $("#invPass").value });
+    toast("Acesso ativado");
+    // limpa o token da URL e entra normalmente
+    window.history.replaceState({}, "", "/");
+    INVITE_TOKEN = null;
+    await boot();
+  } catch (err) { $("#inviteErr").textContent = err.message; }
+}
+
 async function boot() {
+  // 0) fluxo de aceite de convite (link de e-mail)
+  const inviteToken = inviteTokenFromUrl();
+  if (inviteToken && !ME) { await showInviteAccept(inviteToken); return; }
+
   let st = null;
   try { st = await api("GET", "/setup/status"); } catch { /* segue */ }
 
@@ -151,7 +201,7 @@ async function renderOperator() {
   p.append(el("div", { class: "row" },
     field("Nome do tenant", inputEl("tName", "ex.: Cliente X")),
     field("E-mail do admin", inputEl("tEmail", "admin@cliente.com")),
-    field("Senha (vazio = gerar)", inputEl("tPass", "", "password")),
+    field("Senha (vazio = enviar convite)", inputEl("tPass", "", "password")),
     el("button", { onclick: createTenant }, "Criar tenant")));
   m.append(p);
   m.append(el("div", { class: "panel", id: "tList" }, "carregando…"));
@@ -180,9 +230,12 @@ async function createTenant() {
   if (pass) body.admin_password = pass;
   try {
     const r = await api("POST", "/tenants", body);
-    if (r.admin_temporary_password)
-      alert(`Tenant "${r.name}" criado.\n\nAdmin: ${r.admin_email}\nSenha temporária: ${r.admin_temporary_password}\n\nRepasse por canal seguro.`);
-    else toast("Tenant criado");
+    if (r.invite_link) {
+      const sent = r.invite_email_sent ? "E-mail de convite enviado." : "SMTP não configurado — use o link abaixo (dev).";
+      prompt(`Tenant "${r.name}" criado.\n${sent}\n\nLink de convite (uso único) para ${r.admin_email}:`, r.invite_link);
+    } else {
+      toast("Tenant criado");
+    }
     $("#tName").value = $("#tEmail").value = $("#tPass").value = "";
     await loadTenants();
   } catch (e) { toast(e.message, true); }
@@ -830,6 +883,7 @@ function selectEl(id, opts) {
 // ---------- init ----------
 $("#loginForm").addEventListener("submit", doLogin);
 $("#adminForm").addEventListener("submit", doCreateAdmin);
+$("#inviteForm").addEventListener("submit", doInviteAccept);
 $("#wizNext").addEventListener("click", wizNext);
 $("#wizBack").addEventListener("click", wizBack);
 $("#wizLogout").addEventListener("click", logout);

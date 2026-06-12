@@ -31,6 +31,30 @@ class Tenant(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class TenantInvite(Base):
+    """Convite de acesso a um tenant. Token guardado como hash; uso único."""
+    __tablename__ = "tenant_invites"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=True
+    )
+    email: Mapped[str] = mapped_column(String(255), index=True)
+    role: Mapped[str] = mapped_column(String(20), default="admin")
+    token_hash: Mapped[str] = mapped_column(String(128), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    # pending | accepted | expired | revoked
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    invited_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
 class ApiKey(Base):
     """API key por tenant (automação/integração). Guardamos só o hash."""
     __tablename__ = "api_keys"

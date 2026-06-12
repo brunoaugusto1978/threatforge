@@ -448,6 +448,53 @@ class ApiKeyCreate(BaseModel):
     role: Literal["admin", "analyst", "viewer"] = "analyst"
 
 
+# --- Convites ---
+class InviteCreate(BaseModel):
+    email: str
+    role: Literal["admin", "analyst", "viewer"] = "admin"
+
+    @field_validator("email")
+    @classmethod
+    def _email_ok(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not _RE["email"].match(v):
+            raise ValueError("e-mail inválido")
+        return v
+
+
+class InviteOut(BaseModel):
+    id: int
+    tenant_id: int
+    email: str
+    role: str
+    status: str
+    expires_at: datetime
+    created_at: datetime
+    accepted_at: datetime | None
+    invited_by: str | None
+
+    model_config = {"from_attributes": True}
+
+
+class InviteValidateOut(BaseModel):
+    valid: bool
+    email: str | None = None
+    tenant_name: str | None = None
+    reason: str | None = None
+
+
+class InviteAccept(BaseModel):
+    token: str
+    password: str
+
+    @field_validator("password")
+    @classmethod
+    def _pw_ok(cls, v: str) -> str:
+        from app.security import check_password_strength
+        check_password_strength(v)
+        return v
+
+
 class ApiKeyOut(BaseModel):
     id: int
     tenant_id: int

@@ -98,6 +98,16 @@ def hash_api_key(full_key: str) -> str:
     return hashlib.sha256(full_key.encode()).hexdigest()
 
 
+def generate_invite_token() -> tuple[str, str]:
+    """Retorna (token_em_claro, sha256). Guardamos só o hash."""
+    token = secrets.token_urlsafe(32)
+    return token, hashlib.sha256(token.encode()).hexdigest()
+
+
+def hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
 def generate_password(length: int = 16) -> str:
     """Gera senha aleatória que sempre satisfaz check_password_strength."""
     import string

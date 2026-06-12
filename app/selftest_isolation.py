@@ -95,7 +95,41 @@ def run():
     # e a mesma key não acessa B (não há como; é presa ao tenant_id da key)
     _ok("API key por tenant: presa ao próprio tenant")
 
-    print("\nISOLAMENTO MULTI-TENANT: TODOS OS TESTES PASSARAM ✅")
+    # ---- FLUXO DE CONVITE ----
+    rc = op.post("/tenants", json={"name": "Tenant C", "admin_email": "admin@c.com"})
+    assert rc.status_code == 201, rc.text
+    link = rc.json().get("invite_link")
+    assert link and "token=" in link, rc.json()
+    token = link.split("token=", 1)[1]
+    _ok("tenant criado por convite (sem senha) -> link gerado")
+
+    # token válido
+    v = op.get(f"/invites/validate?token={token}").json()
+    assert v["valid"] and v["email"] == "admin@c.com", v
+    # antes de aceitar, login deve falhar (usuário inativo)
+    assert TestClient(app).post("/auth/login",
+                                json={"email": "admin@c.com", "password": "whatever12"}).status_code == 401
+    _ok("convite válido; usuário inativo não loga antes do aceite")
+
+    # aceita e define senha
+    cc = TestClient(app)
+    ac = cc.post("/invites/accept", json={"token": token, "password": "ClienteSenha1"})
+    assert ac.status_code == 200, ac.text
+    assert ac.json()["tenant_id"] == rc.json()["id"]
+    _ok("aceite ativa o usuário vinculado ao tenant do convite")
+
+    # token de uso único: segunda tentativa falha
+    assert cc.post("/invites/accept", json={"token": token, "password": "Outra123456"}).status_code == 400
+    assert op.get(f"/invites/validate?token={token}").json()["valid"] is False
+    _ok("token de uso único: invalidado após aceite")
+
+    # cliente C logado vê só o próprio tenant (isolado de A e B)
+    cc2 = TestClient(app)
+    assert cc2.post("/auth/login", json={"email": "admin@c.com", "password": "ClienteSenha1"}).status_code == 200
+    assert cc2.get("/brands").json() == []  # tenant novo, sem marcas
+    _ok("cliente do convite isolado no próprio tenant")
+
+    print("\nISOLAMENTO + CONVITES MULTI-TENANT: TODOS OS TESTES PASSARAM ✅")
 
 
 if __name__ == "__main__":

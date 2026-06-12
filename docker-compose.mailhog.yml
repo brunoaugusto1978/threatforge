@@ -1,0 +1,22 @@
+# Captura de e-mails em DEV com MailHog (não envia nada para fora).
+# Rede host (compatível com o setup podman/WSL onde a API já usa host).
+# Uso (somando aos demais):
+#   docker compose -f docker-compose.yml -f docker-compose.podman.yml \
+#       -f docker-compose.mailhog.yml up -d
+#
+# Interface web do MailHog: http://localhost:8025  (SMTP em localhost:1025)
+services:
+  mailhog:
+    image: mailhog/mailhog:latest
+    network_mode: host   # binda 1025 (SMTP) e 8025 (UI) direto no host
+    restart: unless-stopped
+
+  api:
+    environment:
+      SMTP_HOST: localhost
+      SMTP_PORT: "1025"
+      SMTP_FROM: no-reply@threatforge.local
+      SMTP_STARTTLS: "false"
+      SMTP_USER: ""
+      SMTP_PASSWORD: ""
+      APP_BASE_URL: http://localhost:8000

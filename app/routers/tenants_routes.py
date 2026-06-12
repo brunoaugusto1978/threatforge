@@ -5,13 +5,15 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import audit
+from app import audit, invites
 from app.auth import Principal, require_operator
 from app.database import get_db
-from app.models import ApiKey, Tenant, User
+from app.models import ApiKey, Tenant, TenantInvite, User
 from app.schemas import (
     ApiKeyCreate,
     ApiKeyOut,
+    InviteCreate,
+    InviteOut,
     TenantCreate,
     TenantOut,
 )
@@ -25,7 +27,7 @@ def _slugify(name: str) -> str:
     return s or "tenant"
 
 
-@router.post("/tenants", response_model=TenantOut, status_code=201)
+@router.post("/tenants", status_code=201)  # sem response_model: retorna link/convite extras
 def create_tenant(payload: TenantCreate, request: Request, db: Session = Depends(get_db),
                   principal: Principal = Depends(require_operator)):
     base = _slugify(payload.name)
@@ -40,22 +42,36 @@ def create_tenant(payload: TenantCreate, request: Request, db: Session = Depends
     tenant = Tenant(name=payload.name, slug=slug, status="active")
     db.add(tenant)
     db.flush()  # obtém tenant.id
+    audit.record(db, actor=principal.subject, actor_role="operator", tenant_id=tenant.id,
+                 action="tenant.create", target_type="tenant", target_id=tenant.id,
+                 request=request, detail={"name": tenant.name, "admin": payload.admin_email},
+                 commit=False)
 
-    temp = payload.admin_password or generate_password(16)
-    admin = User(email=payload.admin_email, hashed_password=hash_password(temp),
-                 role="admin", is_operator=False, tenant_id=tenant.id)
+    if payload.admin_password:
+        # caminho direto (compat/headless): admin ativo com senha definida
+        admin = User(email=payload.admin_email, hashed_password=hash_password(payload.admin_password),
+                     role="admin", is_operator=False, tenant_id=tenant.id, is_active=True)
+        db.add(admin)
+        db.commit()
+        db.refresh(tenant)
+        out = TenantOut.model_validate(tenant).model_dump()
+        return out
+
+    # caminho padrão: cria admin INATIVO + convite por e-mail
+    admin = User(email=payload.admin_email,
+                 hashed_password=hash_password(generate_password(20)),
+                 role="admin", is_operator=False, tenant_id=tenant.id, is_active=False)
     db.add(admin)
     db.commit()
     db.refresh(tenant)
-    audit.record(db, actor=principal.subject, actor_role="operator", tenant_id=tenant.id,
-                 action="tenant.create", target_type="tenant", target_id=tenant.id,
-                 request=request, detail={"name": tenant.name, "admin": payload.admin_email})
-
-    result = TenantOut.model_validate(tenant).model_dump()
-    if not payload.admin_password:
-        result["admin_temporary_password"] = temp
-        result["admin_email"] = payload.admin_email
-    return result
+    db.refresh(admin)
+    inv = invites.create_invite(db, tenant=tenant, email=payload.admin_email, role="admin",
+                                user=admin, invited_by=principal.subject, request=request)
+    out = TenantOut.model_validate(tenant).model_dump()
+    out["invite_link"] = inv["link"]
+    out["invite_email_sent"] = inv["email_sent"]
+    out["admin_email"] = payload.admin_email
+    return out
 
 
 @router.get("/tenants", response_model=list[TenantOut])
@@ -79,6 +95,44 @@ def tenant_stats(tenant_id: int, db: Session = Depends(get_db)):
         "users": c(User), "brands": c(Brand), "observables": c(Observable),
         "findings": c(BrandFinding),
     }
+
+
+@router.get("/tenants/{tenant_id}/invites", response_model=list[InviteOut])
+def list_invites(tenant_id: int, db: Session = Depends(get_db)):
+    return list(db.query(TenantInvite).filter(TenantInvite.tenant_id == tenant_id)
+                .order_by(TenantInvite.id.desc()))
+
+
+@router.post("/tenants/{tenant_id}/invites")
+def create_or_resend_invite(tenant_id: int, payload: InviteCreate, request: Request,
+                            db: Session = Depends(get_db),
+                            principal: Principal = Depends(require_operator)):
+    tenant = db.get(Tenant, tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="Tenant não encontrado.")
+    # se já existe usuário com este e-mail em OUTRO tenant, bloqueia
+    other = db.query(User).filter(User.email == payload.email).first()
+    if other is not None and other.tenant_id not in (None, tenant_id):
+        raise HTTPException(status_code=409, detail="E-mail já pertence a outro tenant.")
+    inv = invites.create_invite(db, tenant=tenant, email=payload.email, role=payload.role,
+                                user=other, invited_by=principal.subject, request=request)
+    return {"invite_id": inv["invite"].id, "email": payload.email,
+            "invite_link": inv["link"], "email_sent": inv["email_sent"]}
+
+
+@router.post("/tenants/{tenant_id}/invites/{invite_id}/revoke", status_code=204)
+def revoke_invite(tenant_id: int, invite_id: int, request: Request,
+                  db: Session = Depends(get_db),
+                  principal: Principal = Depends(require_operator)):
+    inv = db.get(TenantInvite, invite_id)
+    if inv is None or inv.tenant_id != tenant_id:
+        raise HTTPException(status_code=404, detail="Convite não encontrado.")
+    if inv.status == "pending":
+        inv.status = "revoked"
+        db.commit()
+    audit.record(db, actor=principal.subject, actor_role="operator", tenant_id=tenant_id,
+                 action="invite.revoke", target_type="invite", target_id=invite_id,
+                 request=request)
 
 
 @router.post("/tenants/{tenant_id}/api-keys")
