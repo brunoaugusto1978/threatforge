@@ -45,18 +45,39 @@ docker compose up -d --build
 
 A API e a interface web sobem em `http://localhost:8000`. Documentação interativa da API: `http://localhost:8000/docs`.
 
-### Primeiro acesso à interface web
+### Primeiro acesso: onboarding obrigatório
 
-Abra `http://localhost:8000/` no navegador. No primeiro start, um **admin inicial** é criado:
+Abra `http://localhost:8000/` no navegador. O onboarding é um fluxo obrigatório:
 
-- Se você definiu `BOOTSTRAP_ADMIN_EMAIL` e `BOOTSTRAP_ADMIN_PASSWORD` no `.env`, use essas credenciais.
-- Se deixou a senha em branco, uma senha aleatória é **gerada e impressa no log** do container. Veja com:
+1. **Criar 1º admin** — instalação virgem (sem usuários) mostra a tela de criação
+   do primeiro administrador. O primeiro usuário é sempre `admin` (auditado como
+   `bootstrap_admin_created`).
+2. **Setup Wizard (5 etapas)** — após o login do admin, enquanto o setup não
+   estiver concluído, **todas as abas ficam travadas** e o sistema força o wizard:
+   Organização → Marca e ativos → Escopo de monitoramento → Threat Profile por
+   setor → Revisão. Ao concluir, grava `setup_completed`/`setup_completed_at`,
+   audita `organization_setup_completed` e **libera as abas**.
 
-  ```bash
-  docker compose logs api | grep -A4 "ADMIN INICIAL"
-  ```
+No Threat Profile, ao escolher o setor (ex.: **Telecom**), a plataforma sugere
+keywords, ameaças, categorias de IOC e fontes típicas e gera **seeds de
+monitoramento** (`status=candidate`, watchlist) — nunca findings confirmados.
+Um finding só nasce depois, com evidência real.
 
-Faça login, vá em **Usuários** e crie as contas da equipe (analista/leitor). Troque a senha do admin no primeiro acesso.
+Provisionamento headless (sem interface) continua possível: defina
+`BOOTSTRAP_ADMIN_EMAIL` **e** `BOOTSTRAP_ADMIN_PASSWORD` no `.env` e o admin é
+criado no start (o wizard de organização ainda será exigido no 1º login).
+
+Papéis: **admin** (organização, usuários, configurações, auditoria), **analyst**
+(IOCs, marcas, scans, findings, relatórios) e **viewer** (somente leitura).
+Toda ação sensível (login, criação/edição de usuário, scan, setup) é registrada
+na **trilha de auditoria** (aba Auditoria, admin).
+
+### Segurança das senhas
+
+Senhas usam **Argon2id** quando a lib está disponível (default no Docker), com
+fallback automático para PBKDF2-HMAC-SHA256 (stdlib). Hashes PBKDF2 antigos são
+**migrados para Argon2 de forma transparente no próximo login**. Política mínima:
+10 caracteres com ao menos uma letra e um número.
 
 ## Uso rápido
 

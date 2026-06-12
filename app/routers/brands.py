@@ -2,8 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from fastapi import Request
+
+from app import audit
 from app.alerts import dispatch_new_findings, send_finding_alert
-from app.auth import require_analyst, require_viewer
+from app.auth import Principal, require_analyst, require_viewer
 from app.brand.scanner import scan_brand
 from app.database import get_db
 from app.models import Brand, BrandFinding
@@ -27,6 +30,13 @@ def create_brand(payload: BrandCreate, db: Session = Depends(get_db)):
         name=payload.name,
         official_domains=",".join(payload.official_domains),
         keywords=",".join(payload.keywords) if payload.keywords else None,
+        variations=payload.variations or None,
+        aliases=payload.aliases or None,
+        products=payload.products or None,
+        subdomains=payload.subdomains or None,
+        social_profiles=payload.social_profiles or None,
+        sensitive_terms=payload.sensitive_terms or None,
+        logo_url=payload.logo_url or None,
     )
     db.add(brand)
     db.commit()
@@ -56,9 +66,10 @@ def delete_brand(brand_id: int, db: Session = Depends(get_db)):
     db.commit()
 
 
-@router.post("/{brand_id}/scan", response_model=ScanResult,
-             dependencies=[Depends(require_analyst)])
-def scan(brand_id: int, deep: bool = True, db: Session = Depends(get_db)):
+@router.post("/{brand_id}/scan", response_model=ScanResult)
+def scan(brand_id: int, request: Request, deep: bool = True,
+         db: Session = Depends(get_db),
+         principal: Principal = Depends(require_analyst)):
     brand = db.get(Brand, brand_id)
     if brand is None:
         raise HTTPException(status_code=404, detail="Marca não encontrada.")
@@ -70,6 +81,11 @@ def scan(brand_id: int, deep: bool = True, db: Session = Depends(get_db)):
     new = [db.get(BrandFinding, fid) for fid in result.get("new_finding_ids", [])]
     sent = dispatch_new_findings(brand, [f for f in new if f], db)
     result["alerts_sent"] = sent
+    audit.record(db, actor=principal.subject, actor_role=principal.role,
+                 action="brand.scan", target_type="brand", target_id=brand_id,
+                 request=request,
+                 detail={"deep": deep, "new_findings": result.get("new_findings"),
+                         "alerts_sent": sent})
     return result
 
 

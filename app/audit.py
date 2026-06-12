@@ -1,0 +1,64 @@
+"""Trilha de auditoria para ações sensíveis.
+
+Nunca registra senhas, tokens ou segredos — apenas metadados da ação.
+"""
+from __future__ import annotations
+
+import logging
+
+from fastapi import Request
+from sqlalchemy.orm import Session
+
+from app.models import AuditLog
+
+logger = logging.getLogger(__name__)
+
+# chaves que jamais devem ser persistidas no detalhe do log
+_REDACT = {"password", "current_password", "new_password", "temporary_password",
+           "token", "api_key", "secret", "hashed_password"}
+
+
+def _client_ip(request: Request | None) -> str | None:
+    if request is None:
+        return None
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        return fwd.split(",")[0].strip()[:64]
+    return request.client.host if request.client else None
+
+
+def _sanitize(detail: dict | None) -> dict | None:
+    if not detail:
+        return None
+    return {k: ("***" if k.lower() in _REDACT else v) for k, v in detail.items()}
+
+
+def record(
+    db: Session,
+    *,
+    actor: str,
+    actor_role: str | None = None,
+    action: str,
+    target_type: str | None = None,
+    target_id: str | int | None = None,
+    request: Request | None = None,
+    detail: dict | None = None,
+    commit: bool = True,
+) -> None:
+    """Grava um evento de auditoria. Falha de auditoria não derruba a ação."""
+    try:
+        entry = AuditLog(
+            actor=actor[:255],
+            actor_role=actor_role,
+            action=action[:60],
+            target_type=target_type,
+            target_id=str(target_id)[:80] if target_id is not None else None,
+            ip=_client_ip(request),
+            detail=_sanitize(detail),
+        )
+        db.add(entry)
+        if commit:
+            db.commit()
+    except Exception as exc:  # nunca interrompe o fluxo principal
+        logger.warning("Falha ao gravar audit log (%s): %s", action, type(exc).__name__)
+        db.rollback()

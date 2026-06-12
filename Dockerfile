@@ -7,6 +7,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ ./app/
+COPY alembic.ini ./
+COPY migrations/ ./migrations/
 
 USER appuser
 EXPOSE 8000

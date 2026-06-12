@@ -24,12 +24,41 @@
     border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
   label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
   .hidden { display: none !important; }
-  /* Login */
-  #login { max-width: 360px; margin: 12vh auto; background: var(--panel);
+  /* Login / Criar admin */
+  #login, #createAdmin { max-width: 360px; margin: 12vh auto; background: var(--panel);
     border: 1px solid var(--line); border-radius: 12px; padding: 28px; }
-  #login h1 { margin: 0 0 4px; font-size: 22px; }
-  #login p.sub { margin: 0 0 18px; color: var(--muted); font-size: 13px; }
-  #login button { width: 100%; margin-top: 16px; }
+  #login h1, #createAdmin h1 { margin: 0 0 4px; font-size: 22px; }
+  #login p.sub, #createAdmin p.sub { margin: 0 0 18px; color: var(--muted); font-size: 13px; }
+  #login button, #createAdmin button { width: 100%; margin-top: 16px; }
+  #createAdmin input { width: 100%; }
+  .srow { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .srow2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; }
+  .srow2 input, .srow2 select { width: 100%; }
+  /* Wizard */
+  #wizard { max-width: 780px; margin: 5vh auto; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 12px; padding: 24px 28px; }
+  .wiz-head { display: flex; align-items: center; justify-content: space-between; }
+  .wiz-head .logo { font-weight: 700; }
+  .wiz-head .logo span { color: var(--accent); }
+  .wiz-steps { list-style: none; display: flex; gap: 6px; padding: 0; margin: 18px 0 22px;
+    flex-wrap: wrap; }
+  .wiz-steps li { flex: 1; min-width: 110px; text-align: center; font-size: 12px;
+    color: var(--muted); padding: 8px 6px; border-radius: 6px; background: var(--panel2);
+    border: 1px solid var(--line); counter-increment: step; }
+  .wiz-steps li.active { color: #fff; background: var(--accent2); border-color: var(--accent2); }
+  .wiz-steps li.done { color: var(--green); }
+  .wiz-body { min-height: 220px; }
+  .wiz-body h3 { margin: 0 0 4px; }
+  .wiz-body p.hint { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
+  .wiz-nav { display: flex; align-items: center; gap: 14px; margin-top: 22px;
+    padding-top: 16px; border-top: 1px solid var(--line); }
+  .wiz-nav .err { flex: 1; }
+  .scope-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px,1fr)); gap: 8px; }
+  .scope-grid label { display: flex; align-items: center; gap: 8px; background: var(--panel2);
+    border: 1px solid var(--line); border-radius: 6px; padding: 9px 11px; margin: 0; color: var(--txt); cursor: pointer; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .chip { background: var(--panel2); border: 1px solid var(--line); border-radius: 999px;
+    padding: 3px 10px; font-size: 12px; }
   .err { color: var(--red); font-size: 13px; margin-top: 10px; min-height: 18px; }
   /* App shell */
   header { display: flex; align-items: center; gap: 18px; padding: 12px 22px;
@@ -96,6 +125,41 @@
     </form>
   </section>
 
+  <!-- CRIAR PRIMEIRO ADMIN -->
+  <section id="createAdmin" class="hidden">
+    <h1>Threat<span style="color:var(--accent)">Forge</span></h1>
+    <p class="sub">Primeiro acesso — crie o administrador</p>
+    <form id="adminForm">
+      <label for="caEmail">E-mail do administrador</label>
+      <input id="caEmail" type="email" autocomplete="username" required>
+      <label for="caPass">Senha (mín. 10, com letra e número)</label>
+      <input id="caPass" type="password" autocomplete="new-password" required>
+      <button type="submit">Criar administrador</button>
+      <div class="err" id="adminErr"></div>
+    </form>
+  </section>
+
+  <!-- SETUP WIZARD (multi-etapa, obrigatório) -->
+  <section id="wizard" class="hidden">
+    <div class="wiz-head">
+      <div class="logo">Threat<span>Forge</span> <span class="muted" style="font-weight:400">· Configuração inicial</span></div>
+      <button class="ghost sm" id="wizLogout">Sair</button>
+    </div>
+    <ol class="wiz-steps" id="wizSteps">
+      <li data-step="1">Organização</li>
+      <li data-step="2">Marca e ativos</li>
+      <li data-step="3">Escopo</li>
+      <li data-step="4">Threat Profile</li>
+      <li data-step="5">Revisão</li>
+    </ol>
+    <div class="wiz-body" id="wizBody"></div>
+    <div class="wiz-nav">
+      <button class="ghost" id="wizBack">Voltar</button>
+      <div class="err" id="wizErr"></div>
+      <button id="wizNext">Continuar</button>
+    </div>
+  </section>
+
   <!-- APP -->
   <div id="app" class="hidden">
     <header>
@@ -104,7 +168,9 @@
         <button data-view="dashboard" class="active">Dashboard</button>
         <button data-view="iocs">IOCs</button>
         <button data-view="brands">Marcas</button>
+        <button data-view="org" id="navOrg">Organização</button>
         <button data-view="users" id="navUsers">Usuários</button>
+        <button data-view="audit" id="navAudit">Auditoria</button>
       </nav>
       <div class="spacer"></div>
       <span class="who" id="who"></span>

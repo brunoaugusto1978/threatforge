@@ -1,11 +1,11 @@
-"""Bootstrap do admin inicial.
+"""Bootstrap opcional do admin inicial (deploy headless).
 
-No startup, se não houver nenhum usuário, cria um admin:
-- usa BOOTSTRAP_ADMIN_EMAIL/PASSWORD se definidos; ou
-- gera um admin com senha aleatória e a imprime no log (uma única vez).
+O caminho padrão de primeiro acesso é o Setup Wizard (/setup), que cria a
+organização e o primeiro admin pela interface. Este bootstrap só age se
+AMBOS BOOTSTRAP_ADMIN_EMAIL e BOOTSTRAP_ADMIN_PASSWORD estiverem definidos —
+útil para provisionamento automatizado sem interface.
 """
 import logging
-import secrets
 
 from sqlalchemy import func, select
 
@@ -23,30 +23,23 @@ def ensure_admin() -> None:
         count = db.scalar(select(func.count()).select_from(User))
         if count and count > 0:
             return
+        # caminho padrão: deixa o Setup Wizard (/setup) criar o primeiro admin.
+        # só provisiona via env se AMBOS estiverem definidos (headless).
+        if not (config.BOOTSTRAP_ADMIN_EMAIL and config.BOOTSTRAP_ADMIN_PASSWORD):
+            logger.info("Nenhum usuário e sem BOOTSTRAP_ADMIN_*: aguardando Setup Wizard em /setup")
+            return
 
-        email = (config.BOOTSTRAP_ADMIN_EMAIL or "admin@threatforge.local").strip().lower()
-        password = config.BOOTSTRAP_ADMIN_PASSWORD
-        generated = False
-        if not password:
-            password = secrets.token_urlsafe(16)
-            generated = True
-
-        admin = User(email=email, hashed_password=hash_password(password), role="admin")
+        email = config.BOOTSTRAP_ADMIN_EMAIL.strip().lower()
+        admin = User(
+            email=email,
+            hashed_password=hash_password(config.BOOTSTRAP_ADMIN_PASSWORD),
+            role="admin",
+        )
         db.add(admin)
         db.commit()
-
-        if generated:
-            logger.warning(
-                "\n========================================\n"
-                " ADMIN INICIAL CRIADO\n"
-                " e-mail: %s\n"
-                " senha : %s\n"
-                " (troque após o primeiro login — esta senha não será exibida de novo)\n"
-                "========================================",
-                email,
-                password,
-            )
-        else:
-            logger.info("Admin inicial criado: %s", email)
+        logger.info("Admin inicial provisionado via env: %s", email)
+    except Exception as exc:
+        logger.warning("Bootstrap do admin falhou: %s", type(exc).__name__)
+        db.rollback()
     finally:
         db.close()

@@ -19,6 +19,51 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class Organization(Base):
+    __tablename__ = "organizations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    trade_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    legal_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    tax_id: Mapped[str | None] = mapped_column(String(32), nullable=True)  # CNPJ
+    sector: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    subsector: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    country: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    state: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    city: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    website: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    security_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    legal_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    timezone: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    language: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    criticality: Mapped[str] = mapped_column(String(10), default="medium")  # baixo..crítico
+    # escopo de monitoramento selecionado no wizard (lista de fontes)
+    monitoring_scope: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # onboarding obrigatório
+    setup_completed: Mapped[bool] = mapped_column(Boolean, default=False)
+    setup_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    actor: Mapped[str] = mapped_column(String(255), index=True)  # email ou "service"
+    actor_role: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    action: Mapped[str] = mapped_column(String(60), index=True)
+    target_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    target_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -92,6 +137,23 @@ class AttackTechnique(Base):
     url: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
 
+class MonitoringSeed(Base):
+    """Seed/watchlist setorial — NÃO é finding. Vira finding só com evidência."""
+    __tablename__ = "monitoring_seeds"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    brand_id: Mapped[int | None] = mapped_column(
+        ForeignKey("brands.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    seed: Mapped[str] = mapped_column(String(512), index=True)
+    seed_type: Mapped[str] = mapped_column(String(30))  # keyword_combo|threat|ioc_category|cve|source
+    source_type: Mapped[str] = mapped_column(String(40), default="sector_profile")
+    sector: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="candidate", index=True)
+    confidence: Mapped[str] = mapped_column(String(10), default="low")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class SyncState(Base):
     __tablename__ = "sync_state"
 
@@ -109,6 +171,14 @@ class Brand(Base):
     official_domains: Mapped[str] = mapped_column(Text, default="")
     # termos extras a vigiar (ex.: nome fantasia, app), separados por vírgula
     keywords: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # ativos oficiais da marca (listas)
+    variations: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    aliases: Mapped[list | None] = mapped_column(JSON, nullable=True)  # siglas
+    products: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    subdomains: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    social_profiles: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    sensitive_terms: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    logo_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_scan_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

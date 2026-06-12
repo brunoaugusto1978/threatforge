@@ -86,31 +86,253 @@ async function doLogin(e) {
 async function logout() {
   try { await api("POST", "/auth/logout"); } catch {}
   ME = null;
-  $("#app").classList.add("hidden");
-  $("#login").classList.remove("hidden");
+  showOnly("login");
   $("#password").value = "";
 }
 
+function showOnly(id) {
+  ["login", "createAdmin", "wizard", "app"].forEach(s =>
+    $("#" + s).classList.toggle("hidden", s !== id));
+}
+
 async function boot() {
-  try {
-    ME = await api("GET", "/auth/me");
-  } catch {
-    $("#app").classList.add("hidden");
-    $("#login").classList.remove("hidden");
+  let st = null;
+  try { st = await api("GET", "/setup/status"); } catch { /* segue */ }
+
+  // 1) nenhum usuário -> criar 1º admin
+  if (st && st.needs_admin) { showOnly("createAdmin"); return; }
+
+  // 2) sessão
+  try { ME = await api("GET", "/auth/me"); }
+  catch { showOnly("login"); return; }
+
+  // 3) gate: setup obrigatório enquanto não concluído
+  if (st && !st.setup_completed) {
+    showOnly("wizard");
+    if (can("admin")) { startWizard(); }
+    else {
+      $("#wizSteps").style.display = "none";
+      $("#wizBody").innerHTML = '<p class="hint">A plataforma está em configuração inicial. Aguarde um administrador concluir o setup.</p>';
+      $("#wizBack").style.display = $("#wizNext").style.display = "none";
+    }
     return;
   }
-  $("#login").classList.add("hidden");
-  $("#app").classList.remove("hidden");
+
+  // 4) app liberado
+  showOnly("app");
   $("#who").innerHTML = `${esc(ME.subject)} &nbsp;<span class="badge role-${esc(ME.role)}">${esc(ME.role)}</span>`;
   $("#navUsers").style.display = can("admin") ? "" : "none";
+  $("#navAudit").style.display = can("admin") ? "" : "none";
   navigate("dashboard");
 }
+
+async function doCreateAdmin(e) {
+  e.preventDefault();
+  $("#adminErr").textContent = "";
+  try {
+    await api("POST", "/setup/admin", { email: $("#caEmail").value, password: $("#caPass").value });
+    toast("Administrador criado");
+    await boot();
+  } catch (err) { $("#adminErr").textContent = err.message; }
+}
+
+// ===================== SETUP WIZARD =====================
+const WIZ = { step: 1, max: 5 };
+const SCOPE_SOURCES = [
+  ["iocs", "IOCs"], ["dominios", "Domínios"], ["typosquatting", "Typosquatting"],
+  ["certificate_transparency", "Certificate Transparency"], ["urlhaus", "URLhaus"],
+  ["cisa_kev", "CISA KEV"], ["epss", "EPSS"], ["mitre", "MITRE ATT&CK"],
+  ["github", "GitHub"], ["paste_sites", "Paste sites"], ["foruns", "Fóruns"],
+  ["deep_web", "Deep web"], ["dark_web", "Dark web"],
+  ["telegram_publico", "Telegram público/autorizado"],
+  ["whatsapp_intake", "WhatsApp (intake manual/autorizado)"],
+];
+const ORG_WIZ_FIELDS = [
+  ["name", "Nome *"], ["trade_name", "Nome fantasia"], ["legal_name", "Razão social"],
+  ["tax_id", "CNPJ"], ["subsector", "Subsetor"], ["country", "País"],
+  ["state", "Estado"], ["city", "Cidade"], ["website", "Website"],
+  ["security_email", "E-mail de segurança"], ["legal_email", "E-mail jurídico"],
+  ["phone", "Telefone"], ["timezone", "Timezone"], ["language", "Idioma"],
+];
+
+function startWizard() {
+  $("#wizSteps").style.display = "";
+  $("#wizBack").style.display = $("#wizNext").style.display = "";
+  WIZ.step = 1;
+  renderWizard();
+}
+
+function renderWizard() {
+  document.querySelectorAll("#wizSteps li").forEach(li => {
+    const n = Number(li.dataset.step);
+    li.classList.toggle("active", n === WIZ.step);
+    li.classList.toggle("done", n < WIZ.step);
+  });
+  $("#wizErr").textContent = "";
+  $("#wizBack").style.visibility = WIZ.step === 1 ? "hidden" : "visible";
+  $("#wizNext").textContent = WIZ.step === WIZ.max ? "Concluir configuração" : "Continuar";
+  WIZ_RENDER[WIZ.step]();
+}
+
+async function wizNext() {
+  $("#wizErr").textContent = "";
+  try {
+    const ok = await WIZ_SAVE[WIZ.step]();
+    if (ok === false) return;
+    if (WIZ.step < WIZ.max) { WIZ.step++; renderWizard(); }
+    else { await api("POST", "/setup/complete"); toast("Configuração concluída"); await boot(); }
+  } catch (err) { $("#wizErr").textContent = err.message; }
+}
+function wizBack() { if (WIZ.step > 1) { WIZ.step--; renderWizard(); } }
+
+// ---- Passo 1: Organização ----
+const WIZ_RENDER = {};
+const WIZ_SAVE = {};
+WIZ_RENDER[1] = async () => {
+  let org = {};
+  try { org = (await api("GET", "/organization")) || {}; } catch {}
+  const grid = el("div", { class: "srow2" });
+  // setor + criticidade primeiro (dirigem o threat profile)
+  const sectorSel = selectEl("wz_sector",
+    ["", "Telecom", "Financeiro", "Varejo", "Saúde", "Governo", "Indústria", "Tecnologia", "Energia", "Outro"]);
+  sectorSel.value = org.sector || "";
+  const critSel = selectEl("wz_criticality", ["baixo", "medio", "alto", "critico"]);
+  critSel.value = org.criticality || "medio";
+  grid.append(field("Setor *", sectorSel), field("Criticidade", critSel));
+  ORG_WIZ_FIELDS.forEach(([k, label]) => {
+    const inp = inputEl("wz_org_" + k, "");
+    inp.value = org[k] || "";
+    grid.append(field(label, inp));
+  });
+  $("#wizBody").innerHTML = "<h3>Organização</h3><p class='hint'>Dados da sua organização. O setor define o Threat Profile sugerido.</p>";
+  $("#wizBody").append(grid);
+};
+WIZ_SAVE[1] = async () => {
+  const name = $("#wz_org_name").value.trim();
+  const sector = $("#wz_sector").value;
+  if (!name) { $("#wizErr").textContent = "Informe o nome da organização."; return false; }
+  if (!sector) { $("#wizErr").textContent = "Selecione o setor."; return false; }
+  const body = { name, sector, criticality: $("#wz_criticality").value };
+  ORG_WIZ_FIELDS.forEach(([k]) => { if (k !== "name") body[k] = $("#wz_org_" + k).value || null; });
+  await api("PUT", "/organization", body);
+  return true;
+};
+
+// ---- Passo 2: Marca e ativos ----
+const BRAND_LIST_FIELDS = [
+  ["variations", "Variações do nome"], ["aliases", "Siglas"], ["products", "Produtos"],
+  ["subdomains", "Subdomínios oficiais"], ["social_profiles", "Perfis oficiais"],
+  ["keywords", "Palavras-chave"], ["sensitive_terms", "Termos sensíveis de fraude"],
+];
+WIZ_RENDER[2] = async () => {
+  let brands = [];
+  try { brands = await api("GET", "/brands"); } catch {}
+  const existing = brands.length
+    ? `<p class="hint">Marcas já cadastradas: ${brands.map(b => esc(b.name)).join(", ")}. Você pode adicionar outra ou seguir.</p>` : "";
+  $("#wizBody").innerHTML = `<h3>Marca e ativos oficiais</h3>
+    <p class="hint">Cadastre ao menos uma marca. Listas aceitam itens separados por vírgula.</p>${existing}`;
+  const grid = el("div", { class: "srow2" });
+  grid.append(field("Nome da marca", inputEl("wz_b_name", "ex.: Banco Exemplo")));
+  grid.append(field("Domínios oficiais (vírgula)", inputEl("wz_b_domains", "exemplo.com.br")));
+  BRAND_LIST_FIELDS.forEach(([k, label]) => grid.append(field(label, inputEl("wz_b_" + k, ""))));
+  grid.append(field("Logotipo (URL)", inputEl("wz_b_logo", "https://...")));
+  $("#wizBody").append(grid);
+  $("#wizBody").dataset.hasBrands = brands.length ? "1" : "";
+};
+WIZ_SAVE[2] = async () => {
+  const name = $("#wz_b_name").value.trim();
+  const hadBrands = $("#wizBody").dataset.hasBrands === "1";
+  if (!name) {
+    if (hadBrands) return true;  // já existe marca; pode seguir sem adicionar
+    $("#wizErr").textContent = "Cadastre ao menos uma marca."; return false;
+  }
+  const csv = (id) => $("#" + id).value.split(",").map(s => s.trim()).filter(Boolean);
+  const domains = csv("wz_b_domains");
+  if (!domains.length) { $("#wizErr").textContent = "Informe ao menos um domínio oficial."; return false; }
+  const body = { name, official_domains: domains, logo_url: $("#wz_b_logo").value || null };
+  BRAND_LIST_FIELDS.forEach(([k]) => { body[k] = csv("wz_b_" + k); });
+  try { await api("POST", "/brands", body); }
+  catch (e) { if (!/já cadastrada/i.test(e.message)) throw e; }
+  return true;
+};
+
+// ---- Passo 3: Escopo ----
+WIZ_RENDER[3] = async () => {
+  let org = {};
+  try { org = (await api("GET", "/organization")) || {}; } catch {}
+  const sel = new Set(org.monitoring_scope || [
+    "iocs", "dominios", "typosquatting", "certificate_transparency", "urlhaus", "cisa_kev", "epss", "mitre"]);
+  $("#wizBody").innerHTML = "<h3>Escopo de monitoramento</h3><p class='hint'>Selecione o que a plataforma deve vigiar. WhatsApp é apenas intake manual/autorizado.</p>";
+  const grid = el("div", { class: "scope-grid" });
+  SCOPE_SOURCES.forEach(([k, label]) => {
+    const cb = el("input", { type: "checkbox", id: "sc_" + k });
+    if (sel.has(k)) cb.setAttribute("checked", "true");
+    grid.append(el("label", {}, cb, label));
+  });
+  $("#wizBody").append(grid);
+};
+WIZ_SAVE[3] = async () => {
+  const scope = SCOPE_SOURCES.filter(([k]) => $("#sc_" + k).checked).map(([k]) => k);
+  await api("PUT", "/setup/scope", { monitoring_scope: scope });
+  return true;
+};
+
+// ---- Passo 4: Threat Profile ----
+WIZ_RENDER[4] = async () => {
+  let org = {};
+  try { org = (await api("GET", "/organization")) || {}; } catch {}
+  const sector = org.sector || "";
+  $("#wizBody").innerHTML = `<h3>Threat Profile — ${esc(sector || "setor")}</h3>
+    <p class="hint">Sugestões típicas do setor. Geram <b>seeds de monitoramento</b> (watchlist), não findings confirmados.</p>
+    <div id="tpBody">carregando…</div>`;
+  try {
+    const p = await api("GET", `/sectors/${encodeURIComponent(sector)}/profile`);
+    const chips = (arr) => `<div class="chips">${(arr || []).map(x => `<span class="chip">${esc(x)}</span>`).join("") || '<span class="muted">—</span>'}</div>`;
+    $("#tpBody").innerHTML = `
+      <div style="margin-bottom:10px"><b>Keywords</b>${chips(p.keywords)}</div>
+      <div style="margin-bottom:10px"><b>Ameaças comuns</b>${chips(p.threats)}</div>
+      <div style="margin-bottom:10px"><b>Categorias de IOC</b>${chips(p.ioc_categories)}</div>
+      <div style="margin-bottom:10px"><b>Fontes recomendadas</b>${chips(p.sources)}</div>
+      <button id="genSeeds" style="margin-top:8px">Gerar seeds de monitoramento</button>
+      <span id="seedMsg" class="muted" style="margin-left:10px"></span>`;
+    $("#genSeeds").addEventListener("click", async () => {
+      try {
+        const r = await api("POST", "/setup/threat-profile");
+        $("#seedMsg").textContent = `${r.seeds_created} seeds criadas (watchlist).`;
+        toast(`${r.seeds_created} seeds geradas`);
+      } catch (e) { toast(e.message, true); }
+    });
+  } catch (e) { $("#tpBody").textContent = e.message; }
+};
+WIZ_SAVE[4] = async () => true;  // geração de seeds é opcional
+
+// ---- Passo 5: Revisão ----
+WIZ_RENDER[5] = async () => {
+  let org = {}, brands = [], seeds = [];
+  try { org = (await api("GET", "/organization")) || {}; } catch {}
+  try { brands = await api("GET", "/brands"); } catch {}
+  try { seeds = await api("GET", "/seeds?status=candidate"); } catch {}
+  const scope = (org.monitoring_scope || []).map(k =>
+    (SCOPE_SOURCES.find(s => s[0] === k) || [k, k])[1]);
+  $("#wizBody").innerHTML = `<h3>Revisão</h3>
+    <p class="hint">Confira e finalize. Você poderá ajustar tudo depois nas abas da plataforma.</p>
+    <table>
+      <tr><th>Organização</th><td>${esc(org.name || "—")} ${org.sector ? "· " + esc(org.sector) : ""}</td></tr>
+      <tr><th>Marcas</th><td>${brands.map(b => esc(b.name)).join(", ") || "—"}</td></tr>
+      <tr><th>Domínios oficiais</th><td><code>${brands.map(b => esc(b.official_domains)).join("; ") || "—"}</code></td></tr>
+      <tr><th>Escopo</th><td>${scope.map(esc).join(", ") || "—"}</td></tr>
+      <tr><th>Seeds (watchlist)</th><td>${seeds.length} candidatas</td></tr>
+    </table>
+    <p class="hint" style="margin-top:14px">Ao concluir, as abas da plataforma serão liberadas.</p>`;
+};
+WIZ_SAVE[5] = async () => true;
 
 // ---------- views ----------
 function navigate(view) {
   document.querySelectorAll("#nav button").forEach(b =>
     b.classList.toggle("active", b.dataset.view === view));
-  ({ dashboard: viewDashboard, iocs: viewIocs, brands: viewBrands, users: viewUsers }[view] || viewDashboard)();
+  ({ dashboard: viewDashboard, iocs: viewIocs, brands: viewBrands,
+     org: viewOrg, users: viewUsers, audit: viewAudit }[view] || viewDashboard)();
 }
 
 async function viewDashboard() {
@@ -327,6 +549,69 @@ async function resetUser(id) {
   } catch (e) { toast(e.message, true); }
 }
 
+// ---- Organização ----
+const ORG_FIELDS = [
+  ["name", "Nome *"], ["trade_name", "Nome fantasia"], ["legal_name", "Razão social"],
+  ["tax_id", "CNPJ"], ["sector", "Setor"], ["subsector", "Subsetor"],
+  ["country", "País"], ["state", "Estado"], ["city", "Cidade"],
+  ["website", "Website"], ["security_email", "E-mail de segurança"],
+  ["legal_email", "E-mail jurídico"], ["phone", "Telefone"],
+  ["timezone", "Timezone"], ["language", "Idioma"],
+];
+async function viewOrg() {
+  const m = $("#main");
+  m.innerHTML = `<h2 class="title">Organização</h2>`;
+  let org = {};
+  try { org = (await api("GET", "/organization")) || {}; } catch (e) { /* sem org ainda */ }
+  const editable = can("admin");
+  const p = el("div", { class: "panel" });
+  p.style.maxWidth = "640px";
+  const grid = el("div", { class: "srow2" });
+  ORG_FIELDS.forEach(([k, label]) => {
+    const inp = inputEl("org_" + k, "");
+    inp.value = org[k] || "";
+    if (!editable) inp.setAttribute("disabled", "true");
+    grid.append(field(label, inp));
+  });
+  // criticidade como select
+  const crit = selectEl("org_criticality", ["baixo", "medio", "alto", "critico"]);
+  crit.value = org.criticality || "medio";
+  if (!editable) crit.setAttribute("disabled", "true");
+  grid.append(field("Criticidade", crit));
+  p.append(grid);
+  if (editable) p.append(el("div", { style: "margin-top:14px" },
+    el("button", { onclick: saveOrg }, org.id ? "Salvar alterações" : "Criar organização")));
+  else p.append(el("div", { class: "muted", style: "margin-top:10px" },
+    "Somente administradores podem editar."));
+  m.append(p);
+}
+async function saveOrg() {
+  const body = { criticality: $("#org_criticality").value };
+  ORG_FIELDS.forEach(([k]) => { body[k] = $("#org_" + k).value || null; });
+  try { await api("PUT", "/organization", body); toast("Organização salva"); }
+  catch (e) { toast(e.message, true); }
+}
+
+// ---- Auditoria ----
+async function viewAudit() {
+  const m = $("#main");
+  if (!can("admin")) { m.innerHTML = '<span class="muted">Acesso restrito a administradores.</span>'; return; }
+  m.innerHTML = `<h2 class="title">Trilha de auditoria</h2><div class="panel" id="auditList">carregando…</div>`;
+  try {
+    const items = await api("GET", "/audit?limit=300");
+    if (!items.length) { $("#auditList").innerHTML = '<span class="muted">Nenhum evento ainda.</span>'; return; }
+    const rows = items.map(a => `
+      <tr>
+        <td class="muted">${esc((a.ts || "").slice(0, 19).replace("T", " "))}</td>
+        <td>${esc(a.actor)}</td>
+        <td><code>${esc(a.action)}</code></td>
+        <td class="muted">${esc(a.target_type || "")}${a.target_id ? " #" + esc(a.target_id) : ""}</td>
+        <td class="muted">${esc(a.ip || "")}</td>
+      </tr>`).join("");
+    $("#auditList").innerHTML = `<table><thead><tr><th>Quando (UTC)</th><th>Ator</th><th>Ação</th><th>Alvo</th><th>IP</th></tr></thead><tbody>${rows}</tbody></table>`;
+  } catch (e) { $("#auditList").textContent = e.message; }
+}
+
 // ---- Conta (trocar a própria senha) ----
 function viewAccount() {
   document.querySelectorAll("#nav button").forEach(b => b.classList.remove("active"));
@@ -382,6 +667,10 @@ function selectEl(id, opts) {
 
 // ---------- init ----------
 $("#loginForm").addEventListener("submit", doLogin);
+$("#adminForm").addEventListener("submit", doCreateAdmin);
+$("#wizNext").addEventListener("click", wizNext);
+$("#wizBack").addEventListener("click", wizBack);
+$("#wizLogout").addEventListener("click", logout);
 $("#logout").addEventListener("click", logout);
 $("#changePw").addEventListener("click", viewAccount);
 document.querySelectorAll("#nav button").forEach(b =>

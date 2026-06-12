@@ -1,12 +1,11 @@
 """Rotas de autenticação e gestão de usuários."""
-import secrets
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import config
+from app import audit, config
 from app.auth import Principal, get_principal, require_admin
 from app.database import get_db
 from app.models import User, utcnow
@@ -19,7 +18,13 @@ from app.schemas import (
     UserOut,
     UserUpdate,
 )
-from app.security import create_token, hash_password, verify_password
+from app.security import (
+    create_token,
+    generate_password,
+    hash_password,
+    needs_rehash,
+    verify_password,
+)
 
 router = APIRouter(tags=["auth"])
 
@@ -53,7 +58,8 @@ def _set_session_cookie(response: Response, token: str) -> None:
 
 
 @router.post("/auth/login")
-def login(payload: LoginRequest, response: Response, db: Session = Depends(get_db)):
+def login(payload: LoginRequest, request: Request, response: Response,
+          db: Session = Depends(get_db)):
     email = payload.email.strip().lower()
     if _rate_limited(email):
         raise HTTPException(
@@ -65,20 +71,33 @@ def login(payload: LoginRequest, response: Response, db: Session = Depends(get_d
     ok = bool(user) and user.is_active and verify_password(payload.password, user.hashed_password)
     if not ok:
         _record_attempt(email)
+        audit.record(db, actor=email, action="auth.login_failed", request=request)
         # mensagem genérica: não revela se o e-mail existe
         raise HTTPException(status_code=401, detail="Credenciais inválidas.")
 
     _login_attempts.pop(email, None)
     user.last_login_at = utcnow()
+    # migração transparente de hash (PBKDF2 -> Argon2) sem trocar a versão de senha.
+    # protegido: senha legada fora da política nova não deve impedir o login.
+    if needs_rehash(user.hashed_password):
+        try:
+            user.hashed_password = hash_password(payload.password)
+        except ValueError:
+            pass
     db.commit()
     token = create_token(sub=str(user.id), role=user.role, pwd_version=user.pwd_version)
     _set_session_cookie(response, token)
+    audit.record(db, actor=user.email, actor_role=user.role, action="auth.login",
+                 request=request)
     return {"email": user.email, "role": user.role}
 
 
 @router.post("/auth/logout")
-def logout(response: Response):
+def logout(request: Request, response: Response,
+           principal: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     response.delete_cookie(config.COOKIE_NAME, path="/")
+    audit.record(db, actor=principal.subject, actor_role=principal.role,
+                 action="auth.logout", request=request)
     return {"ok": True}
 
 
@@ -90,6 +109,7 @@ def me(principal: Principal = Depends(get_principal)):
 @router.post("/auth/change-password")
 def change_password(
     payload: ChangePasswordRequest,
+    request: Request,
     response: Response,
     principal: Principal = Depends(get_principal),
     db: Session = Depends(get_db),
@@ -111,13 +131,16 @@ def change_password(
     # reemite o cookie desta sessão com a nova versão, para não deslogar quem trocou
     token = create_token(sub=str(user.id), role=user.role, pwd_version=user.pwd_version)
     _set_session_cookie(response, token)
+    audit.record(db, actor=user.email, actor_role=user.role,
+                 action="auth.change_password", target_type="user", target_id=user.id,
+                 request=request)
     return {"ok": True}
 
 
 # ---------- Gestão de usuários (somente admin) ----------
-@router.post("/users", response_model=UserOut, status_code=201,
-             dependencies=[Depends(require_admin)])
-def create_user(payload: UserCreate, db: Session = Depends(get_db)):
+@router.post("/users", response_model=UserOut, status_code=201)
+def create_user(payload: UserCreate, request: Request, db: Session = Depends(get_db),
+                principal: Principal = Depends(require_admin)):
     if db.scalar(select(User).where(User.email == payload.email)):
         raise HTTPException(status_code=409, detail="E-mail já cadastrado.")
     user = User(
@@ -128,6 +151,9 @@ def create_user(payload: UserCreate, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
     db.refresh(user)
+    audit.record(db, actor=principal.subject, actor_role=principal.role,
+                 action="user.create", target_type="user", target_id=user.id,
+                 request=request, detail={"email": user.email, "role": user.role})
     return user
 
 
@@ -140,6 +166,7 @@ def list_users(db: Session = Depends(get_db)):
 def update_user(
     user_id: int,
     payload: UserUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     principal: Principal = Depends(require_admin),
 ):
@@ -163,6 +190,11 @@ def update_user(
         user.pwd_version += 1  # invalida sessões do usuário alvo
     db.commit()
     db.refresh(user)
+    audit.record(db, actor=principal.subject, actor_role=principal.role,
+                 action="user.update", target_type="user", target_id=user.id,
+                 request=request,
+                 detail={"role": payload.role, "is_active": payload.is_active,
+                         "password_changed": payload.password is not None})
     return user
 
 
@@ -170,6 +202,7 @@ def update_user(
 def admin_reset_password(
     user_id: int,
     payload: AdminResetPassword,
+    request: Request,
     db: Session = Depends(get_db),
     principal: Principal = Depends(require_admin),
 ):
@@ -183,12 +216,15 @@ def admin_reset_password(
     temporary = None
     new_password = payload.new_password
     if not new_password:
-        new_password = secrets.token_urlsafe(12)
+        new_password = generate_password(16)
         temporary = new_password
 
     user.hashed_password = hash_password(new_password)
     user.pwd_version += 1
     db.commit()
+    audit.record(db, actor=principal.subject, actor_role=principal.role,
+                 action="user.reset_password", target_type="user", target_id=user.id,
+                 request=request, detail={"email": user.email})
     result = {"ok": True, "email": user.email}
     if temporary:
         result["temporary_password"] = temporary
@@ -199,6 +235,7 @@ def admin_reset_password(
 @router.delete("/users/{user_id}", status_code=204)
 def delete_user(
     user_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     principal: Principal = Depends(require_admin),
 ):
@@ -216,5 +253,9 @@ def delete_user(
         )
         if admins <= 1:
             raise HTTPException(status_code=400, detail="Não é possível remover o último admin.")
+    email = user.email
     db.delete(user)
     db.commit()
+    audit.record(db, actor=principal.subject, actor_role=principal.role,
+                 action="user.delete", target_type="user", target_id=user_id,
+                 request=request, detail={"email": email})

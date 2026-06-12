@@ -12,14 +12,14 @@ from app.auth import require_viewer
 from app.bootstrap import ensure_admin
 from app.database import Base, engine, get_db
 from app.models import Brand, BrandFinding, Observable, User
-from app.routers import auth_routes, brands, intel, observables, reports
+from app.routers import auth_routes, brands, intel, observables, org_routes, reports
 
 logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(
     title="ThreatForge",
     description="Open Source Cyber Threat Intelligence Platform",
-    version="0.3.0",
+    version="0.5.0",
 )
 
 Base.metadata.create_all(bind=engine)
@@ -51,6 +51,7 @@ async def security_headers(request: Request, call_next):
     return response
 
 
+app.include_router(org_routes.router)
 app.include_router(auth_routes.router)
 app.include_router(observables.router)
 app.include_router(intel.router)
@@ -60,7 +61,7 @@ app.include_router(brands.router)
 
 @app.get("/health", tags=["meta"])
 def health():
-    return {"status": "ok", "service": "threatforge", "version": "0.3.0"}
+    return {"status": "ok", "service": "threatforge", "version": "0.5.0"}
 
 
 @app.get("/stats", tags=["meta"])

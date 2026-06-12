@@ -105,6 +105,13 @@ class BrandCreate(BaseModel):
     name: str
     official_domains: list[str]
     keywords: list[str] | None = None
+    variations: list[str] | None = None
+    aliases: list[str] | None = None
+    products: list[str] | None = None
+    subdomains: list[str] | None = None
+    social_profiles: list[str] | None = None
+    sensitive_terms: list[str] | None = None
+    logo_url: str | None = None
 
     @field_validator("name")
     @classmethod
@@ -133,6 +140,13 @@ class BrandOut(BaseModel):
     name: str
     official_domains: str
     keywords: str | None
+    variations: list | None = None
+    aliases: list | None = None
+    products: list | None = None
+    subdomains: list | None = None
+    social_profiles: list | None = None
+    sensitive_terms: list | None = None
+    logo_url: str | None = None
     created_at: datetime
     last_scan_at: datetime | None
 
@@ -197,10 +211,8 @@ class UserCreate(BaseModel):
     @field_validator("password")
     @classmethod
     def _pw_ok(cls, v: str) -> str:
-        if len(v) < 8:
-            raise ValueError("senha deve ter ao menos 8 caracteres")
-        if len(v) > 256:
-            raise ValueError("senha muito longa")
+        from app.security import check_password_strength
+        check_password_strength(v)
         return v
 
 
@@ -212,8 +224,9 @@ class UserUpdate(BaseModel):
     @field_validator("password")
     @classmethod
     def _pw_ok(cls, v: str | None) -> str | None:
-        if v is not None and (len(v) < 8 or len(v) > 256):
-            raise ValueError("senha deve ter entre 8 e 256 caracteres")
+        if v is not None:
+            from app.security import check_password_strength
+            check_password_strength(v)
         return v
 
 
@@ -241,8 +254,8 @@ class ChangePasswordRequest(BaseModel):
     @field_validator("new_password")
     @classmethod
     def _pw_ok(cls, v: str) -> str:
-        if len(v) < 8 or len(v) > 256:
-            raise ValueError("nova senha deve ter entre 8 e 256 caracteres")
+        from app.security import check_password_strength
+        check_password_strength(v)
         return v
 
 
@@ -253,6 +266,141 @@ class AdminResetPassword(BaseModel):
     @field_validator("new_password")
     @classmethod
     def _pw_ok(cls, v: str | None) -> str | None:
-        if v is not None and (len(v) < 8 or len(v) > 256):
-            raise ValueError("senha deve ter entre 8 e 256 caracteres")
+        if v is not None:
+            from app.security import check_password_strength
+            check_password_strength(v)
         return v
+
+
+# --- Organização / Setup ---
+Criticality = Literal["baixo", "medio", "alto", "critico"]
+
+
+class OrganizationIn(BaseModel):
+    name: str
+    trade_name: str | None = None
+    legal_name: str | None = None
+    tax_id: str | None = None
+    sector: str | None = None
+    subsector: str | None = None
+    country: str | None = "Brasil"
+    state: str | None = None
+    city: str | None = None
+    website: str | None = None
+    security_email: str | None = None
+    legal_email: str | None = None
+    phone: str | None = None
+    timezone: str | None = "America/Sao_Paulo"
+    language: str | None = "pt-BR"
+    criticality: Criticality = "medio"
+
+    @field_validator("name")
+    @classmethod
+    def _name_ok(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not v or len(v) > 255:
+            raise ValueError("nome da organização é obrigatório (1–255)")
+        return v
+
+
+class OrganizationOut(OrganizationIn):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class SetupRequest(BaseModel):
+    organization: OrganizationIn
+    admin_email: str
+    admin_password: str
+
+    @field_validator("admin_email")
+    @classmethod
+    def _email_ok(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not _RE["email"].match(v):
+            raise ValueError("e-mail de admin inválido")
+        return v
+
+    @field_validator("admin_password")
+    @classmethod
+    def _pw_ok(cls, v: str) -> str:
+        from app.security import check_password_strength
+        check_password_strength(v)
+        return v
+
+
+class SetupStatus(BaseModel):
+    needs_admin: bool        # nenhum usuário existe -> criar 1º admin
+    needs_setup: bool        # org ausente ou setup não concluído -> wizard obrigatório
+    setup_completed: bool
+    has_organization: bool
+    has_users: bool
+
+
+class AdminBootstrap(BaseModel):
+    email: str
+    password: str
+
+    @field_validator("email")
+    @classmethod
+    def _email_ok(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not _RE["email"].match(v):
+            raise ValueError("e-mail inválido")
+        return v
+
+    @field_validator("password")
+    @classmethod
+    def _pw_ok(cls, v: str) -> str:
+        from app.security import check_password_strength
+        check_password_strength(v)
+        return v
+
+
+class ScopeIn(BaseModel):
+    monitoring_scope: list[str]
+
+
+class SectorProfileOut(BaseModel):
+    sector: str
+    threats: list[str]
+    keywords: list[str]
+    ioc_categories: list[str]
+    cve_watchlist: list[str]
+    sources: list[str]
+
+
+class SeedOut(BaseModel):
+    id: int
+    brand_id: int | None
+    seed: str
+    seed_type: str
+    source_type: str
+    sector: str | None
+    status: str
+    confidence: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ThreatProfileResult(BaseModel):
+    sector: str | None
+    seeds_created: int
+
+
+class AuditOut(BaseModel):
+    id: int
+    ts: datetime
+    actor: str
+    actor_role: str | None
+    action: str
+    target_type: str | None
+    target_id: str | None
+    ip: str | None
+    detail: dict | None
+
+    model_config = {"from_attributes": True}

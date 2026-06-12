@@ -11,7 +11,7 @@ import base64
 import hashlib
 import hmac
 import json
-import os
+import re
 import secrets
 import time
 
@@ -21,25 +21,90 @@ PBKDF2_ITERATIONS = 240_000
 PBKDF2_ALGO = "sha256"
 SALT_BYTES = 16
 
+# Argon2id é o preferido; se a lib não estiver instalada, cai para PBKDF2 (stdlib).
+try:
+    from argon2 import PasswordHasher
+    from argon2.exceptions import InvalidHashError, VerifyMismatchError
 
-# ---------- Senhas ----------
-def hash_password(password: str) -> str:
-    if not password or len(password) < 8:
-        raise ValueError("senha deve ter ao menos 8 caracteres")
+    _ph = PasswordHasher()  # defaults seguros (argon2id)
+    _ARGON2 = True
+except Exception:  # pragma: no cover - ambiente sem argon2-cffi
+    _ARGON2 = False
+
+
+# ---------- Política de senha ----------
+def check_password_strength(password: str) -> None:
+    """Levanta ValueError se a senha for fraca."""
+    if not password or len(password) < 10:
+        raise ValueError("senha deve ter ao menos 10 caracteres")
+    if len(password) > 256:
+        raise ValueError("senha muito longa (máx. 256)")
+    if not re.search(r"[A-Za-z]", password) or not re.search(r"\d", password):
+        raise ValueError("senha deve conter ao menos uma letra e um número")
+
+
+# ---------- Hash / verificação ----------
+def _pbkdf2_hash(password: str) -> str:
     salt = secrets.token_bytes(SALT_BYTES)
     dk = hashlib.pbkdf2_hmac(PBKDF2_ALGO, password.encode(), salt, PBKDF2_ITERATIONS)
     return f"pbkdf2_{PBKDF2_ALGO}${PBKDF2_ITERATIONS}${salt.hex()}${dk.hex()}"
 
 
-def verify_password(password: str, stored: str) -> bool:
+def _pbkdf2_verify(password: str, stored: str) -> bool:
     try:
         scheme, iters, salt_hex, hash_hex = stored.split("$")
         algo = scheme.split("_", 1)[1]
-        dk = hashlib.pbkdf2_hmac(
-            algo, password.encode(), bytes.fromhex(salt_hex), int(iters)
-        )
+        dk = hashlib.pbkdf2_hmac(algo, password.encode(), bytes.fromhex(salt_hex), int(iters))
         return hmac.compare_digest(dk.hex(), hash_hex)
     except (ValueError, IndexError):
+        return False
+
+
+def hash_password(password: str) -> str:
+    check_password_strength(password)
+    if _ARGON2:
+        return _ph.hash(password)
+    return _pbkdf2_hash(password)
+
+
+def verify_password(password: str, stored: str) -> bool:
+    if not stored:
+        return False
+    if stored.startswith("$argon2"):
+        if not _ARGON2:
+            return False
+        try:
+            return _ph.verify(stored, password)
+        except (VerifyMismatchError, InvalidHashError, Exception):
+            return False
+    if stored.startswith("pbkdf2_"):
+        return _pbkdf2_verify(password, stored)
+    return False
+
+
+def generate_password(length: int = 16) -> str:
+    """Gera senha aleatória que sempre satisfaz check_password_strength."""
+    import string
+
+    alphabet = string.ascii_letters + string.digits
+    while True:
+        pw = "".join(secrets.choice(alphabet) for _ in range(max(12, length)))
+        try:
+            check_password_strength(pw)
+            return pw
+        except ValueError:
+            continue
+
+
+def needs_rehash(stored: str) -> bool:
+    """True se o hash deve ser regravado (migração PBKDF2->Argon2 ou parâmetros antigos)."""
+    if not _ARGON2:
+        return False
+    if not stored.startswith("$argon2"):
+        return True
+    try:
+        return _ph.check_needs_rehash(stored)
+    except Exception:
         return False
 
 
