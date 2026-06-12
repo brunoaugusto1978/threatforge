@@ -58,11 +58,14 @@ def _secret() -> bytes:
     return config.JWT_SECRET.encode()
 
 
-def create_token(sub: str, role: str, ttl_seconds: int | None = None) -> str:
+def create_token(sub: str, role: str, pwd_version: int = 1, ttl_seconds: int | None = None) -> str:
     ttl = ttl_seconds or config.JWT_TTL_SECONDS
     now = int(time.time())
     header = {"alg": "HS256", "typ": "JWT"}
-    payload = {"sub": sub, "role": role, "iat": now, "exp": now + ttl, "jti": secrets.token_hex(8)}
+    payload = {
+        "sub": sub, "role": role, "pv": pwd_version,
+        "iat": now, "exp": now + ttl, "jti": secrets.token_hex(8),
+    }
     segments = [
         _b64url(json.dumps(header, separators=(",", ":")).encode()),
         _b64url(json.dumps(payload, separators=(",", ":")).encode()),

@@ -232,3 +232,27 @@ class MeOut(BaseModel):
     subject: str
     role: str
     kind: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def _pw_ok(cls, v: str) -> str:
+        if len(v) < 8 or len(v) > 256:
+            raise ValueError("nova senha deve ter entre 8 e 256 caracteres")
+        return v
+
+
+class AdminResetPassword(BaseModel):
+    # se vazio, o servidor gera uma senha temporária e a retorna uma única vez
+    new_password: str | None = None
+
+    @field_validator("new_password")
+    @classmethod
+    def _pw_ok(cls, v: str | None) -> str | None:
+        if v is not None and (len(v) < 8 or len(v) > 256):
+            raise ValueError("senha deve ter entre 8 e 256 caracteres")
+        return v

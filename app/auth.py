@@ -50,6 +50,9 @@ def _from_cookie(request: Request, db: Session) -> Principal | None:
     user = db.get(User, int(payload.get("sub", 0)))
     if user is None or not user.is_active:
         return None
+    # senha trocada/resetada após emissão do token -> sessão inválida
+    if int(payload.get("pv", 0)) != user.pwd_version:
+        return None
     # papel atual do banco prevalece (revoga acesso se mudou)
     return Principal(subject=user.email, role=user.role, kind="user", user_id=user.id)
 

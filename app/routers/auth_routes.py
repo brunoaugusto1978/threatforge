@@ -1,4 +1,5 @@
 """Rotas de autenticação e gestão de usuários."""
+import secrets
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -10,6 +11,8 @@ from app.auth import Principal, get_principal, require_admin
 from app.database import get_db
 from app.models import User, utcnow
 from app.schemas import (
+    AdminResetPassword,
+    ChangePasswordRequest,
     LoginRequest,
     MeOut,
     UserCreate,
@@ -68,7 +71,7 @@ def login(payload: LoginRequest, response: Response, db: Session = Depends(get_d
     _login_attempts.pop(email, None)
     user.last_login_at = utcnow()
     db.commit()
-    token = create_token(sub=str(user.id), role=user.role)
+    token = create_token(sub=str(user.id), role=user.role, pwd_version=user.pwd_version)
     _set_session_cookie(response, token)
     return {"email": user.email, "role": user.role}
 
@@ -82,6 +85,33 @@ def logout(response: Response):
 @router.get("/auth/me", response_model=MeOut)
 def me(principal: Principal = Depends(get_principal)):
     return MeOut(subject=principal.subject, role=principal.role, kind=principal.kind)
+
+
+@router.post("/auth/change-password")
+def change_password(
+    payload: ChangePasswordRequest,
+    response: Response,
+    principal: Principal = Depends(get_principal),
+    db: Session = Depends(get_db),
+):
+    """Auto-serviço: qualquer usuário troca a própria senha."""
+    if principal.kind != "user" or principal.user_id is None:
+        raise HTTPException(status_code=400, detail="Disponível apenas para contas de usuário.")
+    user = db.get(User, principal.user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+    if not verify_password(payload.current_password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Senha atual incorreta.")
+    if verify_password(payload.new_password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="A nova senha deve ser diferente da atual.")
+
+    user.hashed_password = hash_password(payload.new_password)
+    user.pwd_version += 1  # invalida outras sessões
+    db.commit()
+    # reemite o cookie desta sessão com a nova versão, para não deslogar quem trocou
+    token = create_token(sub=str(user.id), role=user.role, pwd_version=user.pwd_version)
+    _set_session_cookie(response, token)
+    return {"ok": True}
 
 
 # ---------- Gestão de usuários (somente admin) ----------
@@ -130,9 +160,40 @@ def update_user(
         user.is_active = payload.is_active
     if payload.password is not None:
         user.hashed_password = hash_password(payload.password)
+        user.pwd_version += 1  # invalida sessões do usuário alvo
     db.commit()
     db.refresh(user)
     return user
+
+
+@router.post("/users/{user_id}/reset-password")
+def admin_reset_password(
+    user_id: int,
+    payload: AdminResetPassword,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(require_admin),
+):
+    """Admin reseta a senha de qualquer usuário. Se não enviar uma senha,
+    gera uma temporária e a retorna uma única vez (para repassar ao usuário).
+    A sessão atual do usuário-alvo é invalidada."""
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+
+    temporary = None
+    new_password = payload.new_password
+    if not new_password:
+        new_password = secrets.token_urlsafe(12)
+        temporary = new_password
+
+    user.hashed_password = hash_password(new_password)
+    user.pwd_version += 1
+    db.commit()
+    result = {"ok": True, "email": user.email}
+    if temporary:
+        result["temporary_password"] = temporary
+        result["note"] = "Repasse esta senha ao usuário por canal seguro. Ela não será exibida de novo."
+    return result
 
 
 @router.delete("/users/{user_id}", status_code=204)

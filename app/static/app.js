@@ -295,6 +295,7 @@ async function loadUsers() {
         <td class="muted">${u.last_login_at ? esc(u.last_login_at.slice(0, 16).replace("T", " ")) : "—"}</td>
         <td>
           ${actBtn(u.is_active ? "userOff" : "userOn", u.id, u.is_active ? "Desativar" : "Ativar")}
+          ${actBtn("userReset", u.id, "Resetar senha")}
           ${actBtn("userDel", u.id, "Excluir", "danger")}
         </td>
       </tr>`).join("");
@@ -317,6 +318,39 @@ async function delUser(id) {
   try { await api("DELETE", `/users/${id}`); toast("Excluído"); await loadUsers(); }
   catch (e) { toast(e.message, true); }
 }
+async function resetUser(id) {
+  if (!confirm("Gerar uma senha temporária para este usuário? A sessão atual dele será encerrada.")) return;
+  try {
+    const r = await api("POST", `/users/${id}/reset-password`, {});
+    alert(`Senha temporária de ${r.email}:\n\n${r.temporary_password}\n\nRepasse por canal seguro. Não será exibida de novo.`);
+    await loadUsers();
+  } catch (e) { toast(e.message, true); }
+}
+
+// ---- Conta (trocar a própria senha) ----
+function viewAccount() {
+  document.querySelectorAll("#nav button").forEach(b => b.classList.remove("active"));
+  const m = $("#main");
+  m.innerHTML = `<h2 class="title">Minha conta</h2>`;
+  const p = el("div", { class: "panel" });
+  p.style.maxWidth = "420px";
+  p.append(
+    field("Senha atual", inputEl("cpCurrent", "", "password")),
+    field("Nova senha (mín. 8)", inputEl("cpNew", "", "password")),
+    field("Confirmar nova senha", inputEl("cpConfirm", "", "password")),
+    el("div", { style: "margin-top:14px" }, el("button", { onclick: doChangePassword }, "Trocar senha"))
+  );
+  m.append(p);
+}
+async function doChangePassword() {
+  const cur = $("#cpCurrent").value, nw = $("#cpNew").value, cf = $("#cpConfirm").value;
+  if (nw !== cf) { toast("A confirmação não confere.", true); return; }
+  try {
+    await api("POST", "/auth/change-password", { current_password: cur, new_password: nw });
+    toast("Senha alterada com sucesso");
+    navigate("dashboard");
+  } catch (e) { toast(e.message, true); }
+}
 
 // ---------- delegação de cliques (compatível com CSP, sem onclick inline) ----------
 const ACTIONS = {
@@ -327,6 +361,7 @@ const ACTIONS = {
   findings: (id) => findings(id),
   userOn: (id) => toggleUser(id, true),
   userOff: (id) => toggleUser(id, false),
+  userReset: (id) => resetUser(id),
   userDel: (id) => delUser(id),
 };
 document.addEventListener("click", (e) => {
@@ -348,6 +383,7 @@ function selectEl(id, opts) {
 // ---------- init ----------
 $("#loginForm").addEventListener("submit", doLogin);
 $("#logout").addEventListener("click", logout);
+$("#changePw").addEventListener("click", viewAccount);
 document.querySelectorAll("#nav button").forEach(b =>
   b.addEventListener("click", () => navigate(b.dataset.view)));
 boot();

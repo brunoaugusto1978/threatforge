@@ -27,6 +27,8 @@ class User(Base):
     hashed_password: Mapped[str] = mapped_column(String(512))
     role: Mapped[str] = mapped_column(String(20), default="viewer")  # admin|analyst|viewer
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # incrementado a cada troca/reset de senha -> invalida sessões (JWT) antigas
+    pwd_version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_login_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
