@@ -172,12 +172,42 @@ def list_seeds(status: str | None = None, limit: int = 500, db: Session = Depend
 
 
 # ---------- Finalização do setup ----------
+@router.post("/setup/reopen", response_model=OrganizationOut)
+def reopen_setup(request: Request, db: Session = Depends(get_db),
+                 principal: Principal = Depends(require_admin)):
+    """Reabre o wizard de configuração (admin), sem apagar dados. Volta a
+    travar as abas até nova conclusão."""
+    org = _org(db)
+    if org is None:
+        raise HTTPException(status_code=400, detail="Nenhuma organização para reabrir.")
+    org.setup_completed = False
+    org.updated_at = utcnow()
+    db.commit()
+    db.refresh(org)
+    audit.record(db, actor=principal.subject, actor_role=principal.role,
+                 action="organization_setup_reopened", target_type="organization",
+                 target_id=org.id, request=request)
+    return org
+
+
 @router.post("/setup/complete", response_model=OrganizationOut)
 def complete_setup(request: Request, db: Session = Depends(get_db),
                    principal: Principal = Depends(require_admin)):
     org = _org(db)
-    if org is None:
-        raise HTTPException(status_code=400, detail="Configure a organização antes de finalizar.")
+    # validações que bloqueiam a conclusão do setup
+    if org is None or not (org.name or "").strip() or not (org.sector or "").strip():
+        raise HTTPException(status_code=422,
+                            detail="Organização incompleta: informe nome e setor.")
+    if not org.monitoring_scope:
+        raise HTTPException(status_code=422,
+                            detail="Selecione ao menos uma fonte no escopo de monitoramento.")
+    brands = list(db.scalars(select(Brand)))
+    if not brands:
+        raise HTTPException(status_code=422, detail="Cadastre ao menos uma marca.")
+    if not any(b.domain_list() for b in brands):
+        raise HTTPException(status_code=422,
+                            detail="Cadastre ao menos um domínio oficial em alguma marca.")
+
     org.setup_completed = True
     org.setup_completed_at = utcnow()
     org.updated_at = utcnow()

@@ -171,6 +171,7 @@ function renderWizard() {
   $("#wizErr").textContent = "";
   $("#wizBack").style.visibility = WIZ.step === 1 ? "hidden" : "visible";
   $("#wizNext").textContent = WIZ.step === WIZ.max ? "Concluir configuração" : "Continuar";
+  $("#wizNext").disabled = false;  // reabilita; a etapa de revisão pode desabilitar
   WIZ_RENDER[WIZ.step]();
 }
 
@@ -273,6 +274,7 @@ WIZ_RENDER[3] = async () => {
 };
 WIZ_SAVE[3] = async () => {
   const scope = SCOPE_SOURCES.filter(([k]) => $("#sc_" + k).checked).map(([k]) => k);
+  if (!scope.length) { $("#wizErr").textContent = "Selecione ao menos uma fonte de monitoramento."; return false; }
   await api("PUT", "/setup/scope", { monitoring_scope: scope });
   return true;
 };
@@ -314,16 +316,35 @@ WIZ_RENDER[5] = async () => {
   try { seeds = await api("GET", "/seeds?status=candidate"); } catch {}
   const scope = (org.monitoring_scope || []).map(k =>
     (SCOPE_SOURCES.find(s => s[0] === k) || [k, k])[1]);
+  const hasDomain = brands.some(b => (b.official_domains || "").trim());
+
+  // checklist de pendências que bloqueiam a conclusão
+  const checks = [
+    [!!(org.name && org.sector), "Organização (nome + setor)"],
+    [brands.length > 0, "Pelo menos uma marca"],
+    [hasDomain, "Pelo menos um domínio oficial"],
+    [scope.length > 0, "Escopo de monitoramento"],
+  ];
+  const pending = checks.filter(([ok]) => !ok);
+  const checklist = checks.map(([ok, label]) =>
+    `<div class="factor">${ok ? "✅" : "⛔"} ${esc(label)}</div>`).join("");
+
   $("#wizBody").innerHTML = `<h3>Revisão</h3>
     <p class="hint">Confira e finalize. Você poderá ajustar tudo depois nas abas da plataforma.</p>
     <table>
       <tr><th>Organização</th><td>${esc(org.name || "—")} ${org.sector ? "· " + esc(org.sector) : ""}</td></tr>
       <tr><th>Marcas</th><td>${brands.map(b => esc(b.name)).join(", ") || "—"}</td></tr>
-      <tr><th>Domínios oficiais</th><td><code>${brands.map(b => esc(b.official_domains)).join("; ") || "—"}</code></td></tr>
+      <tr><th>Domínios oficiais</th><td><code>${brands.map(b => esc(b.official_domains)).filter(Boolean).join("; ") || "—"}</code></td></tr>
       <tr><th>Escopo</th><td>${scope.map(esc).join(", ") || "—"}</td></tr>
       <tr><th>Seeds (watchlist)</th><td>${seeds.length} candidatas</td></tr>
     </table>
-    <p class="hint" style="margin-top:14px">Ao concluir, as abas da plataforma serão liberadas.</p>`;
+    <div style="margin-top:16px"><b>Requisitos para concluir</b>${checklist}</div>
+    <p class="hint" style="margin-top:12px">${pending.length
+      ? "Resolva os itens marcados com ⛔ antes de concluir (volte às etapas anteriores)."
+      : "Tudo pronto. Ao concluir, as abas da plataforma serão liberadas."}</p>`;
+
+  // bloqueia o botão Concluir enquanto houver pendência
+  $("#wizNext").disabled = pending.length > 0;
 };
 WIZ_SAVE[5] = async () => true;
 
@@ -579,16 +600,27 @@ async function viewOrg() {
   if (!editable) crit.setAttribute("disabled", "true");
   grid.append(field("Criticidade", crit));
   p.append(grid);
-  if (editable) p.append(el("div", { style: "margin-top:14px" },
-    el("button", { onclick: saveOrg }, org.id ? "Salvar alterações" : "Criar organização")));
+  if (editable) p.append(el("div", { style: "margin-top:14px;display:flex;gap:10px" },
+    el("button", { onclick: saveOrg }, org.id ? "Salvar alterações" : "Criar organização"),
+    org.id ? el("button", { class: "ghost", onclick: reopenSetup }, "Reabrir configuração (wizard)") : null));
   else p.append(el("div", { class: "muted", style: "margin-top:10px" },
     "Somente administradores podem editar."));
+  if (editable && org.monitoring_scope) {
+    const labels = org.monitoring_scope.map(k => (SCOPE_SOURCES.find(s => s[0] === k) || [k, k])[1]);
+    p.append(el("div", { class: "muted", style: "margin-top:12px", html:
+      "<b>Escopo de monitoramento:</b> " + labels.map(esc).join(", ") }));
+  }
   m.append(p);
 }
 async function saveOrg() {
   const body = { criticality: $("#org_criticality").value };
   ORG_FIELDS.forEach(([k]) => { body[k] = $("#org_" + k).value || null; });
   try { await api("PUT", "/organization", body); toast("Organização salva"); }
+  catch (e) { toast(e.message, true); }
+}
+async function reopenSetup() {
+  if (!confirm("Reabrir o wizard de configuração? As abas ficarão travadas até você concluir de novo. Nenhum dado é apagado.")) return;
+  try { await api("POST", "/setup/reopen"); toast("Configuração reaberta"); await boot(); }
   catch (e) { toast(e.message, true); }
 }
 

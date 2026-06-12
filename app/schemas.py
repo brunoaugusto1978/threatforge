@@ -305,6 +305,9 @@ class OrganizationIn(BaseModel):
 
 class OrganizationOut(OrganizationIn):
     id: int
+    monitoring_scope: list | None = None
+    setup_completed: bool = False
+    setup_completed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
