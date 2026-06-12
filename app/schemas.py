@@ -245,6 +245,8 @@ class MeOut(BaseModel):
     subject: str
     role: str
     kind: str
+    is_operator: bool = False
+    tenant_id: int | None = None
 
 
 class ChangePasswordRequest(BaseModel):
@@ -336,11 +338,15 @@ class SetupRequest(BaseModel):
 
 
 class SetupStatus(BaseModel):
-    needs_admin: bool        # nenhum usuário existe -> criar 1º admin
-    needs_setup: bool        # org ausente ou setup não concluído -> wizard obrigatório
-    setup_completed: bool
-    has_organization: bool
+    needs_operator: bool     # nenhum usuário -> criar operador de plataforma
     has_users: bool
+
+
+class TenantSetupStatus(BaseModel):
+    tenant_id: int
+    has_organization: bool
+    setup_completed: bool
+    needs_setup: bool
 
 
 class AdminBootstrap(BaseModel):
@@ -395,6 +401,64 @@ class SeedOut(BaseModel):
 class ThreatProfileResult(BaseModel):
     sector: str | None
     seeds_created: int
+
+
+class TenantCreate(BaseModel):
+    name: str
+    admin_email: str
+    admin_password: str | None = None  # se vazio, gera senha temporária
+
+    @field_validator("name")
+    @classmethod
+    def _name_ok(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not v or len(v) > 255:
+            raise ValueError("nome do tenant inválido (1–255)")
+        return v
+
+    @field_validator("admin_email")
+    @classmethod
+    def _email_ok(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not _RE["email"].match(v):
+            raise ValueError("e-mail do admin inválido")
+        return v
+
+    @field_validator("admin_password")
+    @classmethod
+    def _pw_ok(cls, v: str | None) -> str | None:
+        if v is not None:
+            from app.security import check_password_strength
+            check_password_strength(v)
+        return v
+
+
+class TenantOut(BaseModel):
+    id: int
+    name: str
+    slug: str
+    status: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ApiKeyCreate(BaseModel):
+    label: str = ""
+    role: Literal["admin", "analyst", "viewer"] = "analyst"
+
+
+class ApiKeyOut(BaseModel):
+    id: int
+    tenant_id: int
+    label: str
+    prefix: str
+    role: str
+    active: bool
+    created_at: datetime
+    last_used_at: datetime | None
+
+    model_config = {"from_attributes": True}
 
 
 class AuditOut(BaseModel):

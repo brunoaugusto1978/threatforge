@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import audit, config
-from app.auth import Principal, get_principal, require_admin
+from app.auth import Principal, current_tenant_id, get_principal, require_admin
 from app.database import get_db
 from app.models import User, utcnow
 from app.schemas import (
@@ -87,9 +87,9 @@ def login(payload: LoginRequest, request: Request, response: Response,
     db.commit()
     token = create_token(sub=str(user.id), role=user.role, pwd_version=user.pwd_version)
     _set_session_cookie(response, token)
-    audit.record(db, actor=user.email, actor_role=user.role, action="auth.login",
-                 request=request)
-    return {"email": user.email, "role": user.role}
+    audit.record(db, actor=user.email, actor_role=user.role, tenant_id=user.tenant_id,
+                 action="auth.login", request=request)
+    return {"email": user.email, "role": user.role, "is_operator": user.is_operator}
 
 
 @router.post("/auth/logout")
@@ -97,13 +97,14 @@ def logout(request: Request, response: Response,
            principal: Principal = Depends(get_principal), db: Session = Depends(get_db)):
     response.delete_cookie(config.COOKIE_NAME, path="/")
     audit.record(db, actor=principal.subject, actor_role=principal.role,
-                 action="auth.logout", request=request)
+                 tenant_id=principal.tenant_id, action="auth.logout", request=request)
     return {"ok": True}
 
 
 @router.get("/auth/me", response_model=MeOut)
 def me(principal: Principal = Depends(get_principal)):
-    return MeOut(subject=principal.subject, role=principal.role, kind=principal.kind)
+    return MeOut(subject=principal.subject, role=principal.role, kind=principal.kind,
+                 is_operator=principal.is_operator, tenant_id=principal.tenant_id)
 
 
 @router.post("/auth/change-password")
@@ -140,26 +141,37 @@ def change_password(
 # ---------- Gestão de usuários (somente admin) ----------
 @router.post("/users", response_model=UserOut, status_code=201)
 def create_user(payload: UserCreate, request: Request, db: Session = Depends(get_db),
-                principal: Principal = Depends(require_admin)):
+                principal: Principal = Depends(require_admin),
+                tid: int = Depends(current_tenant_id)):
     if db.scalar(select(User).where(User.email == payload.email)):
         raise HTTPException(status_code=409, detail="E-mail já cadastrado.")
     user = User(
         email=payload.email,
         hashed_password=hash_password(payload.password),
         role=payload.role,
+        tenant_id=tid,
+        is_operator=False,
     )
     db.add(user)
     db.commit()
     db.refresh(user)
-    audit.record(db, actor=principal.subject, actor_role=principal.role,
+    audit.record(db, actor=principal.subject, actor_role=principal.role, tenant_id=tid,
                  action="user.create", target_type="user", target_id=user.id,
                  request=request, detail={"email": user.email, "role": user.role})
     return user
 
 
 @router.get("/users", response_model=list[UserOut], dependencies=[Depends(require_admin)])
-def list_users(db: Session = Depends(get_db)):
-    return list(db.scalars(select(User).order_by(User.id)))
+def list_users(db: Session = Depends(get_db), tid: int = Depends(current_tenant_id)):
+    return list(db.scalars(
+        select(User).where(User.tenant_id == tid).order_by(User.id)))
+
+
+def _owned_user(db: Session, user_id: int, tid: int) -> User:
+    user = db.get(User, user_id)
+    if user is None or user.tenant_id != tid:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+    return user
 
 
 @router.patch("/users/{user_id}", response_model=UserOut)
@@ -169,10 +181,9 @@ def update_user(
     request: Request,
     db: Session = Depends(get_db),
     principal: Principal = Depends(require_admin),
+    tid: int = Depends(current_tenant_id),
 ):
-    user = db.get(User, user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+    user = _owned_user(db, user_id, tid)
 
     # proteção: admin não pode rebaixar/desativar a si mesmo (evita lockout)
     if principal.user_id == user_id:
@@ -190,7 +201,7 @@ def update_user(
         user.pwd_version += 1  # invalida sessões do usuário alvo
     db.commit()
     db.refresh(user)
-    audit.record(db, actor=principal.subject, actor_role=principal.role,
+    audit.record(db, actor=principal.subject, actor_role=principal.role, tenant_id=tid,
                  action="user.update", target_type="user", target_id=user.id,
                  request=request,
                  detail={"role": payload.role, "is_active": payload.is_active,
@@ -205,13 +216,12 @@ def admin_reset_password(
     request: Request,
     db: Session = Depends(get_db),
     principal: Principal = Depends(require_admin),
+    tid: int = Depends(current_tenant_id),
 ):
     """Admin reseta a senha de qualquer usuário. Se não enviar uma senha,
     gera uma temporária e a retorna uma única vez (para repassar ao usuário).
     A sessão atual do usuário-alvo é invalidada."""
-    user = db.get(User, user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+    user = _owned_user(db, user_id, tid)
 
     temporary = None
     new_password = payload.new_password
@@ -222,7 +232,7 @@ def admin_reset_password(
     user.hashed_password = hash_password(new_password)
     user.pwd_version += 1
     db.commit()
-    audit.record(db, actor=principal.subject, actor_role=principal.role,
+    audit.record(db, actor=principal.subject, actor_role=principal.role, tenant_id=tid,
                  action="user.reset_password", target_type="user", target_id=user.id,
                  request=request, detail={"email": user.email})
     result = {"ok": True, "email": user.email}
@@ -238,17 +248,17 @@ def delete_user(
     request: Request,
     db: Session = Depends(get_db),
     principal: Principal = Depends(require_admin),
+    tid: int = Depends(current_tenant_id),
 ):
-    user = db.get(User, user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+    user = _owned_user(db, user_id, tid)
     if principal.user_id == user_id:
         raise HTTPException(status_code=400, detail="Não é possível excluir a própria conta.")
-    # não deixa remover o último admin ativo
+    # não deixa remover o último admin ATIVO do tenant
     if user.role == "admin":
         admins = db.scalar(
             select(func.count()).select_from(User).where(
-                User.role == "admin", User.is_active == True  # noqa: E712
+                User.tenant_id == tid, User.role == "admin",
+                User.is_active == True,  # noqa: E712
             )
         )
         if admins <= 1:
@@ -256,6 +266,6 @@ def delete_user(
     email = user.email
     db.delete(user)
     db.commit()
-    audit.record(db, actor=principal.subject, actor_role=principal.role,
+    audit.record(db, actor=principal.subject, actor_role=principal.role, tenant_id=tid,
                  action="user.delete", target_type="user", target_id=user_id,
                  request=request, detail={"email": email})

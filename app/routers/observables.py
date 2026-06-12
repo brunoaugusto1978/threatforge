@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth import require_analyst, require_viewer
+from app.auth import current_tenant_id, require_analyst, require_viewer
 from app.connectors.cisa_kev import CisaKevConnector
 from app.connectors.epss import EpssConnector
 from app.connectors.urlhaus import UrlhausConnector
@@ -22,19 +22,21 @@ CONNECTORS = [CisaKevConnector(), EpssConnector(), UrlhausConnector()]
 
 @router.post("", response_model=ObservableOut, status_code=201,
              dependencies=[Depends(require_analyst)])
-def create_observable(payload: ObservableCreate, db: Session = Depends(get_db)):
+def create_observable(payload: ObservableCreate, db: Session = Depends(get_db),
+                      tid: int = Depends(current_tenant_id)):
     try:
         value = validate_observable(payload.type, payload.value)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
     existing = db.scalar(
-        select(Observable).where(Observable.type == payload.type, Observable.value == value)
+        select(Observable).where(Observable.tenant_id == tid,
+                                 Observable.type == payload.type, Observable.value == value)
     )
     if existing:
         return existing
 
-    obs = Observable(type=payload.type, value=value)
+    obs = Observable(tenant_id=tid, type=payload.type, value=value)
     db.add(obs)
     db.commit()
     db.refresh(obs)
@@ -48,8 +50,9 @@ def list_observables(
     limit: int = 100,
     offset: int = 0,
     db: Session = Depends(get_db),
+    tid: int = Depends(current_tenant_id),
 ):
-    stmt = select(Observable).order_by(Observable.id.desc())
+    stmt = select(Observable).where(Observable.tenant_id == tid).order_by(Observable.id.desc())
     if type:
         stmt = stmt.where(Observable.type == type)
     if verdict:
@@ -58,20 +61,25 @@ def list_observables(
     return list(db.scalars(stmt))
 
 
-@router.get("/{observable_id}", response_model=ObservableDetail)
-def get_observable(observable_id: int, db: Session = Depends(get_db)):
+def _get_owned(db: Session, observable_id: int, tid: int) -> Observable:
     obs = db.get(Observable, observable_id)
-    if obs is None:
+    # isolamento: 404 (não 403) para não revelar existência em outro tenant
+    if obs is None or obs.tenant_id != tid:
         raise HTTPException(status_code=404, detail="Observável não encontrado.")
     return obs
 
 
+@router.get("/{observable_id}", response_model=ObservableDetail)
+def get_observable(observable_id: int, db: Session = Depends(get_db),
+                   tid: int = Depends(current_tenant_id)):
+    return _get_owned(db, observable_id, tid)
+
+
 @router.post("/{observable_id}/enrich", response_model=ObservableDetail,
              dependencies=[Depends(require_analyst)])
-def enrich_observable(observable_id: int, db: Session = Depends(get_db)):
-    obs = db.get(Observable, observable_id)
-    if obs is None:
-        raise HTTPException(status_code=404, detail="Observável não encontrado.")
+def enrich_observable(observable_id: int, db: Session = Depends(get_db),
+                      tid: int = Depends(current_tenant_id)):
+    obs = _get_owned(db, observable_id, tid)
 
     results: dict[str, dict | None] = {}
     errors: list[str] = []

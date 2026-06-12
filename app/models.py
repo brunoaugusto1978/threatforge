@@ -19,10 +19,44 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class Tenant(Base):
+    """Fronteira de isolamento. Cada cliente é um tenant; todo dado sensível
+    referencia tenant_id e toda query filtra por ele."""
+    __tablename__ = "tenants"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    slug: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="active")  # active|suspended
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ApiKey(Base):
+    """API key por tenant (automação/integração). Guardamos só o hash."""
+    __tablename__ = "api_keys"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
+    label: Mapped[str] = mapped_column(String(120), default="")
+    prefix: Mapped[str] = mapped_column(String(16), index=True)  # parte visível p/ identificar
+    key_hash: Mapped[str] = mapped_column(String(128))           # sha256 do segredo
+    role: Mapped[str] = mapped_column(String(20), default="analyst")
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
 class Organization(Base):
     __tablename__ = "organizations"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), unique=True, index=True
+    )
     name: Mapped[str] = mapped_column(String(255))
     trade_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     legal_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -54,6 +88,10 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # nulo para ações de plataforma (operador sem tenant)
+    tenant_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tenants.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     actor: Mapped[str] = mapped_column(String(255), index=True)  # email ou "service"
     actor_role: Mapped[str | None] = mapped_column(String(20), nullable=True)
@@ -71,6 +109,11 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     hashed_password: Mapped[str] = mapped_column(String(512))
     role: Mapped[str] = mapped_column(String(20), default="viewer")  # admin|analyst|viewer
+    # operador de plataforma: tenant_id nulo, enxerga a visão da operação
+    is_operator: Mapped[bool] = mapped_column(Boolean, default=False)
+    tenant_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     # incrementado a cada troca/reset de senha -> invalida sessões (JWT) antigas
     pwd_version: Mapped[int] = mapped_column(Integer, default=1)
@@ -82,9 +125,14 @@ class User(Base):
 
 class Observable(Base):
     __tablename__ = "observables"
-    __table_args__ = (UniqueConstraint("type", "value", name="uq_observable_type_value"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "type", "value", name="uq_observable_tenant_type_value"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
     type: Mapped[str] = mapped_column(String(20), index=True)
     value: Mapped[str] = mapped_column(String(2048), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -142,6 +190,9 @@ class MonitoringSeed(Base):
     __tablename__ = "monitoring_seeds"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
     brand_id: Mapped[int | None] = mapped_column(
         ForeignKey("brands.id", ondelete="CASCADE"), nullable=True, index=True
     )
@@ -167,9 +218,13 @@ class SyncState(Base):
 
 class Brand(Base):
     __tablename__ = "brands"
+    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_brand_tenant_name"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), index=True)
     # domínios legítimos (allowlist) — separados por vírgula
     official_domains: Mapped[str] = mapped_column(Text, default="")
     # termos extras a vigiar (ex.: nome fantasia, app), separados por vírgula
@@ -202,6 +257,9 @@ class BrandFinding(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
     brand_id: Mapped[int] = mapped_column(
         ForeignKey("brands.id", ondelete="CASCADE"), index=True
     )

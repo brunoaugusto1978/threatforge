@@ -45,6 +45,28 @@ docker compose up -d --build
 
 A API e a interface web sobem em `http://localhost:8000`. Documentação interativa da API: `http://localhost:8000/docs`.
 
+### Multi-tenant (isolamento por cliente)
+
+A plataforma é multi-tenant: cada cliente é um **tenant** isolado. Toda tabela
+sensível tem `tenant_id` e toda query filtra por ele — um tenant nunca acessa
+dados de outro. Há duas visões:
+
+- **Operador de plataforma** (`is_operator`): cria/gerencia tenants e API keys,
+  e atua dentro de um tenant indicando o header `X-Tenant-Id`. Acessa a visão
+  da operação.
+- **Usuário de tenant** (admin/analyst/viewer): preso ao próprio `tenant_id`,
+  vê apenas os dados do seu cliente.
+
+API keys são **por tenant** (header `X-API-Key`); a chave fica presa ao tenant
+dela. A `API_KEY` do `.env` é a chave de plataforma (operador de serviço).
+
+**Teste de isolamento** (prova que Tenant A não vê Tenant B):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.podman.yml \
+    exec api python -m app.selftest_isolation
+```
+
 ### Primeiro acesso: onboarding obrigatório
 
 Abra `http://localhost:8000/` no navegador. O onboarding é um fluxo obrigatório:

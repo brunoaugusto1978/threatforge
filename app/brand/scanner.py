@@ -199,6 +199,7 @@ def scan_brand(brand: Brand, db: Session, deep: bool = True) -> dict:
                 updated += 1
             else:
                 f = BrandFinding(
+                    tenant_id=brand.tenant_id,
                     brand_id=brand.id,
                     domain=domain,
                     source="typosquat" if domain in typosquats else "ct_log",

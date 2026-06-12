@@ -8,22 +8,30 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import config
-from app.auth import require_viewer
-from app.bootstrap import ensure_admin
+from app.auth import current_tenant_id, require_viewer
+from app.bootstrap import ensure_operator
 from app.database import Base, engine, get_db
 from app.models import Brand, BrandFinding, Observable, User
-from app.routers import auth_routes, brands, intel, observables, org_routes, reports
+from app.routers import (
+    auth_routes,
+    brands,
+    intel,
+    observables,
+    org_routes,
+    reports,
+    tenants_routes,
+)
 
 logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(
     title="ThreatForge",
     description="Open Source Cyber Threat Intelligence Platform",
-    version="0.5.0",
+    version="0.6.0",
 )
 
 Base.metadata.create_all(bind=engine)
-ensure_admin()
+ensure_operator()
 
 if config.CORS_ORIGINS:
     app.add_middleware(
@@ -52,6 +60,7 @@ async def security_headers(request: Request, call_next):
 
 
 app.include_router(org_routes.router)
+app.include_router(tenants_routes.router)
 app.include_router(auth_routes.router)
 app.include_router(observables.router)
 app.include_router(intel.router)
@@ -61,21 +70,24 @@ app.include_router(brands.router)
 
 @app.get("/health", tags=["meta"])
 def health():
-    return {"status": "ok", "service": "threatforge", "version": "0.5.0"}
+    return {"status": "ok", "service": "threatforge", "version": "0.6.0"}
 
 
 @app.get("/stats", tags=["meta"])
-def stats(_=Depends(require_viewer), db: Session = Depends(get_db)):
+def stats(_=Depends(require_viewer), db: Session = Depends(get_db),
+          tid: int = Depends(current_tenant_id)):
     def count(model):
-        return db.scalar(select(func.count()).select_from(model)) or 0
+        return db.scalar(select(func.count()).select_from(model)
+                         .where(model.tenant_id == tid)) or 0
 
     malicious_obs = db.scalar(
-        select(func.count()).select_from(Observable).where(Observable.verdict == "malicious")
+        select(func.count()).select_from(Observable)
+        .where(Observable.tenant_id == tid, Observable.verdict == "malicious")
     ) or 0
     crit_findings = db.scalar(
-        select(func.count()).select_from(BrandFinding).where(
-            BrandFinding.verdict.in_(["malicious", "suspicious"])
-        )
+        select(func.count()).select_from(BrandFinding)
+        .where(BrandFinding.tenant_id == tid,
+               BrandFinding.verdict.in_(["malicious", "suspicious"]))
     ) or 0
     return {
         "observables": count(Observable),

@@ -91,7 +91,7 @@ async function logout() {
 }
 
 function showOnly(id) {
-  ["login", "createAdmin", "wizard", "app"].forEach(s =>
+  ["login", "createAdmin", "wizard", "operator", "app"].forEach(s =>
     $("#" + s).classList.toggle("hidden", s !== id));
 }
 
@@ -99,15 +99,20 @@ async function boot() {
   let st = null;
   try { st = await api("GET", "/setup/status"); } catch { /* segue */ }
 
-  // 1) nenhum usuário -> criar 1º admin
-  if (st && st.needs_admin) { showOnly("createAdmin"); return; }
+  // 1) nenhum usuário -> criar operador de plataforma
+  if (st && st.needs_operator) { showOnly("createAdmin"); return; }
 
   // 2) sessão
   try { ME = await api("GET", "/auth/me"); }
   catch { showOnly("login"); return; }
 
-  // 3) gate: setup obrigatório enquanto não concluído
-  if (st && !st.setup_completed) {
+  // 3) operador -> console da operação
+  if (ME.is_operator) { showOnly("operator"); renderOperator(); return; }
+
+  // 4) usuário de tenant -> gate de setup do próprio tenant
+  let ts = null;
+  try { ts = await api("GET", "/tenant/setup-status"); } catch { /* segue */ }
+  if (ts && !ts.setup_completed) {
     showOnly("wizard");
     if (can("admin")) { startWizard(); }
     else {
@@ -118,7 +123,7 @@ async function boot() {
     return;
   }
 
-  // 4) app liberado
+  // 5) app do tenant liberado
   showOnly("app");
   $("#who").innerHTML = `${esc(ME.subject)} &nbsp;<span class="badge role-${esc(ME.role)}">${esc(ME.role)}</span>`;
   $("#navUsers").style.display = can("admin") ? "" : "none";
@@ -130,10 +135,64 @@ async function doCreateAdmin(e) {
   e.preventDefault();
   $("#adminErr").textContent = "";
   try {
-    await api("POST", "/setup/admin", { email: $("#caEmail").value, password: $("#caPass").value });
-    toast("Administrador criado");
+    await api("POST", "/setup/operator", { email: $("#caEmail").value, password: $("#caPass").value });
+    toast("Operador criado");
     await boot();
   } catch (err) { $("#adminErr").textContent = err.message; }
+}
+
+// ===================== CONSOLE DO OPERADOR =====================
+async function renderOperator() {
+  $("#opWho").innerHTML = `${esc(ME.subject)} &nbsp;<span class="badge role-admin">operador</span>`;
+  const m = $("#opMain");
+  m.innerHTML = `<h2 class="title">Tenants (clientes)</h2>
+    <p class="muted" style="margin:-8px 0 16px">Cada tenant é isolado: usuários, marcas, IOCs, watchlist, findings e auditoria são exclusivos do cliente.</p>`;
+  const p = el("div", { class: "panel" });
+  p.append(el("div", { class: "row" },
+    field("Nome do tenant", inputEl("tName", "ex.: Cliente X")),
+    field("E-mail do admin", inputEl("tEmail", "admin@cliente.com")),
+    field("Senha (vazio = gerar)", inputEl("tPass", "", "password")),
+    el("button", { onclick: createTenant }, "Criar tenant")));
+  m.append(p);
+  m.append(el("div", { class: "panel", id: "tList" }, "carregando…"));
+  await loadTenants();
+}
+async function loadTenants() {
+  try {
+    const items = await api("GET", "/tenants");
+    const box = $("#tList");
+    if (!items.length) { box.innerHTML = '<span class="muted">Nenhum tenant ainda.</span>'; return; }
+    const rows = items.map(t => `
+      <tr>
+        <td>${esc(t.id)}</td>
+        <td><b>${esc(t.name)}</b></td>
+        <td><code>${esc(t.slug)}</code></td>
+        <td class="muted">${esc(t.status)}</td>
+        <td>${actBtn("tenantKey", t.id, "Gerar API key")}</td>
+      </tr>`).join("");
+    box.innerHTML = `<table><thead><tr><th>ID</th><th>Nome</th><th>Slug</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  } catch (e) { $("#tList").textContent = e.message; }
+}
+async function createTenant() {
+  const name = $("#tName").value.trim(), email = $("#tEmail").value.trim(), pass = $("#tPass").value;
+  if (!name || !email) { toast("Informe nome e e-mail do admin.", true); return; }
+  const body = { name, admin_email: email };
+  if (pass) body.admin_password = pass;
+  try {
+    const r = await api("POST", "/tenants", body);
+    if (r.admin_temporary_password)
+      alert(`Tenant "${r.name}" criado.\n\nAdmin: ${r.admin_email}\nSenha temporária: ${r.admin_temporary_password}\n\nRepasse por canal seguro.`);
+    else toast("Tenant criado");
+    $("#tName").value = $("#tEmail").value = $("#tPass").value = "";
+    await loadTenants();
+  } catch (e) { toast(e.message, true); }
+}
+async function genTenantKey(id) {
+  if (!confirm("Gerar uma API key (papel analyst) para este tenant?")) return;
+  try {
+    const r = await api("POST", `/tenants/${id}/api-keys`, { label: "ui", role: "analyst" });
+    alert(`API key do tenant ${id} (guarde agora, não será exibida de novo):\n\n${r.api_key}`);
+  } catch (e) { toast(e.message, true); }
 }
 
 // ===================== SETUP WIZARD =====================
@@ -750,6 +809,7 @@ const ACTIONS = {
   userOff: (id) => toggleUser(id, false),
   userReset: (id) => resetUser(id),
   userDel: (id) => delUser(id),
+  tenantKey: (id) => genTenantKey(id),
 };
 document.addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-action]");
@@ -773,6 +833,7 @@ $("#adminForm").addEventListener("submit", doCreateAdmin);
 $("#wizNext").addEventListener("click", wizNext);
 $("#wizBack").addEventListener("click", wizBack);
 $("#wizLogout").addEventListener("click", logout);
+$("#opLogout").addEventListener("click", logout);
 $("#logout").addEventListener("click", logout);
 $("#changePw").addEventListener("click", viewAccount);
 document.querySelectorAll("#nav button").forEach(b =>

@@ -1,9 +1,8 @@
-"""Bootstrap opcional do admin inicial (deploy headless).
+"""Bootstrap opcional do operador de plataforma (deploy headless).
 
-O caminho padrão de primeiro acesso é o Setup Wizard (/setup), que cria a
-organização e o primeiro admin pela interface. Este bootstrap só age se
-AMBOS BOOTSTRAP_ADMIN_EMAIL e BOOTSTRAP_ADMIN_PASSWORD estiverem definidos —
-útil para provisionamento automatizado sem interface.
+O caminho padrão é a tela "criar operador" (/setup/operator). Este bootstrap só
+age se AMBOS BOOTSTRAP_OPERATOR_EMAIL e BOOTSTRAP_OPERATOR_PASSWORD estiverem
+definidos e não houver nenhum usuário — útil para provisionamento automatizado.
 """
 import logging
 
@@ -17,29 +16,24 @@ from app.security import hash_password
 logger = logging.getLogger(__name__)
 
 
-def ensure_admin() -> None:
+def ensure_operator() -> None:
     db = SessionLocal()
     try:
         count = db.scalar(select(func.count()).select_from(User))
         if count and count > 0:
             return
-        # caminho padrão: deixa o Setup Wizard (/setup) criar o primeiro admin.
-        # só provisiona via env se AMBOS estiverem definidos (headless).
-        if not (config.BOOTSTRAP_ADMIN_EMAIL and config.BOOTSTRAP_ADMIN_PASSWORD):
-            logger.info("Nenhum usuário e sem BOOTSTRAP_ADMIN_*: aguardando Setup Wizard em /setup")
+        email = config.BOOTSTRAP_OPERATOR_EMAIL or config.BOOTSTRAP_ADMIN_EMAIL
+        password = config.BOOTSTRAP_OPERATOR_PASSWORD or config.BOOTSTRAP_ADMIN_PASSWORD
+        if not (email and password):
+            logger.info("Sem usuários e sem BOOTSTRAP_OPERATOR_*: aguardando /setup/operator")
             return
-
-        email = config.BOOTSTRAP_ADMIN_EMAIL.strip().lower()
-        admin = User(
-            email=email,
-            hashed_password=hash_password(config.BOOTSTRAP_ADMIN_PASSWORD),
-            role="admin",
-        )
-        db.add(admin)
+        op = User(email=email.strip().lower(), hashed_password=hash_password(password),
+                  role="admin", is_operator=True, tenant_id=None)
+        db.add(op)
         db.commit()
-        logger.info("Admin inicial provisionado via env: %s", email)
+        logger.info("Operador de plataforma provisionado via env: %s", email)
     except Exception as exc:
-        logger.warning("Bootstrap do admin falhou: %s", type(exc).__name__)
+        logger.warning("Bootstrap do operador falhou: %s", type(exc).__name__)
         db.rollback()
     finally:
         db.close()

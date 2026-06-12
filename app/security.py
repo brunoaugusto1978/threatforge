@@ -82,6 +82,22 @@ def verify_password(password: str, stored: str) -> bool:
     return False
 
 
+def generate_api_key() -> tuple[str, str, str]:
+    """Gera uma API key de tenant. Retorna (chave_completa, prefix, sha256).
+
+    A chave completa só é exibida uma vez; no banco guardamos prefix + hash.
+    """
+    secret = secrets.token_urlsafe(32)
+    full = f"tfk_{secret}"
+    prefix = full[:12]
+    digest = hashlib.sha256(full.encode()).hexdigest()
+    return full, prefix, digest
+
+
+def hash_api_key(full_key: str) -> str:
+    return hashlib.sha256(full_key.encode()).hexdigest()
+
+
 def generate_password(length: int = 16) -> str:
     """Gera senha aleatória que sempre satisfaz check_password_strength."""
     import string

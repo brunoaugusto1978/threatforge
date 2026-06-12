@@ -126,19 +126,30 @@
     </form>
   </section>
 
-  <!-- CRIAR PRIMEIRO ADMIN -->
+  <!-- CRIAR OPERADOR DE PLATAFORMA -->
   <section id="createAdmin" class="hidden">
     <h1>Threat<span style="color:var(--accent)">Forge</span></h1>
-    <p class="sub">Primeiro acesso — crie o administrador</p>
+    <p class="sub">Primeiro acesso — crie o operador de plataforma</p>
     <form id="adminForm">
-      <label for="caEmail">E-mail do administrador</label>
+      <label for="caEmail">E-mail do operador</label>
       <input id="caEmail" type="email" autocomplete="username" required>
       <label for="caPass">Senha (mín. 10, com letra e número)</label>
       <input id="caPass" type="password" autocomplete="new-password" required>
-      <button type="submit">Criar administrador</button>
+      <button type="submit">Criar operador</button>
       <div class="err" id="adminErr"></div>
     </form>
   </section>
+
+  <!-- CONSOLE DO OPERADOR (visão da operação) -->
+  <div id="operator" class="hidden">
+    <header>
+      <div class="logo">Threat<span>Forge</span> <span class="muted" style="font-weight:400">· Operação</span></div>
+      <div class="spacer"></div>
+      <span class="who" id="opWho"></span>
+      <button class="ghost sm" id="opLogout">Sair</button>
+    </header>
+    <main id="opMain"></main>
+  </div>
 
   <!-- SETUP WIZARD (multi-etapa, obrigatório) -->
   <section id="wizard" class="hidden">

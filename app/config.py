@@ -18,6 +18,13 @@ COOKIE_NAME: str = "tf_session"
 # Admin inicial (criado no startup se não houver nenhum usuário)
 BOOTSTRAP_ADMIN_EMAIL: str = os.environ.get("BOOTSTRAP_ADMIN_EMAIL", "")
 BOOTSTRAP_ADMIN_PASSWORD: str = os.environ.get("BOOTSTRAP_ADMIN_PASSWORD", "")
+
+# Operador de plataforma inicial (multi-tenant). Se ambos definidos, é criado
+# no startup quando não há usuários. Senão, a tela de criar operador cuida disso.
+BOOTSTRAP_OPERATOR_EMAIL: str = os.environ.get("BOOTSTRAP_OPERATOR_EMAIL", "")
+BOOTSTRAP_OPERATOR_PASSWORD: str = os.environ.get("BOOTSTRAP_OPERATOR_PASSWORD", "")
+# Header usado pelo operador para atuar dentro de um tenant específico
+TENANT_HEADER: str = "X-Tenant-Id"
 ABUSECH_API_KEY: str = os.environ.get("ABUSECH_API_KEY", "")
 CORS_ORIGINS: list[str] = [
     o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()

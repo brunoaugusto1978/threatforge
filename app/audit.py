@@ -41,6 +41,7 @@ def record(
     action: str,
     target_type: str | None = None,
     target_id: str | int | None = None,
+    tenant_id: int | None = None,
     request: Request | None = None,
     detail: dict | None = None,
     commit: bool = True,
@@ -48,6 +49,7 @@ def record(
     """Grava um evento de auditoria. Falha de auditoria não derruba a ação."""
     try:
         entry = AuditLog(
+            tenant_id=tenant_id,
             actor=actor[:255],
             actor_role=actor_role,
             action=action[:60],
