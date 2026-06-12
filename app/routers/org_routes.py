@@ -121,7 +121,7 @@ def list_sectors(_: Principal = Depends(require_viewer)):
 @router.get("/sectors/{sector}/profile", response_model=SectorProfileOut,
             dependencies=[Depends(require_viewer)])
 def sector_profile(sector: str):
-    p = sectors.get_profile(sector)
+    p = sectors.profile_public(sector)
     return SectorProfileOut(sector=sector, threats=p["threats"], keywords=p["keywords"],
                             ioc_categories=p["ioc_categories"], cve_watchlist=p["cve_watchlist"],
                             sources=p["sources"])
@@ -136,25 +136,25 @@ def apply_threat_profile(request: Request, db: Session = Depends(get_db),
     if org is None:
         raise HTTPException(status_code=400, detail="Configure a organização primeiro.")
     brands = list(db.scalars(select(Brand)))
-    brand_by_name = {b.name: b for b in brands}
-    names = list(brand_by_name.keys())
+    brand_payload = [{"name": b.name, "domains": b.domain_list()} for b in brands]
 
-    seed_dicts = sectors.generate_seed_strings(org.sector, names)
-    # evita duplicar seeds já existentes para o mesmo setor
-    existing = {s.seed for s in db.scalars(
+    seed_dicts = sectors.generate_seeds(org.sector, brand_payload)
+    # evita duplicar seeds já existentes (case-insensitive) para o mesmo setor
+    existing = {s.seed.lower() for s in db.scalars(
         select(MonitoringSeed).where(MonitoringSeed.sector == org.sector))}
     created = 0
     for sd in seed_dicts:
-        if sd["seed"] in existing:
+        if sd["seed"].lower() in existing:
             continue
-        # vincula à primeira marca cujo nome aparece no seed (se houver)
-        bid = next((brand_by_name[n].id for n in names if n.lower() in sd["seed"]), None)
+        # vincula à marca cujo nome aparece no seed (se houver)
+        bid = next((b.id for b in brands if b.name.lower() in sd["seed"].lower()), None)
         db.add(MonitoringSeed(
             brand_id=bid, seed=sd["seed"], seed_type=sd["seed_type"],
-            source_type="sector_profile", sector=org.sector,
-            status="candidate", confidence=sd["confidence"],
+            scope=sd["scope"], source_type=sd.get("source_type", "sector_profile"),
+            sector=org.sector, status="candidate", confirmed=False,
+            confidence=sd["confidence"],
         ))
-        existing.add(sd["seed"])
+        existing.add(sd["seed"].lower())
         created += 1
     db.commit()
     audit.record(db, actor=principal.subject, actor_role=principal.role,
@@ -164,11 +164,14 @@ def apply_threat_profile(request: Request, db: Session = Depends(get_db),
 
 
 @router.get("/seeds", response_model=list[SeedOut], dependencies=[Depends(require_viewer)])
-def list_seeds(status: str | None = None, limit: int = 500, db: Session = Depends(get_db)):
-    stmt = select(MonitoringSeed).order_by(MonitoringSeed.id.desc())
+def list_seeds(status: str | None = None, scope: str | None = None,
+               limit: int = 1000, db: Session = Depends(get_db)):
+    stmt = select(MonitoringSeed).order_by(MonitoringSeed.scope, MonitoringSeed.id.desc())
     if status:
         stmt = stmt.where(MonitoringSeed.status == status)
-    return list(db.scalars(stmt.limit(min(limit, 2000))))
+    if scope:
+        stmt = stmt.where(MonitoringSeed.scope == scope)
+    return list(db.scalars(stmt.limit(min(limit, 5000))))
 
 
 # ---------- Finalização do setup ----------

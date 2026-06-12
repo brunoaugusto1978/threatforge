@@ -352,7 +352,7 @@ WIZ_SAVE[5] = async () => true;
 function navigate(view) {
   document.querySelectorAll("#nav button").forEach(b =>
     b.classList.toggle("active", b.dataset.view === view));
-  ({ dashboard: viewDashboard, iocs: viewIocs, brands: viewBrands,
+  ({ dashboard: viewDashboard, iocs: viewIocs, brands: viewBrands, watchlist: viewWatchlist,
      org: viewOrg, users: viewUsers, audit: viewAudit }[view] || viewDashboard)();
 }
 
@@ -568,6 +568,76 @@ async function resetUser(id) {
     alert(`Senha temporária de ${r.email}:\n\n${r.temporary_password}\n\nRepasse por canal seguro. Não será exibida de novo.`);
     await loadUsers();
   } catch (e) { toast(e.message, true); }
+}
+
+// ---- Watchlist (seeds por escopo) ----
+const SCOPE_LABEL = {
+  global: "Watchlist Global",
+  sector: "Watchlist Setorial (Threat Profile)",
+  organization: "Watchlist Organizacional",
+};
+const SCOPE_HINT = {
+  organization: "Itens derivados da marca: domínio, slug e combinações marca + termo de risco.",
+  sector: "Itens derivados do setor selecionado: ameaças típicas e categorias de CVE.",
+  global: "Indicadores relevantes para qualquer organização.",
+};
+const PRIO_COLOR = { high: "var(--red)", medium: "var(--orange)", low: "var(--gray)" };
+const TYPE_DESC = {
+  domain: "Domínio oficial ou domínio-base monitorado",
+  slug: "Nome simplificado da marca (termo de busca, não é domínio)",
+  keyword_combo: "Combinação de marca + termo de risco",
+  threat: "Ameaça típica do setor",
+  cve_tech: "Categoria tecnológica para watchlist de CVEs",
+};
+const PRIO_TOOLTIP = "Prioridade indica a relevância/urgência da seed para monitoramento. Não representa severidade confirmada nem um IOC validado.";
+
+async function viewWatchlist() {
+  const m = $("#main");
+  m.innerHTML = `<h2 class="title">Watchlist</h2>
+    <div class="panel" style="border-left:3px solid var(--accent);margin-bottom:16px">
+      <span class="muted">Os itens desta tela são <b>seeds de monitoramento</b>. Não representam
+      ameaça confirmada, incidente ou IOC validado. Um <b>finding</b> só será criado quando houver
+      evidência real coletada em uma fonte monitorada. Os findings relacionados à marca ficarão
+      disponíveis na aba <b>Marcas</b>.</span>
+    </div>
+    <div id="wl">carregando…</div>`;
+  try {
+    const seeds = await api("GET", "/seeds");
+    if (!seeds.length) {
+      $("#wl").innerHTML = '<span class="muted">Nenhuma seed ainda. Gere no wizard (Threat Profile) ou reabra a configuração.</span>';
+      return;
+    }
+    const groups = {};
+    seeds.forEach(s => (groups[s.scope] || (groups[s.scope] = [])).push(s));
+    let html = "";
+    ["organization", "sector", "global"].forEach(scope => {
+      const arr = groups[scope] || [];
+      if (!arr.length) return;
+      const rows = arr.map(s => `
+        <tr>
+          <td><code>${esc(s.seed)}</code></td>
+          <td class="muted" title="${esc(TYPE_DESC[s.seed_type] || "")}"><code>${esc(s.seed_type)}</code></td>
+          <td title="${esc(PRIO_TOOLTIP)}"><span style="color:${PRIO_COLOR[s.confidence] || "var(--muted)"}">${esc(s.confidence)}</span></td>
+          <td class="muted">${esc(s.status)}</td>
+          <td class="muted"><code>${esc(s.source_type)}</code></td>
+        </tr>`).join("");
+      html += `<div class="panel">
+        <b>${esc(SCOPE_LABEL[scope] || scope)}</b> <span class="muted">· ${arr.length}</span>
+        <div class="muted" style="font-size:12px;margin-top:2px">${esc(SCOPE_HINT[scope] || "")}</div>
+        <table style="margin-top:10px"><thead><tr>
+          <th>Seed</th>
+          <th>Tipo</th>
+          <th title="${esc(PRIO_TOOLTIP)}">Prioridade ⓘ</th>
+          <th>Status</th>
+          <th>Fonte</th>
+        </tr></thead><tbody>${rows}</tbody></table></div>`;
+    });
+    // legenda dos tipos
+    html += `<div class="panel"><b>Legenda de tipos</b>
+      <div class="chips" style="margin-top:8px">${Object.entries(TYPE_DESC).map(([k, v]) =>
+        `<span class="chip" title="${esc(v)}"><code>${esc(k)}</code> — ${esc(v)}</span>`).join("")}</div></div>`;
+    $("#wl").innerHTML = html;
+  } catch (e) { $("#wl").textContent = e.message; }
 }
 
 // ---- Organização ----

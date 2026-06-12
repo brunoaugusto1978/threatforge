@@ -146,10 +146,13 @@ class MonitoringSeed(Base):
         ForeignKey("brands.id", ondelete="CASCADE"), nullable=True, index=True
     )
     seed: Mapped[str] = mapped_column(String(512), index=True)
-    seed_type: Mapped[str] = mapped_column(String(30))  # keyword_combo|threat|ioc_category|cve|source
+    seed_type: Mapped[str] = mapped_column(String(30))  # keyword_combo|domain|slug|threat|cve_tech
+    # taxonomia: global | sector | organization (finding com evidência fica em outra tabela)
+    scope: Mapped[str] = mapped_column(String(20), default="sector", index=True)
     source_type: Mapped[str] = mapped_column(String(40), default="sector_profile")
     sector: Mapped[str | None] = mapped_column(String(100), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="candidate", index=True)
+    confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
     confidence: Mapped[str] = mapped_column(String(10), default="low")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

@@ -60,8 +60,21 @@ Abra `http://localhost:8000/` no navegador. O onboarding é um fluxo obrigatóri
 
 No Threat Profile, ao escolher o setor (ex.: **Telecom**), a plataforma sugere
 keywords, ameaças, categorias de IOC e fontes típicas e gera **seeds de
-monitoramento** (`status=candidate`, watchlist) — nunca findings confirmados.
-Um finding só nasce depois, com evidência real.
+monitoramento** (`status=candidate`, `confirmed=false`, fonte `sector_profile`) —
+nunca findings confirmados. Um finding só nasce depois, com evidência real.
+
+### Taxonomia de indicadores
+
+A plataforma separa quatro níveis (veja na aba **Watchlist**):
+
+- **IOC global** — vale para qualquer organização (KEV, URLhaus, EPSS). Vive em IOCs.
+- **IOC setorial** (`scope=sector`) — ameaças e tecnologias típicas do setor
+  (ex.: SIM swap, fraude Pix, CVEs de VPN/SSO/webmail).
+- **IOC organizacional** (`scope=organization`) — derivado das marcas: combinações
+  `{marca}+termo` (ex.: `Claro Música APK`, `Claro Música premium grátis`), o slug
+  da marca (`claromusica`) e os domínios oficiais (`claromusica.com.br`).
+- **Finding com evidência** — criado **somente** com coleta/enriquecimento real
+  (CT logs, DNS, URLhaus...). Fica na aba **Marcas**, separado das seeds.
 
 Provisionamento headless (sem interface) continua possível: defina
 `BOOTSTRAP_ADMIN_EMAIL` **e** `BOOTSTRAP_ADMIN_PASSWORD` no `.env` e o admin é

@@ -381,9 +381,11 @@ class SeedOut(BaseModel):
     brand_id: int | None
     seed: str
     seed_type: str
+    scope: str
     source_type: str
     sector: str | None
     status: str
+    confirmed: bool
     confidence: str
     created_at: datetime
 
