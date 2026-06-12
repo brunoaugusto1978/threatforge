@@ -76,42 +76,6 @@ class AttackTechnique(Base):
     url: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
 
-class Brand(Base):
-    __tablename__ = "brands"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
-    keywords: Mapped[list | None] = mapped_column(JSON, nullable=True)  # termos extras
-    legit_domains: Mapped[list | None] = mapped_column(JSON, nullable=True)  # whitelist
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    last_scan_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-
-    findings: Mapped[list["BrandFinding"]] = relationship(
-        back_populates="brand", cascade="all, delete-orphan"
-    )
-
-
-class BrandFinding(Base):
-    __tablename__ = "brand_findings"
-    __table_args__ = (UniqueConstraint("brand_id", "domain", name="uq_finding_brand_domain"),)
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    brand_id: Mapped[int] = mapped_column(ForeignKey("brands.id", ondelete="CASCADE"), index=True)
-    domain: Mapped[str] = mapped_column(String(253), index=True)
-    detection: Mapped[str] = mapped_column(String(30))  # typosquat_dns | ct_log
-    score: Mapped[int] = mapped_column(Integer, default=0)
-    verdict: Mapped[str] = mapped_column(String(20), default="unknown")
-    score_factors: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    evidence: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # IPs, MX, certs, RDAP
-    status: Mapped[str] = mapped_column(String(30), default="new", index=True)
-    # new | triaged | confirmed | false_positive | takedown_requested | closed
-    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    alerted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-
-    brand: Mapped[Brand] = relationship(back_populates="findings")
-
-
 class SyncState(Base):
     __tablename__ = "sync_state"
 

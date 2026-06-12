@@ -1,0 +1,29 @@
+# Override para podman rootless em WSL2, onde o netavark falha ao aplicar
+# regras de nftables na rede bridge. Usa rede host (sem bridge, sem firewall).
+# Uso:
+#   docker compose -f docker-compose.yml -f docker-compose.podman.yml up -d
+services:
+  db:
+    network_mode: host
+    # postgres passa a escutar em localhost:5432 do host
+
+  api:
+    network_mode: host
+    # em rede host o mapeamento de "ports" é ignorado: a API escuta
+    # diretamente em localhost:8000 do host
+    environment:
+      API_KEY: ${API_KEY}
+      DATABASE_URL: postgresql+psycopg2://threatforge:${POSTGRES_PASSWORD}@localhost:5432/threatforge
+      ABUSECH_API_KEY: ${ABUSECH_API_KEY:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      ALERT_MIN_VERDICT: ${ALERT_MIN_VERDICT:-suspicious}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_TO: ${SMTP_TO:-}
+      SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
