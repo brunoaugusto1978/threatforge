@@ -133,8 +133,12 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     hashed_password: Mapped[str] = mapped_column(String(512))
     role: Mapped[str] = mapped_column(String(20), default="viewer")  # admin|analyst|viewer
-    # operador de plataforma: tenant_id nulo, enxerga a visão da operação
+    # operador de plataforma: tenant_id nulo, enxerga a visão da operação.
+    # is_operator=true NÃO concede acesso irrestrito — depende de operator_role
+    # e de operator_tenant_access (para support_operator/support_viewer).
     is_operator: Mapped[bool] = mapped_column(Boolean, default=False)
+    operator_role: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # platform_admin | support_operator | support_viewer
     tenant_id: Mapped[int | None] = mapped_column(
         ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True
     )
