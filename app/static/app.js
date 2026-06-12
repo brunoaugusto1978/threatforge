@@ -4,8 +4,11 @@
 const $ = (sel) => document.querySelector(sel);
 let ME = null;
 
+let SUPPORT_TENANT = null;  // operador em modo suporte dentro de um tenant
+
 async function api(method, path, body) {
   const opts = { method, headers: {}, credentials: "same-origin" };
+  if (SUPPORT_TENANT) opts.headers["X-Tenant-Id"] = String(SUPPORT_TENANT.id);
   if (body !== undefined) {
     opts.headers["Content-Type"] = "application/json";
     opts.body = JSON.stringify(body);
@@ -56,7 +59,9 @@ function toast(msg, isErr = false) {
 
 function can(role) {
   const rank = { viewer: 1, analyst: 2, admin: 3 };
-  return ME && rank[ME.role] >= rank[role];
+  // em modo suporte, usa o papel efetivo do operador no tenant
+  const myRole = (SUPPORT_TENANT && ME && ME._effRole) ? ME._effRole : (ME && ME.role);
+  return ME && rank[myRole] >= rank[role];
 }
 function verdictCell(v) {
   return `<span class="v v-${esc(v)}">${esc((v || "").toUpperCase())}</span>`;
@@ -86,6 +91,8 @@ async function doLogin(e) {
 async function logout() {
   try { await api("POST", "/auth/logout"); } catch {}
   ME = null;
+  SUPPORT_TENANT = null;
+  $("#supportBanner").classList.add("hidden");
   showOnly("login");
   $("#password").value = "";
 }
@@ -192,36 +199,61 @@ async function doCreateAdmin(e) {
 }
 
 // ===================== CONSOLE DO OPERADOR =====================
+let OP_TAB = "tenants";
+function isPlatformAdmin() { return ME && ME.operator_role === "platform_admin"; }
+
 async function renderOperator() {
-  $("#opWho").innerHTML = `${esc(ME.subject)} &nbsp;<span class="badge role-admin">operador</span>`;
+  const roleLabel = ME.operator_role === "platform_admin" ? "platform admin"
+    : ME.operator_role === "support_operator" ? "support" : "support (leitura)";
+  $("#opWho").innerHTML = `${esc(ME.subject)} &nbsp;<span class="badge role-admin">${esc(roleLabel)}</span>`;
   const m = $("#opMain");
-  m.innerHTML = `<h2 class="title">Tenants (clientes)</h2>
-    <p class="muted" style="margin:-8px 0 16px">Cada tenant é isolado: usuários, marcas, IOCs, watchlist, findings e auditoria são exclusivos do cliente.</p>`;
-  const p = el("div", { class: "panel" });
-  p.append(el("div", { class: "row" },
-    field("Nome do tenant", inputEl("tName", "ex.: Cliente X")),
-    field("E-mail do admin", inputEl("tEmail", "admin@cliente.com")),
-    field("Senha (vazio = enviar convite)", inputEl("tPass", "", "password")),
-    el("button", { onclick: createTenant }, "Criar tenant")));
-  m.append(p);
-  m.append(el("div", { class: "panel", id: "tList" }, "carregando…"));
-  await loadTenants();
+  const tabs = el("div", { class: "optabs" });
+  const tb = (id, label) => el("button", {
+    class: OP_TAB === id ? "active" : "", onclick: () => { OP_TAB = id; renderOperator(); }
+  }, label);
+  tabs.append(tb("tenants", "Tenants"));
+  if (isPlatformAdmin()) tabs.append(tb("operators", "Operadores"));
+  m.innerHTML = "";
+  m.append(tabs);
+  const body = el("div", { id: "opBody" });
+  m.append(body);
+  if (OP_TAB === "operators" && isPlatformAdmin()) await viewOpOperators(body);
+  else await viewOpTenants(body);
 }
-async function loadTenants() {
+
+// ---- Tenants ----
+async function viewOpTenants(box) {
+  box.innerHTML = `<h2 class="title">Tenants (clientes)</h2>
+    <p class="muted" style="margin:-8px 0 16px">Cada tenant é isolado. Entre em modo suporte para validar o ambiente do cliente.</p>`;
+  if (isPlatformAdmin()) {
+    const p = el("div", { class: "panel" });
+    p.append(el("div", { class: "row" },
+      field("Nome do tenant", inputEl("tName", "ex.: Cliente X")),
+      field("E-mail do admin", inputEl("tEmail", "admin@cliente.com")),
+      field("Senha (vazio = enviar convite)", inputEl("tPass", "", "password")),
+      el("button", { onclick: createTenant }, "Criar tenant")));
+    box.append(p);
+  }
+  const list = el("div", { class: "panel", id: "tList" }, "carregando…");
+  box.append(list);
   try {
     const items = await api("GET", "/tenants");
-    const box = $("#tList");
-    if (!items.length) { box.innerHTML = '<span class="muted">Nenhum tenant ainda.</span>'; return; }
+    if (!items.length) { list.innerHTML = '<span class="muted">Nenhum tenant atribuído.</span>'; return; }
     const rows = items.map(t => `
       <tr>
         <td>${esc(t.id)}</td>
         <td><b>${esc(t.name)}</b></td>
         <td><code>${esc(t.slug)}</code></td>
         <td class="muted">${esc(t.status)}</td>
-        <td>${actBtn("tenantKey", t.id, "Gerar API key")}</td>
+        <td>
+          ${actBtn("enterTenant", t.id, "Acessar tenant")}
+          ${isPlatformAdmin() ? actBtn("tenantKey", t.id, "API key") : ""}
+          ${isPlatformAdmin() ? actBtn(t.status === "active" ? "tenantSuspend" : "tenantActivate", t.id, t.status === "active" ? "Bloquear" : "Ativar") : ""}
+        </td>
       </tr>`).join("");
-    box.innerHTML = `<table><thead><tr><th>ID</th><th>Nome</th><th>Slug</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
-  } catch (e) { $("#tList").textContent = e.message; }
+    list.innerHTML = `<table><thead><tr><th>ID</th><th>Nome</th><th>Slug</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+    list.dataset.names = JSON.stringify(Object.fromEntries(items.map(t => [t.id, t.name])));
+  } catch (e) { list.textContent = e.message; }
 }
 async function createTenant() {
   const name = $("#tName").value.trim(), email = $("#tEmail").value.trim(), pass = $("#tPass").value;
@@ -233,11 +265,8 @@ async function createTenant() {
     if (r.invite_link) {
       const sent = r.invite_email_sent ? "E-mail de convite enviado." : "SMTP não configurado — use o link abaixo (dev).";
       prompt(`Tenant "${r.name}" criado.\n${sent}\n\nLink de convite (uso único) para ${r.admin_email}:`, r.invite_link);
-    } else {
-      toast("Tenant criado");
-    }
-    $("#tName").value = $("#tEmail").value = $("#tPass").value = "";
-    await loadTenants();
+    } else { toast("Tenant criado"); }
+    renderOperator();
   } catch (e) { toast(e.message, true); }
 }
 async function genTenantKey(id) {
@@ -246,6 +275,107 @@ async function genTenantKey(id) {
     const r = await api("POST", `/tenants/${id}/api-keys`, { label: "ui", role: "analyst" });
     alert(`API key do tenant ${id} (guarde agora, não será exibida de novo):\n\n${r.api_key}`);
   } catch (e) { toast(e.message, true); }
+}
+async function setTenantStatus(id, status) {
+  try { await api("PATCH", `/tenants/${id}?status=${status}`); toast("Status atualizado"); renderOperator(); }
+  catch (e) { toast(e.message, true); }
+}
+
+// ---- Modo suporte: entrar/sair do tenant ----
+function tenantNameFromList(id) {
+  try { return JSON.parse($("#tList").dataset.names || "{}")[id] || ("tenant " + id); }
+  catch { return "tenant " + id; }
+}
+function enterTenant(id) {
+  SUPPORT_TENANT = { id, name: tenantNameFromList(id) };
+  $("#supportTenantName").textContent = SUPPORT_TENANT.name;
+  $("#supportBanner").classList.remove("hidden");
+  showOnly("app");
+  $("#who").innerHTML = `${esc(ME.subject)} &nbsp;<span class="badge role-admin">${esc(ME.operator_role || "operador")}</span>`;
+  // operador em suporte: mostra abas conforme papel efetivo
+  const eff = ME.operator_role === "platform_admin" ? "admin"
+    : ME.operator_role === "support_operator" ? "analyst" : "viewer";
+  $("#navUsers").style.display = eff === "admin" ? "" : "none";
+  $("#navAudit").style.display = eff === "admin" ? "" : "none";
+  ME._effRole = eff;
+  navigate("dashboard");
+}
+function exitTenant() {
+  SUPPORT_TENANT = null;
+  ME._effRole = null;
+  $("#supportBanner").classList.add("hidden");
+  showOnly("operator");
+  renderOperator();
+}
+
+// ---- Operadores (platform_admin) ----
+async function viewOpOperators(box) {
+  box.innerHTML = `<h2 class="title">Operadores</h2>
+    <p class="muted" style="margin:-8px 0 16px">Platform Admin administra a plataforma. Support Operator atende apenas tenants atribuídos.</p>`;
+  const p = el("div", { class: "panel" });
+  p.append(el("div", { class: "row" },
+    field("E-mail", inputEl("opEmail", "operador@empresa.com")),
+    field("Senha (vazio = gerar)", inputEl("opPass", "", "password")),
+    field("Papel", selectEl("opRole", ["support_operator", "support_viewer", "platform_admin"])),
+    el("button", { onclick: createOperator }, "Criar operador")));
+  box.append(p);
+  const list = el("div", { class: "panel", id: "opList" }, "carregando…");
+  box.append(list);
+  try {
+    const ops = await api("GET", "/operators");
+    const rows = ops.map(o => `
+      <tr>
+        <td>${esc(o.email)}</td>
+        <td><span class="badge role-${o.operator_role === "platform_admin" ? "admin" : "analyst"}">${esc(o.operator_role || "")}</span></td>
+        <td>${o.is_active ? '<span style="color:var(--green)">ativo</span>' : '<span class="muted">inativo</span>'}</td>
+        <td>
+          ${o.operator_role !== "platform_admin" ? actBtn("opAccess", o.id, "Tenants permitidos") : '<span class="muted">acesso total</span>'}
+          ${actBtn(o.is_active ? "opOff" : "opOn", o.id, o.is_active ? "Desativar" : "Ativar")}
+        </td>
+      </tr>`).join("");
+    list.innerHTML = `<table><thead><tr><th>E-mail</th><th>Papel</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table><div id="opAccessBox"></div>`;
+  } catch (e) { list.textContent = e.message; }
+}
+async function createOperator() {
+  const email = $("#opEmail").value.trim(), pass = $("#opPass").value, role = $("#opRole").value;
+  if (!email) { toast("Informe o e-mail.", true); return; }
+  const body = { email, operator_role: role };
+  if (pass) body.password = pass;
+  try {
+    await api("POST", "/operators", body);
+    if (!pass) toast("Operador criado — defina a senha via reset (ou informe senha).");
+    else toast("Operador criado");
+    renderOperator();
+  } catch (e) { toast(e.message, true); }
+}
+async function toggleOperator(id, active) {
+  try { await api("PATCH", `/operators/${id}`, { is_active: active }); toast("Atualizado"); renderOperator(); }
+  catch (e) { toast(e.message, true); }
+}
+async function manageOpAccess(id) {
+  const box = $("#opAccessBox");
+  try {
+    const [access, tenants] = await Promise.all([
+      api("GET", `/operators/${id}/tenant-access`), api("GET", "/tenants")]);
+    const granted = new Set(access.filter(a => a.is_active).map(a => a.tenant_id));
+    const rows = tenants.map(t => `
+      <tr><td>${esc(t.name)}</td>
+        <td>${granted.has(t.id) ? '<span style="color:var(--green)">permitido</span>' : '<span class="muted">—</span>'}</td>
+        <td>${granted.has(t.id)
+          ? `<button class="sm ghost" data-action="opRevoke" data-id="${id}" data-tid="${t.id}">Revogar</button>`
+          : `<button class="sm ghost" data-action="opGrant" data-id="${id}" data-tid="${t.id}">Conceder</button>`}</td>
+      </tr>`).join("");
+    box.innerHTML = `<div class="panel" style="margin-top:14px"><b>Tenants permitidos — operador #${id}</b>
+      <table style="margin-top:8px"><thead><tr><th>Tenant</th><th>Acesso</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  } catch (e) { toast(e.message, true); }
+}
+async function grantAccess(opId, tid) {
+  try { await api("POST", `/operators/${opId}/tenant-access`, { tenant_id: tid, access_role: "support_operator" }); toast("Acesso concedido"); manageOpAccess(opId); }
+  catch (e) { toast(e.message, true); }
+}
+async function revokeAccess(opId, tid) {
+  try { await api("DELETE", `/operators/${opId}/tenant-access/${tid}`); toast("Acesso revogado"); manageOpAccess(opId); }
+  catch (e) { toast(e.message, true); }
 }
 
 // ===================== SETUP WIZARD =====================
@@ -863,12 +993,20 @@ const ACTIONS = {
   userReset: (id) => resetUser(id),
   userDel: (id) => delUser(id),
   tenantKey: (id) => genTenantKey(id),
+  enterTenant: (id) => enterTenant(id),
+  tenantSuspend: (id) => setTenantStatus(id, "suspended"),
+  tenantActivate: (id) => setTenantStatus(id, "active"),
+  opAccess: (id) => manageOpAccess(id),
+  opOn: (id) => toggleOperator(id, true),
+  opOff: (id) => toggleOperator(id, false),
+  opGrant: (id, btn) => grantAccess(id, Number(btn.dataset.tid)),
+  opRevoke: (id, btn) => revokeAccess(id, Number(btn.dataset.tid)),
 };
 document.addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-action]");
   if (!btn) return;
   const fn = ACTIONS[btn.dataset.action];
-  if (fn) fn(Number(btn.dataset.id));
+  if (fn) fn(Number(btn.dataset.id), btn);
 });
 
 // ---------- form helpers ----------
@@ -888,6 +1026,7 @@ $("#wizNext").addEventListener("click", wizNext);
 $("#wizBack").addEventListener("click", wizBack);
 $("#wizLogout").addEventListener("click", logout);
 $("#opLogout").addEventListener("click", logout);
+$("#exitTenant").addEventListener("click", exitTenant);
 $("#logout").addEventListener("click", logout);
 $("#changePw").addEventListener("click", viewAccount);
 document.querySelectorAll("#nav button").forEach(b =>

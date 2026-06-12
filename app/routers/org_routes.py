@@ -59,11 +59,11 @@ def bootstrap_operator(payload: AdminBootstrap, request: Request, response: Resp
     if _user_count(db) > 0:
         raise HTTPException(status_code=409, detail="Plataforma já inicializada.")
     op = User(email=payload.email, hashed_password=hash_password(payload.password),
-              role="admin", is_operator=True, tenant_id=None)
+              role="admin", is_operator=True, operator_role="platform_admin", tenant_id=None)
     db.add(op)
     db.commit()
     db.refresh(op)
-    audit.record(db, actor=op.email, actor_role="operator",
+    audit.record(db, actor=op.email, actor_role="platform_admin",
                  action="bootstrap_operator_created", target_type="user", target_id=op.id,
                  request=request)
     token = create_token(sub=str(op.id), role="admin", pwd_version=op.pwd_version)

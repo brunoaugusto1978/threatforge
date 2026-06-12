@@ -89,7 +89,8 @@ def login(payload: LoginRequest, request: Request, response: Response,
     _set_session_cookie(response, token)
     audit.record(db, actor=user.email, actor_role=user.role, tenant_id=user.tenant_id,
                  action="auth.login", request=request)
-    return {"email": user.email, "role": user.role, "is_operator": user.is_operator}
+    return {"email": user.email, "role": user.role, "is_operator": user.is_operator,
+            "operator_role": user.operator_role}
 
 
 @router.post("/auth/logout")
@@ -104,7 +105,8 @@ def logout(request: Request, response: Response,
 @router.get("/auth/me", response_model=MeOut)
 def me(principal: Principal = Depends(get_principal)):
     return MeOut(subject=principal.subject, role=principal.role, kind=principal.kind,
-                 is_operator=principal.is_operator, tenant_id=principal.tenant_id)
+                 is_operator=principal.is_operator, operator_role=principal.operator_role,
+                 tenant_id=principal.tenant_id)
 
 
 @router.post("/auth/change-password")

@@ -129,7 +129,58 @@ def run():
     assert cc2.get("/brands").json() == []  # tenant novo, sem marcas
     _ok("cliente do convite isolado no próprio tenant")
 
-    print("\nISOLAMENTO + CONVITES MULTI-TENANT: TODOS OS TESTES PASSARAM ✅")
+    # ============ PAPÉIS DE OPERADOR ============
+    # platform admin cria um support operator
+    rso = op.post("/operators", json={"email": "support@plat.com", "password": "SupportPass1",
+                                       "operator_role": "support_operator"})
+    assert rso.status_code == 201, rso.text
+    sop_id = rso.json()["id"]
+    _ok("platform admin cria support operator")
+
+    sc = TestClient(app)
+    assert sc.post("/auth/login", json={"email": "support@plat.com", "password": "SupportPass1"}).status_code == 200
+
+    # support sem acesso a tenant nenhum: lista vazia e 403 ao tentar entrar em A
+    assert sc.get("/tenants").json() == []
+    assert sc.get("/brands", headers={"X-Tenant-Id": str(ta)}).status_code == 403
+    _ok("support sem atribuição não acessa nenhum tenant (403)")
+
+    # platform admin concede acesso ao tenant A
+    assert op.post(f"/operators/{sop_id}/tenant-access",
+                   json={"tenant_id": ta, "access_role": "support_operator"}).status_code == 201
+    # agora support acessa A...
+    assert [t["id"] for t in sc.get("/tenants").json()] == [ta]
+    assert sc.get("/brands", headers={"X-Tenant-Id": str(ta)}).status_code == 200
+    # ...mas NÃO acessa B (não atribuído)
+    assert sc.get("/brands", headers={"X-Tenant-Id": str(tb)}).status_code == 403
+    _ok("support acessa só o tenant atribuído (A sim, B não)")
+
+    # support NÃO pode ações destrutivas/administrativas
+    assert sc.post("/tenants", json={"name": "X", "admin_email": "x@x.com",
+                                     "admin_password": "Xxxxxxx123"}).status_code == 403  # criar tenant
+    assert sc.patch(f"/tenants/{ta}?status=suspended").status_code == 403                  # bloquear tenant
+    assert sc.post("/operators", json={"email": "n@n.com", "operator_role": "support_operator"}).status_code == 403  # criar operador
+    assert sc.post(f"/tenants/{ta}/api-keys", json={"label": "x", "role": "viewer"}).status_code == 403  # api key
+    assert sc.delete(f"/brands/{ba_id}", headers={"X-Tenant-Id": str(ta)}).status_code == 403  # apagar marca (admin)
+    _ok("support bloqueado em ações destrutivas/administrativas")
+
+    # platform admin PODE bloquear tenant
+    assert op.patch(f"/tenants/{tb}?status=suspended").status_code == 200
+    _ok("platform admin bloqueia/ativa tenant")
+
+    # ação de support gera audit log com operator_user_id
+    sc.get("/brands", headers={"X-Tenant-Id": str(ta)})
+    audit_rows = op.get("/audit", headers={"X-Tenant-Id": str(ta)}).json()
+    assert any(a.get("action") == "operator.grant_access" for a in audit_rows) or \
+           any(a.get("operator_user_id") for a in audit_rows)
+    _ok("ações registram audit log com operator/tenant")
+
+    # revogar acesso: support volta a 403 em A
+    assert op.delete(f"/operators/{sop_id}/tenant-access/{ta}").status_code == 204
+    assert sc.get("/brands", headers={"X-Tenant-Id": str(ta)}).status_code == 403
+    _ok("revogação de acesso bloqueia o support imediatamente")
+
+    print("\nISOLAMENTO + CONVITES + PAPÉIS DE OPERADOR: TODOS OS TESTES PASSARAM ✅")
 
 
 if __name__ == "__main__":

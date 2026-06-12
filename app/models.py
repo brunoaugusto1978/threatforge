@@ -55,6 +55,29 @@ class TenantInvite(Base):
     invited_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
+class OperatorTenantAccess(Base):
+    """Quais tenants um operador de suporte pode acessar (modo suporte).
+    platform_admin não precisa de linha aqui (acessa todos)."""
+    __tablename__ = "operator_tenant_access"
+    __table_args__ = (
+        UniqueConstraint("operator_user_id", "tenant_id", name="uq_operator_tenant"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    operator_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
+    access_role: Mapped[str] = mapped_column(String(20), default="support_operator")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
 class ApiKey(Base):
     """API key por tenant (automação/integração). Guardamos só o hash."""
     __tablename__ = "api_keys"
@@ -119,10 +142,13 @@ class AuditLog(Base):
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     actor: Mapped[str] = mapped_column(String(255), index=True)  # email ou "service"
     actor_role: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # quando a ação é feita por um operador atuando em modo suporte num tenant
+    operator_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     action: Mapped[str] = mapped_column(String(60), index=True)
     target_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
     target_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(400), nullable=True)
     detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 

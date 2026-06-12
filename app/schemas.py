@@ -246,6 +246,7 @@ class MeOut(BaseModel):
     role: str
     kind: str
     is_operator: bool = False
+    operator_role: str | None = None
     tenant_id: int | None = None
 
 
@@ -513,10 +514,71 @@ class AuditOut(BaseModel):
     ts: datetime
     actor: str
     actor_role: str | None
+    operator_user_id: int | None = None
     action: str
     target_type: str | None
     target_id: str | None
     ip: str | None
+    user_agent: str | None = None
     detail: dict | None
+
+    model_config = {"from_attributes": True}
+
+
+# --- Operadores ---
+OperatorRole = Literal["platform_admin", "support_operator", "support_viewer"]
+
+
+class OperatorCreate(BaseModel):
+    email: str
+    password: str | None = None
+    operator_role: OperatorRole = "support_operator"
+
+    @field_validator("email")
+    @classmethod
+    def _email_ok(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not _RE["email"].match(v):
+            raise ValueError("e-mail inválido")
+        return v
+
+    @field_validator("password")
+    @classmethod
+    def _pw_ok(cls, v: str | None) -> str | None:
+        if v is not None:
+            from app.security import check_password_strength
+            check_password_strength(v)
+        return v
+
+
+class OperatorUpdate(BaseModel):
+    operator_role: OperatorRole | None = None
+    is_active: bool | None = None
+
+
+class OperatorOut(BaseModel):
+    id: int
+    email: str
+    operator_role: str | None
+    is_active: bool
+    last_login_at: datetime | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class TenantAccessGrant(BaseModel):
+    tenant_id: int
+    access_role: Literal["support_operator", "support_viewer"] = "support_operator"
+
+
+class TenantAccessOut(BaseModel):
+    id: int
+    operator_user_id: int
+    tenant_id: int
+    access_role: str
+    is_active: bool
+    created_at: datetime
+    created_by: str | None
 
     model_config = {"from_attributes": True}

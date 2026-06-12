@@ -27,6 +27,13 @@ def _client_ip(request: Request | None) -> str | None:
     return request.client.host if request.client else None
 
 
+def _user_agent(request: Request | None) -> str | None:
+    if request is None:
+        return None
+    ua = request.headers.get("user-agent")
+    return ua[:400] if ua else None
+
+
 def _sanitize(detail: dict | None) -> dict | None:
     if not detail:
         return None
@@ -42,6 +49,7 @@ def record(
     target_type: str | None = None,
     target_id: str | int | None = None,
     tenant_id: int | None = None,
+    operator_user_id: int | None = None,
     request: Request | None = None,
     detail: dict | None = None,
     commit: bool = True,
@@ -52,10 +60,12 @@ def record(
             tenant_id=tenant_id,
             actor=actor[:255],
             actor_role=actor_role,
+            operator_user_id=operator_user_id,
             action=action[:60],
             target_type=target_type,
             target_id=str(target_id)[:80] if target_id is not None else None,
             ip=_client_ip(request),
+            user_agent=_user_agent(request),
             detail=_sanitize(detail),
         )
         db.add(entry)

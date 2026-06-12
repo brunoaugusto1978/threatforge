@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app import audit
 from app.alerts import dispatch_new_findings, send_finding_alert
-from app.auth import Principal, current_tenant_id, require_analyst, require_viewer
+from app.auth import Principal, current_tenant_id, require_admin, require_analyst, require_viewer
 from app.brand.scanner import scan_brand
 from app.database import get_db
 from app.models import Brand, BrandFinding
@@ -70,7 +70,7 @@ def get_brand(brand_id: int, db: Session = Depends(get_db),
     return _owned_brand(db, brand_id, tid)
 
 
-@router.delete("/{brand_id}", status_code=204, dependencies=[Depends(require_analyst)])
+@router.delete("/{brand_id}", status_code=204, dependencies=[Depends(require_admin)])
 def delete_brand(brand_id: int, db: Session = Depends(get_db),
                  tid: int = Depends(current_tenant_id)):
     brand = _owned_brand(db, brand_id, tid)

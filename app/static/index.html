@@ -60,6 +60,12 @@
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
   .chip { background: var(--panel2); border: 1px solid var(--line); border-radius: 999px;
     padding: 3px 10px; font-size: 12px; }
+  #supportBanner { display: flex; align-items: center; justify-content: space-between;
+    background: #3a2a12; color: #fbbf24; border-bottom: 1px solid #5a4012;
+    padding: 8px 22px; font-size: 13px; }
+  .optabs { display: flex; gap: 4px; margin-bottom: 16px; }
+  .optabs button { background: transparent; color: var(--muted); padding: 7px 13px; }
+  .optabs button.active { background: var(--panel2); color: var(--txt); }
   .err { color: var(--red); font-size: 13px; margin-top: 10px; min-height: 18px; }
   /* App shell */
   header { display: flex; align-items: center; gap: 18px; padding: 12px 22px;
@@ -190,6 +196,10 @@
 
   <!-- APP -->
   <div id="app" class="hidden">
+    <div id="supportBanner" class="hidden">
+      <span>🛟 Modo suporte — Tenant: <b id="supportTenantName"></b></span>
+      <button class="ghost sm" id="exitTenant">Voltar para Operação</button>
+    </div>
     <header>
       <div class="logo">Threat<span>Forge</span></div>
       <nav id="nav">

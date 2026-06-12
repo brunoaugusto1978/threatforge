@@ -28,7 +28,8 @@ def ensure_operator() -> None:
             logger.info("Sem usuários e sem BOOTSTRAP_OPERATOR_*: aguardando /setup/operator")
             return
         op = User(email=email.strip().lower(), hashed_password=hash_password(password),
-                  role="admin", is_operator=True, tenant_id=None)
+                  role="admin", is_operator=True, operator_role="platform_admin",
+                  tenant_id=None)
         db.add(op)
         db.commit()
         logger.info("Operador de plataforma provisionado via env: %s", email)

@@ -19,10 +19,17 @@ from sqlalchemy.orm import Session
 
 from app import config
 from app.database import get_db
-from app.models import ApiKey, User, utcnow
+from app.models import ApiKey, OperatorTenantAccess, User, utcnow
 from app.security import decode_token, hash_api_key
 
 ROLE_RANK = {"viewer": 1, "analyst": 2, "admin": 3}
+
+# papel efetivo de um operador quando atua DENTRO de um tenant (modo suporte)
+OPERATOR_EFFECTIVE_ROLE = {
+    "platform_admin": "admin",
+    "support_operator": "analyst",
+    "support_viewer": "viewer",
+}
 
 
 @dataclass
@@ -31,8 +38,14 @@ class Principal:
     role: str
     kind: str               # "user" | "service"
     is_operator: bool = False
+    operator_role: str | None = None  # platform_admin|support_operator|support_viewer
     tenant_id: int | None = None
     user_id: int | None = None
+
+    def effective_role(self) -> str:
+        if self.is_operator:
+            return OPERATOR_EFFECTIVE_ROLE.get(self.operator_role or "", "viewer")
+        return self.role
 
 
 def _from_platform_key(request: Request) -> Principal | None:
@@ -40,9 +53,9 @@ def _from_platform_key(request: Request) -> Principal | None:
     if not api_key or not config.API_KEY:
         return None
     if hmac.compare_digest(api_key, config.API_KEY):
-        # chave de plataforma do .env = operador de serviço (cross-tenant)
+        # chave de plataforma do .env = super admin de serviço (cross-tenant total)
         return Principal(subject="platform-service", role="admin", kind="service",
-                         is_operator=True, tenant_id=None)
+                         is_operator=True, operator_role="platform_admin", tenant_id=None)
     return None
 
 
@@ -73,7 +86,8 @@ def _from_cookie(request: Request, db: Session) -> Principal | None:
     if int(payload.get("pv", 0)) != user.pwd_version:
         return None
     return Principal(subject=user.email, role=user.role, kind="user",
-                     is_operator=user.is_operator, tenant_id=user.tenant_id, user_id=user.id)
+                     is_operator=user.is_operator, operator_role=user.operator_role,
+                     tenant_id=user.tenant_id, user_id=user.id)
 
 
 def get_principal(request: Request, db: Session = Depends(get_db)) -> Principal:
@@ -88,8 +102,8 @@ def require_role(minimum: str):
     min_rank = ROLE_RANK[minimum]
 
     def _dep(principal: Principal = Depends(get_principal)) -> Principal:
-        # operador passa em qualquer checagem de papel de tenant
-        if not principal.is_operator and ROLE_RANK.get(principal.role, 0) < min_rank:
+        # papel efetivo respeita o papel do operador (support_viewer = só leitura)
+        if ROLE_RANK.get(principal.effective_role(), 0) < min_rank:
             raise HTTPException(status_code=403,
                                 detail=f"Acesso negado: requer papel '{minimum}' ou superior.")
         return principal
@@ -104,24 +118,49 @@ require_admin = require_role("admin")
 
 def require_operator(principal: Principal = Depends(get_principal)) -> Principal:
     if not principal.is_operator:
-        raise HTTPException(status_code=403, detail="Acesso restrito ao operador de plataforma.")
+        raise HTTPException(status_code=403, detail="Acesso restrito a operadores de plataforma.")
     return principal
+
+
+def require_platform_admin(principal: Principal = Depends(get_principal)) -> Principal:
+    """Ações administrativas críticas: só Platform Admin / Super Admin."""
+    if not (principal.is_operator and principal.operator_role == "platform_admin"):
+        raise HTTPException(status_code=403,
+                            detail="Ação restrita ao Platform Admin.")
+    return principal
+
+
+def operator_can_access_tenant(db: Session, principal: Principal, tenant_id: int) -> bool:
+    if principal.operator_role == "platform_admin":
+        return True
+    # support_operator/support_viewer: precisa de acesso concedido e ativo
+    row = db.scalar(select(OperatorTenantAccess).where(
+        OperatorTenantAccess.operator_user_id == principal.user_id,
+        OperatorTenantAccess.tenant_id == tenant_id,
+        OperatorTenantAccess.is_active == True,  # noqa: E712
+    ))
+    return row is not None
 
 
 def current_tenant_id(
     principal: Principal = Depends(get_principal),
     x_tenant_id: str | None = Header(default=None, alias=config.TENANT_HEADER),
+    db: Session = Depends(get_db),
 ) -> int:
     """Tenant efetivo da request. Isolamento forte:
     - usuário/apikey de tenant: SEMPRE o próprio tenant_id (ignora header);
-    - operador: precisa indicar o tenant via header X-Tenant-Id para atuar nele.
+    - operador: indica o tenant via X-Tenant-Id E precisa ter acesso a ele
+      (platform_admin acessa todos; support_* só os tenants atribuídos).
     """
     if not principal.is_operator:
         if principal.tenant_id is None:
             raise HTTPException(status_code=403, detail="Conta sem tenant associado.")
         return principal.tenant_id
-    # operador precisa escolher um tenant para operar dados de tenant
     if not x_tenant_id or not x_tenant_id.isdigit():
         raise HTTPException(status_code=400,
                             detail=f"Operador deve indicar o tenant no header {config.TENANT_HEADER}.")
-    return int(x_tenant_id)
+    tid = int(x_tenant_id)
+    if not operator_can_access_tenant(db, principal, tid):
+        raise HTTPException(status_code=403,
+                            detail="Operador sem acesso a este tenant.")
+    return tid
