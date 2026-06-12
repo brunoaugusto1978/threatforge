@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ThreatForge</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #171c24; --panel2: #1f2630; --line: #2a323d;
+    --txt: #e6edf3; --muted: #8b97a6; --accent: #3b82f6; --accent2: #2563eb;
+    --red: #ef4444; --orange: #f59e0b; --yellow: #eab308; --green: #22c55e; --gray: #64748b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background: var(--bg); color: var(--txt); font-size: 14px; }
+  a { color: var(--accent); }
+  button { cursor: pointer; font: inherit; border: none; border-radius: 6px;
+    padding: 8px 14px; background: var(--accent2); color: #fff; }
+  button:hover { background: var(--accent); }
+  button.ghost { background: transparent; border: 1px solid var(--line); color: var(--txt); }
+  button.danger { background: var(--red); }
+  button.sm { padding: 4px 9px; font-size: 12px; }
+  input, select { font: inherit; background: var(--panel2); color: var(--txt);
+    border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+  .hidden { display: none !important; }
+  /* Login */
+  #login { max-width: 360px; margin: 12vh auto; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 12px; padding: 28px; }
+  #login h1 { margin: 0 0 4px; font-size: 22px; }
+  #login p.sub { margin: 0 0 18px; color: var(--muted); font-size: 13px; }
+  #login button { width: 100%; margin-top: 16px; }
+  .err { color: var(--red); font-size: 13px; margin-top: 10px; min-height: 18px; }
+  /* App shell */
+  header { display: flex; align-items: center; gap: 18px; padding: 12px 22px;
+    background: var(--panel); border-bottom: 1px solid var(--line); }
+  header .logo { font-weight: 700; font-size: 17px; }
+  header .logo span { color: var(--accent); }
+  nav { display: flex; gap: 4px; }
+  nav button { background: transparent; color: var(--muted); padding: 7px 13px; }
+  nav button.active { background: var(--panel2); color: var(--txt); }
+  header .spacer { flex: 1; }
+  header .who { color: var(--muted); font-size: 13px; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 999px;
+    font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+  .role-admin { background: #3b1d1d; color: #fca5a5; }
+  .role-analyst { background: #1d2b3b; color: #93c5fd; }
+  .role-viewer { background: #24303b; color: #94a3b8; }
+  main { padding: 22px; max-width: 1180px; margin: 0 auto; }
+  h2.title { margin: 0 0 16px; font-size: 18px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(165px,1fr)); gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
+  .card .n { font-size: 30px; font-weight: 700; }
+  .card .l { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .card.alert .n { color: var(--orange); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px 18px; margin-bottom: 18px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+  .row > div { display: flex; flex-direction: column; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  tr:hover td { background: var(--panel2); }
+  td code { background: var(--panel2); padding: 1px 6px; border-radius: 4px; }
+  .v { font-weight: 700; }
+  .v-malicious { color: var(--red); } .v-suspicious { color: var(--orange); }
+  .v-low { color: var(--yellow); } .v-info, .v-no_known_threat { color: var(--gray); }
+  .v-unknown { color: var(--muted); }
+  .score-bar { height: 6px; border-radius: 3px; background: var(--panel2); overflow: hidden; width: 80px; }
+  .score-bar > i { display: block; height: 100%; }
+  .muted { color: var(--muted); }
+  .toast { position: fixed; bottom: 20px; right: 20px; background: var(--panel2);
+    border: 1px solid var(--line); border-left: 3px solid var(--accent); padding: 12px 16px;
+    border-radius: 8px; max-width: 360px; opacity: 0; transition: opacity .2s; }
+  .toast.show { opacity: 1; }
+  .toast.err { border-left-color: var(--red); }
+  details.detail { margin-top: 6px; }
+  details.detail pre { background: var(--bg); padding: 10px; border-radius: 6px;
+    overflow:auto; font-size: 12px; border: 1px solid var(--line); }
+  .factor { font-size: 12px; padding: 4px 0; border-bottom: 1px dashed var(--line); }
+  .factor b { color: var(--accent); }
+</style>
+</head>
+<body>
+  <!-- LOGIN -->
+  <section id="login">
+    <h1>Threat<span style="color:var(--accent)">Forge</span></h1>
+    <p class="sub">Open Source Cyber Threat Intelligence</p>
+    <form id="loginForm">
+      <label for="email">E-mail</label>
+      <input id="email" type="email" autocomplete="username" required>
+      <label for="password">Senha</label>
+      <input id="password" type="password" autocomplete="current-password" required>
+      <button type="submit">Entrar</button>
+      <div class="err" id="loginErr"></div>
+    </form>
+  </section>
+
+  <!-- APP -->
+  <div id="app" class="hidden">
+    <header>
+      <div class="logo">Threat<span>Forge</span></div>
+      <nav id="nav">
+        <button data-view="dashboard" class="active">Dashboard</button>
+        <button data-view="iocs">IOCs</button>
+        <button data-view="brands">Marcas</button>
+        <button data-view="users" id="navUsers">Usuários</button>
+      </nav>
+      <div class="spacer"></div>
+      <span class="who" id="who"></span>
+      <button class="ghost sm" id="logout">Sair</button>
+    </header>
+    <main id="main"></main>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

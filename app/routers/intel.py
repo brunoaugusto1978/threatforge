@@ -2,14 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.auth import require_api_key
+from app.auth import require_analyst, require_viewer
 from app.connectors.cisa_kev import CisaKevConnector
 from app.connectors.mitre_attack import MitreAttackConnector
 from app.database import get_db
 from app.models import AttackTechnique, KEVEntry, SyncState
 from app.schemas import SyncResult
 
-router = APIRouter(tags=["intel"], dependencies=[Depends(require_api_key)])
+router = APIRouter(tags=["intel"], dependencies=[Depends(require_viewer)])
 
 
 def _record_sync(db: Session, source: str, items: int) -> None:
@@ -22,7 +22,7 @@ def _record_sync(db: Session, source: str, items: int) -> None:
     db.commit()
 
 
-@router.post("/sync/kev", response_model=SyncResult)
+@router.post("/sync/kev", response_model=SyncResult, dependencies=[Depends(require_analyst)])
 def sync_kev(db: Session = Depends(get_db)):
     try:
         items = CisaKevConnector().sync(db)
@@ -32,7 +32,7 @@ def sync_kev(db: Session = Depends(get_db)):
     return SyncResult(source="cisa_kev", items=items, status="ok")
 
 
-@router.post("/sync/mitre", response_model=SyncResult)
+@router.post("/sync/mitre", response_model=SyncResult, dependencies=[Depends(require_analyst)])
 def sync_mitre(db: Session = Depends(get_db)):
     try:
         items = MitreAttackConnector().sync(db)

@@ -47,6 +47,33 @@ def _has_mx(domain: str, client: httpx.Client) -> bool:
         return False
 
 
+# nameservers/plataformas de domínio estacionado ou à venda (parking/marketplace)
+PARKING_PROVIDERS = (
+    "sedoparking", "sedo.com", "bodis", "parkingcrew", "above.com", "dan.com",
+    "afternic", "hugedomains", "voodoo.com", "parklogic", "fabulous.com",
+    "namedrive", "sav.com", "undeveloped", "cashparking", "domainmarket",
+    "uniregistry", "name.com/parking", "parkingpage", "1plus.net", "dnsowl",
+    "registrar-servers", "porkbun-parking", "domc", "bodis.com", "skenzo",
+)
+
+
+def _nameservers(domain: str, client: httpx.Client) -> list[str]:
+    try:
+        r = client.get(
+            "https://dns.google/resolve",
+            params={"name": domain, "type": "NS"},
+            timeout=8.0,
+        )
+        return [a.get("data", "").rstrip(".").lower() for a in r.json().get("Answer", [])]
+    except Exception:
+        return []
+
+
+def _is_parked(nameservers: list[str]) -> bool:
+    joined = " ".join(nameservers)
+    return any(p in joined for p in PARKING_PROVIDERS)
+
+
 def _rdap_age_days(domain: str, client: httpx.Client) -> int | None:
     """Idade do registro via RDAP público. Retorna None se indisponível."""
     try:
@@ -138,6 +165,12 @@ def scan_brand(brand: Brand, db: Session, deep: bool = True) -> dict:
                 continue
 
             evidence: dict = {"resolves": resolves, "ips": ips, "similarity": sim}
+            # parking/à venda: barato (1 DoH), roda sempre que resolve — corta
+            # falso positivo de domínio especulativo em ambos os modos
+            if resolves:
+                ns = _nameservers(domain, client)
+                evidence["nameservers"] = ns
+                evidence["parked"] = _is_parked(ns)
             if deep:
                 evidence["mx"] = _has_mx(domain, client) if resolves else False
                 evidence["age_days"] = _rdap_age_days(domain, client)

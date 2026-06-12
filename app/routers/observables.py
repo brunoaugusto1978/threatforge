@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth import require_api_key
+from app.auth import require_analyst, require_viewer
 from app.connectors.cisa_kev import CisaKevConnector
 from app.connectors.epss import EpssConnector
 from app.connectors.urlhaus import UrlhausConnector
@@ -14,13 +14,14 @@ from app.schemas import ObservableCreate, ObservableDetail, ObservableOut, valid
 from app.scoring import compute_score
 
 router = APIRouter(
-    prefix="/observables", tags=["observables"], dependencies=[Depends(require_api_key)]
+    prefix="/observables", tags=["observables"], dependencies=[Depends(require_viewer)]
 )
 
 CONNECTORS = [CisaKevConnector(), EpssConnector(), UrlhausConnector()]
 
 
-@router.post("", response_model=ObservableOut, status_code=201)
+@router.post("", response_model=ObservableOut, status_code=201,
+             dependencies=[Depends(require_analyst)])
 def create_observable(payload: ObservableCreate, db: Session = Depends(get_db)):
     try:
         value = validate_observable(payload.type, payload.value)
@@ -65,7 +66,8 @@ def get_observable(observable_id: int, db: Session = Depends(get_db)):
     return obs
 
 
-@router.post("/{observable_id}/enrich", response_model=ObservableDetail)
+@router.post("/{observable_id}/enrich", response_model=ObservableDetail,
+             dependencies=[Depends(require_analyst)])
 def enrich_observable(observable_id: int, db: Session = Depends(get_db)):
     obs = db.get(Observable, observable_id)
     if obs is None:

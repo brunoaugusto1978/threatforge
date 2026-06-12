@@ -2,13 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
-from app.auth import require_api_key
+from app.auth import require_viewer
 from app.database import get_db
 from app.models import Observable
 from app.reporting import render_report
 
 router = APIRouter(
-    prefix="/reports", tags=["reports"], dependencies=[Depends(require_api_key)]
+    prefix="/reports", tags=["reports"], dependencies=[Depends(require_viewer)]
 )
 
 

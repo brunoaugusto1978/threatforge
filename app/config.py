@@ -7,6 +7,17 @@ load_dotenv()
 
 API_KEY: str = os.environ.get("API_KEY", "")
 DATABASE_URL: str = os.environ.get("DATABASE_URL", "sqlite:///./threatforge.db")
+
+# --- Auth / sessão ---
+# Segredo para assinar JWT. Se vazio, cai no API_KEY (defina um próprio em prod).
+JWT_SECRET: str = os.environ.get("JWT_SECRET", "") or os.environ.get("API_KEY", "")
+JWT_TTL_SECONDS: int = int(os.environ.get("JWT_TTL_SECONDS", "28800") or "28800")  # 8h
+# Cookie Secure (HTTPS). Default false para rodar em http://localhost no MVP.
+COOKIE_SECURE: bool = os.environ.get("COOKIE_SECURE", "false").lower() == "true"
+COOKIE_NAME: str = "tf_session"
+# Admin inicial (criado no startup se não houver nenhum usuário)
+BOOTSTRAP_ADMIN_EMAIL: str = os.environ.get("BOOTSTRAP_ADMIN_EMAIL", "")
+BOOTSTRAP_ADMIN_PASSWORD: str = os.environ.get("BOOTSTRAP_ADMIN_PASSWORD", "")
 ABUSECH_API_KEY: str = os.environ.get("ABUSECH_API_KEY", "")
 CORS_ORIGINS: list[str] = [
     o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()

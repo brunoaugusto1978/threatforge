@@ -23,9 +23,17 @@ Plataforma open source de CTI para ingestão, enriquecimento, scoring explicáve
 - **Scoring de abuso explicável** — prioriza domínios ativos, recém-registrados e similares
 - **Alertas nos principais canais** — Telegram, webhook (Slack/Discord/Teams/SIEM) e e-mail SMTP, disparados automaticamente para findings suspeitos/maliciosos
 
+**Interface web e usuários (v0.3)**
+
+- **Login web** — interface servida pela própria API em `http://localhost:8000/`
+- **Autenticação real** — senhas com PBKDF2-HMAC-SHA256 (salt único, 240k iterações), sessão em JWT HS256 dentro de cookie `httpOnly`/`SameSite=Strict` (token inacessível a JavaScript — XSS não rouba sessão). Sem dependências externas de auth.
+- **RBAC em 3 papéis** — `admin` (gerencia usuários e tudo), `analyst` (cadastra IOC, roda scan, edita findings), `viewer` (só leitura). Enforcement no servidor em toda rota.
+- **Gestão de usuários** — criar, ativar/desativar, trocar papel e senha (admin). Proteções contra lockout (não remove o último admin, não rebaixa a própria conta).
+- **Hardening** — CSP restritiva, headers de segurança, rate-limit de login, mensagem de erro genérica (anti-enumeração de usuário).
+
 **Comum**
 
-- **API REST** — FastAPI com autenticação por API key, docs em `/docs`
+- **API REST** — FastAPI; autenticação por sessão (cookie) na UI ou por API key de serviço (header `X-API-Key`, papel admin) para automação. Docs em `/docs`.
 
 ## Subindo com Docker Compose
 
@@ -35,7 +43,20 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-A API sobe em `http://localhost:8000`. Documentação interativa: `http://localhost:8000/docs`.
+A API e a interface web sobem em `http://localhost:8000`. Documentação interativa da API: `http://localhost:8000/docs`.
+
+### Primeiro acesso à interface web
+
+Abra `http://localhost:8000/` no navegador. No primeiro start, um **admin inicial** é criado:
+
+- Se você definiu `BOOTSTRAP_ADMIN_EMAIL` e `BOOTSTRAP_ADMIN_PASSWORD` no `.env`, use essas credenciais.
+- Se deixou a senha em branco, uma senha aleatória é **gerada e impressa no log** do container. Veja com:
+
+  ```bash
+  docker compose logs api | grep -A4 "ADMIN INICIAL"
+  ```
+
+Faça login, vá em **Usuários** e crie as contas da equipe (analista/leitor). Troque a senha do admin no primeiro acesso.
 
 ## Uso rápido
 

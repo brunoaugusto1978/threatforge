@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.alerts import dispatch_new_findings, send_finding_alert
-from app.auth import require_api_key
+from app.auth import require_analyst, require_viewer
 from app.brand.scanner import scan_brand
 from app.database import get_db
 from app.models import Brand, BrandFinding
@@ -15,10 +15,11 @@ from app.schemas import (
     ScanResult,
 )
 
-router = APIRouter(prefix="/brands", tags=["brands"], dependencies=[Depends(require_api_key)])
+router = APIRouter(prefix="/brands", tags=["brands"], dependencies=[Depends(require_viewer)])
 
 
-@router.post("", response_model=BrandOut, status_code=201)
+@router.post("", response_model=BrandOut, status_code=201,
+             dependencies=[Depends(require_analyst)])
 def create_brand(payload: BrandCreate, db: Session = Depends(get_db)):
     if db.scalar(select(Brand).where(Brand.name == payload.name)):
         raise HTTPException(status_code=409, detail="Marca já cadastrada.")
@@ -46,7 +47,7 @@ def get_brand(brand_id: int, db: Session = Depends(get_db)):
     return brand
 
 
-@router.delete("/{brand_id}", status_code=204)
+@router.delete("/{brand_id}", status_code=204, dependencies=[Depends(require_analyst)])
 def delete_brand(brand_id: int, db: Session = Depends(get_db)):
     brand = db.get(Brand, brand_id)
     if brand is None:
@@ -55,7 +56,8 @@ def delete_brand(brand_id: int, db: Session = Depends(get_db)):
     db.commit()
 
 
-@router.post("/{brand_id}/scan", response_model=ScanResult)
+@router.post("/{brand_id}/scan", response_model=ScanResult,
+             dependencies=[Depends(require_analyst)])
 def scan(brand_id: int, deep: bool = True, db: Session = Depends(get_db)):
     brand = db.get(Brand, brand_id)
     if brand is None:
@@ -93,7 +95,8 @@ def list_findings(
     return list(db.scalars(stmt))
 
 
-@router.patch("/findings/{finding_id}", response_model=FindingOut)
+@router.patch("/findings/{finding_id}", response_model=FindingOut,
+              dependencies=[Depends(require_analyst)])
 def update_finding_status(
     finding_id: int, payload: FindingStatusUpdate, db: Session = Depends(get_db)
 ):
@@ -106,7 +109,7 @@ def update_finding_status(
     return f
 
 
-@router.post("/findings/{finding_id}/alert")
+@router.post("/findings/{finding_id}/alert", dependencies=[Depends(require_analyst)])
 def resend_alert(finding_id: int, db: Session = Depends(get_db)):
     f = db.get(BrandFinding, finding_id)
     if f is None:

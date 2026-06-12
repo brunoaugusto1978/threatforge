@@ -170,3 +170,65 @@ class ScanResult(BaseModel):
     alerts_sent: int | None = None
     new_finding_ids: list[int] | None = None
     error: str | None = None
+
+
+# --- Auth / usuários ---
+Role = Literal["admin", "analyst", "viewer"]
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class UserCreate(BaseModel):
+    email: str
+    password: str
+    role: Role = "viewer"
+
+    @field_validator("email")
+    @classmethod
+    def _email_ok(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not _RE["email"].match(v):
+            raise ValueError("e-mail inválido")
+        return v
+
+    @field_validator("password")
+    @classmethod
+    def _pw_ok(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("senha deve ter ao menos 8 caracteres")
+        if len(v) > 256:
+            raise ValueError("senha muito longa")
+        return v
+
+
+class UserUpdate(BaseModel):
+    role: Role | None = None
+    is_active: bool | None = None
+    password: str | None = None
+
+    @field_validator("password")
+    @classmethod
+    def _pw_ok(cls, v: str | None) -> str | None:
+        if v is not None and (len(v) < 8 or len(v) > 256):
+            raise ValueError("senha deve ter entre 8 e 256 caracteres")
+        return v
+
+
+class UserOut(BaseModel):
+    id: int
+    email: str
+    role: str
+    is_active: bool
+    created_at: datetime
+    last_login_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
+class MeOut(BaseModel):
+    subject: str
+    role: str
+    kind: str

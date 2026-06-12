@@ -1,14 +1,21 @@
 """Scoring explicável para findings de marca.
 
-Combina similaridade, idade do domínio (RDAP), presença de DNS/MX,
-certificado recente (CT), termos-isca e cruzamento com URLhaus.
-Tudo com justificativa — nada de nota mágica.
+Princípio: separar EXISTÊNCIA (domínio parecido existe/resolve) de AMEAÇA
+ATIVA (capaz de phishing ou já malicioso). Similaridade e "resolve" sozinhos
+são contexto fraco — geram no máximo "low". Para "suspicious"/"malicious" é
+preciso ao menos um sinal forte: MX, URLhaus, registro recente ou cert novo.
+
+Isso reduz falso positivo de domínios estacionados / à venda, que são
+especulação de revenda, não ataque.
 """
 from dataclasses import asdict, dataclass
 
 from app.brand.typosquat import LURES
 
-VERDICTS = [(70, "malicious"), (45, "suspicious"), (20, "low")]
+VERDICTS = [(70, "malicious"), (45, "suspicious"), (15, "low")]
+
+# sinais que, sozinhos, NÃO bastam para passar de "low"
+_STRONG_SIGNALS = {"mx_record", "urlhaus", "very_new_domain", "new_domain", "fresh_cert"}
 
 
 @dataclass
@@ -25,63 +32,91 @@ def score_finding(
     evidence: dict,
 ) -> tuple[int, str, list[dict]]:
     """evidence pode conter: resolves(bool), mx(bool), age_days(int|None),
-    cert_age_days(int|None), urlhaus_listed(bool), ns(list)."""
+    cert_age_days(int|None), urlhaus_listed(bool), parked(bool),
+    nameservers(list)."""
     factors: list[Factor] = []
+    strong = set()
 
-    # 1. Similaridade com a marca
+    # 1. Similaridade — contexto, pesos baixos
     if similarity >= 90:
-        factors.append(Factor("high_similarity", 25,
+        factors.append(Factor("high_similarity", 20,
             f"Domínio {similarity}% similar à marca monitorada.", "ThreatForge"))
     elif similarity >= 75:
-        factors.append(Factor("similarity", 15,
+        factors.append(Factor("similarity", 10,
             f"Domínio {similarity}% similar à marca monitorada.", "ThreatForge"))
     elif similarity >= 60:
-        factors.append(Factor("similarity", 8,
+        factors.append(Factor("similarity", 5,
             f"Domínio {similarity}% similar à marca.", "ThreatForge"))
 
-    # 2. Termo-isca presente no domínio
+    # 2. Termo-isca
     lure_hit = next((l for l in LURES if l in domain), None)
     if lure_hit:
-        factors.append(Factor("lure_term", 12,
+        factors.append(Factor("lure_term", 8,
             f"Contém termo-isca típico de golpe: '{lure_hit}'.", "ThreatForge"))
 
-    # 3. Domínio resolve (está ativo)
+    # 3. Existência ativa — fraco
     if evidence.get("resolves"):
-        factors.append(Factor("resolves", 15,
-            "Domínio resolve para um IP (infraestrutura ativa).", "DNS"))
-    if evidence.get("mx"):
-        factors.append(Factor("mx_record", 10,
-            "Possui registro MX — capaz de enviar/receber e-mail (phishing).", "DNS"))
+        factors.append(Factor("resolves", 6,
+            "Domínio resolve para um IP (existe infraestrutura).", "DNS"))
 
-    # 4. Idade do domínio (RDAP) — recém-registrado é forte sinal
+    # 4. SINAL FORTE: MX (capaz de phishing por e-mail)
+    if evidence.get("mx"):
+        factors.append(Factor("mx_record", 22,
+            "Possui registro MX — capaz de enviar/receber e-mail (phishing).", "DNS"))
+        strong.add("mx_record")
+
+    # 5. SINAL FORTE: idade do domínio (RDAP)
     age = evidence.get("age_days")
     if age is not None:
         if age <= 7:
             factors.append(Factor("very_new_domain", 25,
                 f"Registrado há apenas {age} dia(s) — típico de campanha ativa.", "RDAP"))
+            strong.add("very_new_domain")
         elif age <= 30:
             factors.append(Factor("new_domain", 15,
                 f"Registrado há {age} dias.", "RDAP"))
+            strong.add("new_domain")
         elif age <= 90:
-            factors.append(Factor("recent_domain", 7,
+            factors.append(Factor("recent_domain", 6,
                 f"Registrado há {age} dias.", "RDAP"))
 
-    # 5. Certificado recente (Certificate Transparency)
+    # 6. SINAL FORTE: certificado recente (CT)
     cert_age = evidence.get("cert_age_days")
     if cert_age is not None and cert_age <= 7:
         factors.append(Factor("fresh_cert", 12,
             f"Certificado TLS emitido há {cert_age} dia(s) (CT logs).", "crt.sh"))
+        strong.add("fresh_cert")
 
-    # 6. Já listado como malicioso no URLhaus
+    # 7. SINAL FORTE: já malicioso no URLhaus
     if evidence.get("urlhaus_listed"):
-        factors.append(Factor("urlhaus", 40,
-            "Domínio já consta no URLhaus como distribuição de malware/phishing.",
-            "abuse.ch URLhaus"))
+        factors.append(Factor("urlhaus", 45,
+            "Domínio já consta no URLhaus como malware/phishing.", "abuse.ch URLhaus"))
+        strong.add("urlhaus")
 
     score = min(100, max(0, sum(f.points for f in factors)))
+
+    # --- Redutores de falso positivo ---
+    parked = bool(evidence.get("parked"))
+    if parked:
+        factors.append(Factor("parked", 0,
+            "Domínio estacionado/à venda (nameserver de parking). Provável "
+            "especulação de revenda, não ataque ativo.", "DNS/NS"))
+
     verdict = "info"
     for threshold, name in VERDICTS:
         if score >= threshold:
             verdict = name
             break
+
+    # Sem nenhum sinal FORTE de ameaça, rebaixa para no máximo "low":
+    # similaridade + resolve + termo-isca não bastam para "suspeito".
+    if verdict in ("suspicious", "malicious") and not strong:
+        verdict = "low"
+
+    # Domínio estacionado/à venda nunca passa de "low" se não houver
+    # sinal forte de uso ativo malicioso (MX/URLhaus).
+    if parked and not ({"mx_record", "urlhaus"} & strong):
+        if verdict in ("suspicious", "malicious"):
+            verdict = "low"
+
     return score, verdict, [asdict(f) for f in factors]
