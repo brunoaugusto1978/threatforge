@@ -535,17 +535,34 @@ ThreatForge Enterprise is planned as a private/commercial edition focused on:
 
 Enterprise-only modules must not be committed to this public repository.
 
+## Current Status
+
+ThreatForge Community has completed the open source readiness baseline.
+
+Current baseline:
+
+- CI workflow;
+- security hardening baseline;
+- public readiness validation;
+- Community/Enterprise separation;
+- optional Enterprise adapter;
+- invitation token log redaction;
+- Docker deployment;
+- tenant isolation selftest;
+- open source governance documentation.
+
+See [Public Readiness Check](docs/PUBLIC_READINESS_CHECK.md).
+
 ## Roadmap
 
-- **v0.6.x** — Community open source readiness, CI, baseline security hardening, documentation, optional Enterprise adapter and public readiness validation. Completed.
+The roadmap below lists planned future work. Completed readiness work is tracked separately in the current status section.
+
 - **v0.7** — Investigation cases, case workflow, analyst notes, evidence attachments and case-level exports.
 - **v0.8** — Timeline, investigation activity history, report exports and operational review workflows.
 - **v0.9** — Relationship graph, Neo4j integration and entity correlation views.
 - **v1.0** — Partial STIX model, MISP/OpenCTI integrations, production hardening, stable packaging and public stable release.
 
-## Enterprise
-
-Enterprise features such as signed licensing, trial mode, feature flags and premium PDF reports are maintained separately in the private `threatforge-enterprise` repository.
+See [Community Roadmap](docs/ROADMAP.md).
 
 ## License
 
