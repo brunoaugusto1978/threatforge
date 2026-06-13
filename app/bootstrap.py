@@ -32,7 +32,7 @@ def ensure_operator() -> None:
                   tenant_id=None)
         db.add(op)
         db.commit()
-        logger.info("Operador de plataforma provisionado via env: %s", email)
+        logger.info("Platform operator provisioned through env: %s", email)
     except Exception as exc:
         logger.warning("Operator bootstrap failed: %s", type(exc).__name__)
         db.rollback()

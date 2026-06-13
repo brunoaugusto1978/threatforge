@@ -1,4 +1,4 @@
-"""Configuração central. Tudo vem de variáveis de ambiente — nada hardcoded."""
+"""Central configuration. Everything comes from environment variables — nothing hardcoded."""
 import os
 
 from dotenv import load_dotenv
@@ -19,7 +19,7 @@ COOKIE_NAME: str = "tf_session"
 BOOTSTRAP_ADMIN_EMAIL: str = os.environ.get("BOOTSTRAP_ADMIN_EMAIL", "")
 BOOTSTRAP_ADMIN_PASSWORD: str = os.environ.get("BOOTSTRAP_ADMIN_PASSWORD", "")
 
-# Operador de plataforma inicial (multi-tenant). Se ambos definidos, é criado
+# Initial platform operator (multi-tenant). If both are defined, it is created
 # no startup quando não há usuários. Senão, a tela de criar operador cuida disso.
 BOOTSTRAP_OPERATOR_EMAIL: str = os.environ.get("BOOTSTRAP_OPERATOR_EMAIL", "")
 BOOTSTRAP_OPERATOR_PASSWORD: str = os.environ.get("BOOTSTRAP_OPERATOR_PASSWORD", "")
@@ -49,7 +49,7 @@ URLHAUS_API = "https://urlhaus-api.abuse.ch/v1"
 EPSS_API = "https://api.first.org/data/v1/epss"
 
 # --- Alertas ---
-# Veredito mínimo para disparar alerta: suspicious ou malicious
+# Minimum verdict required to trigger an alert: suspicious or malicious
 ALERT_MIN_VERDICT: str = os.environ.get("ALERT_MIN_VERDICT", "suspicious")
 
 # Telegram

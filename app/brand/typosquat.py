@@ -1,6 +1,6 @@
-"""Gerador de domínios similares (typosquatting), focado no cenário BR.
+"""Similar domain generator (typosquatting), initially focused on the Brazilian scenario.
 
-Gera permutações de um domínio legítimo para detectar abuso de marca:
+Generates permutations of a legitimate domain to detect brand abuse:
 troca de caracteres visualmente parecidos, omissão/duplicação, teclas
 adjacentes (QWERTY), inserção de hífen/termos isca e troca de TLD —
 incluindo TLDs muito usados em golpes contra empresas brasileiras.
@@ -82,7 +82,7 @@ def _char_swaps(label: str) -> set[str]:
 
 
 def generate(domain: str, max_results: int = 600) -> list[str]:
-    """Retorna lista de domínios candidatos a typosquat (sem o original)."""
+    """Returns a list of typosquat candidate domains excluding the original."""
     label, tld = split_domain(domain)
     if not label:
         return []

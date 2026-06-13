@@ -3,7 +3,7 @@
 Princípios:
 - Todo usuário pertence a um tenant (tenant_id), exceto o OPERADOR de plataforma
   (is_operator=True, tenant_id=None), que enxerga a visão da operação.
-- Acesso via: sessão (cookie JWT) OU API key de tenant (header X-API-Key) OU a
+- Access through: session (JWT cookie) OR tenant API key (X-API-Key header) OR the
   chave de plataforma do .env (API_KEY -> operador de serviço).
 - `current_tenant_id` resolve o tenant EFETIVO de cada request. Toda query de
   dados sensíveis DEVE filtrar por esse tenant. Um tenant nunca acessa outro.
@@ -105,7 +105,7 @@ def require_role(minimum: str):
         # papel efetivo respeita o papel do operador (support_viewer = só leitura)
         if ROLE_RANK.get(principal.effective_role(), 0) < min_rank:
             raise HTTPException(status_code=403,
-                                detail=f"Acesso negado: requer papel '{minimum}' ou superior.")
+                                detail=f"Access denied: requires role '{minimum}' ou superior.")
         return principal
 
     return _dep

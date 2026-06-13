@@ -1,6 +1,6 @@
 """Conector URLhaus (abuse.ch).
 
-Consulta a API pública por URL, host (domínio/IP) ou hash de payload.
+Queries the public API by URL, host (domain/IP) or payload hash.
 A API do abuse.ch exige Auth-Key (gratuita): https://auth.abuse.ch
 """
 import logging
