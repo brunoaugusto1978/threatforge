@@ -1,7 +1,7 @@
 """Segurança: hash de senha (PBKDF2-HMAC-SHA256) e JWT HS256 — só stdlib.
 
 Sem dependências externas, reduzindo superfície de cadeia de suprimentos.
-- Senhas: PBKDF2-HMAC-SHA256, salt por usuário, 240k iterações.
+- Passwords: PBKDF2-HMAC-SHA256, per-user salt, 240k iterations.
 - Sessão: JWT HS256 assinado com JWT_SECRET, validação de exp, comparação
   de assinatura em tempo constante.
 """
@@ -40,7 +40,7 @@ def check_password_strength(password: str) -> None:
     if len(password) > 256:
         raise ValueError("senha muito longa (máx. 256)")
     if not re.search(r"[A-Za-z]", password) or not re.search(r"\d", password):
-        raise ValueError("senha deve conter ao menos uma letra e um número")
+        raise ValueError("password must contain at least one letter and one number")
 
 
 # ---------- Hash / verificação ----------

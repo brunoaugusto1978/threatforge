@@ -4,7 +4,7 @@ Taxonomia (critério principal):
 - IOC GLOBAL........: relevante para todos (KEV, URLhaus...). Vive em `observables`.
 - IOC SETORIAL......: ameaças/tecnologias típicas do setor. scope="sector".
 - IOC ORGANIZACIONAL: derivado das marcas/ativos da org ({marca}+termo, slug,
-                      domínios). scope="organization".
+                      domains). scope="organization".
 - FINDING...........: SÓ com evidência real coletada/enriquecida (tabela própria
                       brand_findings). NUNCA gerado aqui.
 
@@ -33,7 +33,7 @@ SECTOR_PROFILES: dict[str, dict] = {
             ("smishing (SMS fraudulento)", "medium"),
             ("SIM swap", "high"),
             ("apps falsos / APK malicioso", "high"),
-            ("typosquatting de domínios", "medium"),
+            ("domain typosquatting", "medium"),
             ("vazamento de credenciais", "high"),
             ("venda de base de clientes", "high"),
             ("abuso de APIs", "medium"),
@@ -166,7 +166,7 @@ def generate_seeds(sector: str | None, brands: list[dict]) -> list[dict]:
         slug = slugify(name)
         if slug:
             add(slug, "slug", "organization", "medium", "brand_profile")
-        # domínios oficiais (ativo da marca)
+        # official domains (brand asset)
         for d in (b.get("domains") or []):
             add(d.strip().lower(), "domain", "organization", "high", "brand_asset")
 

@@ -1,8 +1,8 @@
 """Onboarding e perfil — agora multi-tenant.
 
 - 1º acesso da plataforma: criar OPERADOR (público enquanto não há usuários).
-- Operador cria tenants (ver tenants_routes) e cada tenant faz seu onboarding.
-- Organização, escopo, threat profile, seeds e auditoria são SEMPRE por tenant.
+- Operator creates tenants (see tenants_routes) and each tenant performs its own onboarding.
+- Organization, scope, threat profile, seeds and audit are ALWAYS tenant-scoped.
 """
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import func, select
@@ -57,7 +57,7 @@ def bootstrap_operator(payload: AdminBootstrap, request: Request, response: Resp
     """Cria o primeiro usuário: o OPERADOR de plataforma. Público só enquanto
     não houver nenhum usuário."""
     if _user_count(db) > 0:
-        raise HTTPException(status_code=409, detail="Plataforma já inicializada.")
+        raise HTTPException(status_code=409, detail="Platform already initialized.")
     op = User(email=payload.email, hashed_password=hash_password(payload.password),
               role="admin", is_operator=True, operator_role="platform_admin", tenant_id=None)
     db.add(op)
@@ -210,14 +210,14 @@ def complete_setup(request: Request, db: Session = Depends(get_db),
                    tid: int = Depends(current_tenant_id)):
     org = _org(db, tid)
     if org is None or not (org.name or "").strip() or not (org.sector or "").strip():
-        raise HTTPException(status_code=422, detail="Organização incompleta: informe nome e setor.")
+        raise HTTPException(status_code=422, detail="Incomplete organization: provide name and sector.")
     if not org.monitoring_scope:
         raise HTTPException(status_code=422, detail="Selecione ao menos uma fonte no escopo.")
     brands = list(db.scalars(select(Brand).where(Brand.tenant_id == tid)))
     if not brands:
         raise HTTPException(status_code=422, detail="Cadastre ao menos uma marca.")
     if not any(b.domain_list() for b in brands):
-        raise HTTPException(status_code=422, detail="Cadastre ao menos um domínio oficial.")
+        raise HTTPException(status_code=422, detail="Register at least one official domain.")
     org.setup_completed = True
     org.setup_completed_at = utcnow()
     org.updated_at = utcnow()
@@ -229,7 +229,7 @@ def complete_setup(request: Request, db: Session = Depends(get_db),
     return org
 
 
-# ---------- Auditoria (por tenant) ----------
+# ---------- Audit (tenant-scoped) ----------
 @router.get("/audit", response_model=list[AuditOut], dependencies=[Depends(require_admin)])
 def list_audit(action: str | None = None, actor: str | None = None, limit: int = 200,
                db: Session = Depends(get_db), tid: int = Depends(current_tenant_id)):

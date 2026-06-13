@@ -100,8 +100,8 @@ def send_finding_alert(brand: Brand, f: BrandFinding) -> dict:
 
     text = (
         f"{emoji} <b>ThreatForge — Abuso de marca</b>\n"
-        f"Marca: <b>{brand.name}</b>\n"
-        f"Domínio: <code>{_defang(f.domain)}</code>\n"
+        f"Brand: <b>{brand.name}</b>\n"
+        f"Domain: <code>{_defang(f.domain)}</code>\n"
         f"Veredito: <b>{f.verdict.upper()}</b> (score {f.score}/100, "
         f"{f.similarity}% similar)\n"
         f"Motivos: {reasons or 'n/d'}"
@@ -109,7 +109,7 @@ def send_finding_alert(brand: Brand, f: BrandFinding) -> dict:
     subject = f"[ThreatForge] {f.verdict.upper()} — abuso de marca {brand.name}: {_defang(f.domain)}"
     body = (
         f"Possível abuso da marca {brand.name}.\n\n"
-        f"Domínio: {_defang(f.domain)}\n"
+        f"Domain: {_defang(f.domain)}\n"
         f"Veredito: {f.verdict} | Score: {f.score}/100 | Similaridade: {f.similarity}%\n"
         f"Origem: {f.source}\n\n"
         f"Fatores:\n" + "\n".join(f"- {x['reason']} ({x['source']})" for x in (f.score_factors or []))

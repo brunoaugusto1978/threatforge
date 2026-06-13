@@ -22,7 +22,7 @@ router = APIRouter(prefix="/brands", tags=["brands"], dependencies=[Depends(requ
 def _owned_brand(db: Session, brand_id: int, tid: int) -> Brand:
     brand = db.get(Brand, brand_id)
     if brand is None or brand.tenant_id != tid:
-        raise HTTPException(status_code=404, detail="Marca não encontrada.")
+        raise HTTPException(status_code=404, detail="Brand not found.")
     return brand
 
 
@@ -38,7 +38,7 @@ def _owned_finding(db: Session, finding_id: int, tid: int) -> BrandFinding:
 def create_brand(payload: BrandCreate, db: Session = Depends(get_db),
                  tid: int = Depends(current_tenant_id)):
     if db.scalar(select(Brand).where(Brand.tenant_id == tid, Brand.name == payload.name)):
-        raise HTTPException(status_code=409, detail="Marca já cadastrada.")
+        raise HTTPException(status_code=409, detail="Brand already registered.")
     brand = Brand(
         tenant_id=tid,
         name=payload.name,

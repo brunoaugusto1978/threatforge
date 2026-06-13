@@ -32,7 +32,7 @@ class Tenant(Base):
 
 
 class TenantInvite(Base):
-    """Convite de acesso a um tenant. Token guardado como hash; uso único."""
+    """Tenant access invitation. Token is stored as a hash; single use."""
     __tablename__ = "tenant_invites"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -279,7 +279,7 @@ class Brand(Base):
         ForeignKey("tenants.id", ondelete="CASCADE"), index=True
     )
     name: Mapped[str] = mapped_column(String(255), index=True)
-    # domínios legítimos (allowlist) — separados por vírgula
+    # legitimate domains (allowlist) — comma-separated
     official_domains: Mapped[str] = mapped_column(Text, default="")
     # termos extras a vigiar (ex.: nome fantasia, app), separados por vírgula
     keywords: Mapped[str | None] = mapped_column(Text, nullable=True)

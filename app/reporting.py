@@ -55,7 +55,7 @@ def render_report(obs: Observable) -> str:
     ]
 
     if obs.score_factors:
-        lines += ["| Fator | Pontos | Justificativa | Fonte |", "|---|---|---|---|"]
+        lines += ["| Factor | Points | Rationale | Source |", "|---|---|---|---|"]
         for f in obs.score_factors:
             lines.append(
                 f"| {f['name']} | +{f['points']} | {_md_escape(f['reason'])} | {f['source']} |"
@@ -70,7 +70,7 @@ def render_report(obs: Observable) -> str:
             lines.append("")
             data = e.data or {}
             if data.get("skipped"):
-                lines.append(f"_Fonte não consultada: {_md_escape(str(data.get('reason')))}_")
+                lines.append(f"_Source not queried: {_md_escape(str(data.get('reason')))}_")
             elif not data or data.get("listed") is False:
                 lines.append("_Nenhum registro encontrado nesta fonte._")
             else:
@@ -106,7 +106,7 @@ def render_report(obs: Observable) -> str:
     lines += [
         "",
         "---",
-        "_Fontes: CISA KEV, FIRST EPSS, abuse.ch URLhaus, MITRE ATT&CK. "
+        "_Sources: CISA KEV, FIRST EPSS, abuse.ch URLhaus, MITRE ATT&CK. "
         "Relatório gerado automaticamente; revise antes de distribuir._",
     ]
     return "\n".join(lines)

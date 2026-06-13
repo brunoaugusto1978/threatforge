@@ -56,7 +56,7 @@ def _assert_tenant_access(db: Session, principal: Principal, tenant_id: int) -> 
     if tenant is None:
         raise HTTPException(status_code=404, detail="Tenant não encontrado.")
     if not operator_can_access_tenant(db, principal, tenant_id):
-        raise HTTPException(status_code=403, detail="Operador sem acesso a este tenant.")
+        raise HTTPException(status_code=403, detail="Operator has no access to this tenant.")
     return tenant
 
 
@@ -185,7 +185,7 @@ def revoke_invite(tenant_id: int, invite_id: int, request: Request,
                   principal: Principal = Depends(require_platform_admin)):
     inv = db.get(TenantInvite, invite_id)
     if inv is None or inv.tenant_id != tenant_id:
-        raise HTTPException(status_code=404, detail="Convite não encontrado.")
+        raise HTTPException(status_code=404, detail="Invitation not found.")
     if inv.status == "pending":
         inv.status = "revoked"
         db.commit()
@@ -272,7 +272,7 @@ def update_operator(operator_id: int, payload: OperatorUpdate, request: Request,
                     principal: Principal = Depends(require_platform_admin)):
     op = db.get(User, operator_id)
     if op is None or not op.is_operator:
-        raise HTTPException(status_code=404, detail="Operador não encontrado.")
+        raise HTTPException(status_code=404, detail="Operator not found.")
     # proteção: não rebaixar/desativar a si mesmo (evita lockout do super admin)
     if principal.user_id == operator_id:
         if payload.operator_role and payload.operator_role != "platform_admin":
@@ -309,7 +309,7 @@ def grant_tenant_access(operator_id: int, payload: TenantAccessGrant, request: R
                         principal: Principal = Depends(require_platform_admin)):
     op = db.get(User, operator_id)
     if op is None or not op.is_operator:
-        raise HTTPException(status_code=404, detail="Operador não encontrado.")
+        raise HTTPException(status_code=404, detail="Operator not found.")
     if db.get(Tenant, payload.tenant_id) is None:
         raise HTTPException(status_code=404, detail="Tenant não encontrado.")
     existing = db.scalar(select(OperatorTenantAccess).where(
@@ -343,7 +343,7 @@ def revoke_tenant_access(operator_id: int, tenant_id: int, request: Request,
         OperatorTenantAccess.operator_user_id == operator_id,
         OperatorTenantAccess.tenant_id == tenant_id))
     if row is None:
-        raise HTTPException(status_code=404, detail="Acesso não encontrado.")
+        raise HTTPException(status_code=404, detail="Access not found.")
     row.is_active = False
     row.revoked_at = utcnow()
     row.revoked_by = principal.subject

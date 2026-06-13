@@ -1,11 +1,11 @@
 """Scoring explicável para findings de marca.
 
-Princípio: separar EXISTÊNCIA (domínio parecido existe/resolve) de AMEAÇA
+Principle: separate EXISTENCE (similar domain exists/resolves) from THREAT
 ATIVA (capaz de phishing ou já malicioso). Similaridade e "resolve" sozinhos
 são contexto fraco — geram no máximo "low". Para "suspicious"/"malicious" é
 preciso ao menos um sinal forte: MX, URLhaus, registro recente ou cert novo.
 
-Isso reduz falso positivo de domínios estacionados / à venda, que são
+This reduces false positives from parked/for-sale domains, which are
 especulação de revenda, não ataque.
 """
 from dataclasses import asdict, dataclass
@@ -40,13 +40,13 @@ def score_finding(
     # 1. Similaridade — contexto, pesos baixos
     if similarity >= 90:
         factors.append(Factor("high_similarity", 20,
-            f"Domínio {similarity}% similar à marca monitorada.", "ThreatForge"))
+            f"Domain {similarity}% similar to the monitored brand.", "ThreatForge"))
     elif similarity >= 75:
         factors.append(Factor("similarity", 10,
-            f"Domínio {similarity}% similar à marca monitorada.", "ThreatForge"))
+            f"Domain {similarity}% similar to the monitored brand.", "ThreatForge"))
     elif similarity >= 60:
         factors.append(Factor("similarity", 5,
-            f"Domínio {similarity}% similar à marca.", "ThreatForge"))
+            f"Domain {similarity}% similar to the brand.", "ThreatForge"))
 
     # 2. Termo-isca
     lure_hit = next((l for l in LURES if l in domain), None)
@@ -57,7 +57,7 @@ def score_finding(
     # 3. Existência ativa — fraco
     if evidence.get("resolves"):
         factors.append(Factor("resolves", 6,
-            "Domínio resolve para um IP (existe infraestrutura).", "DNS"))
+            "Domain resolves to an IP address (infrastructure exists).", "DNS"))
 
     # 4. SINAL FORTE: MX (capaz de phishing por e-mail)
     if evidence.get("mx"):
@@ -65,7 +65,7 @@ def score_finding(
             "Possui registro MX — capaz de enviar/receber e-mail (phishing).", "DNS"))
         strong.add("mx_record")
 
-    # 5. SINAL FORTE: idade do domínio (RDAP)
+    # 5. STRONG SIGNAL: domain age (RDAP)
     age = evidence.get("age_days")
     if age is not None:
         if age <= 7:
@@ -90,7 +90,7 @@ def score_finding(
     # 7. SINAL FORTE: já malicioso no URLhaus
     if evidence.get("urlhaus_listed"):
         factors.append(Factor("urlhaus", 45,
-            "Domínio já consta no URLhaus como malware/phishing.", "abuse.ch URLhaus"))
+            "Domain is already listed in URLhaus as malware/phishing.", "abuse.ch URLhaus"))
         strong.add("urlhaus")
 
     score = min(100, max(0, sum(f.points for f in factors)))
@@ -99,7 +99,7 @@ def score_finding(
     parked = bool(evidence.get("parked"))
     if parked:
         factors.append(Factor("parked", 0,
-            "Domínio estacionado/à venda (nameserver de parking). Provável "
+            "Parked/for-sale domain (parking nameserver). Likely "
             "especulação de revenda, não ataque ativo.", "DNS/NS"))
 
     verdict = "info"
@@ -113,7 +113,7 @@ def score_finding(
     if verdict in ("suspicious", "malicious") and not strong:
         verdict = "low"
 
-    # Domínio estacionado/à venda nunca passa de "low" se não houver
+    # Parked/for-sale domain never exceeds "low" if there is no
     # sinal forte de uso ativo malicioso (MX/URLhaus).
     if parked and not ({"mx_record", "urlhaus"} & strong):
         if verdict in ("suspicious", "malicious"):

@@ -1,5 +1,5 @@
 """Scanner de marca: gera candidatos, resolve DNS, consulta CT logs (crt.sh)
-e idade do domínio (RDAP), pontua e persiste findings.
+and domain age (RDAP), scores and persists findings.
 
 Tudo em fontes públicas e gratuitas. Sem scraping agressivo, sem dark web.
 """
@@ -47,7 +47,7 @@ def _has_mx(domain: str, client: httpx.Client) -> bool:
         return False
 
 
-# nameservers/plataformas de domínio estacionado ou à venda (parking/marketplace)
+# nameservers/platforms for parked or for-sale domains (parking/marketplace)
 PARKING_PROVIDERS = (
     "sedoparking", "sedo.com", "bodis", "parkingcrew", "above.com", "dan.com",
     "afternic", "hugedomains", "voodoo.com", "parklogic", "fabulous.com",
@@ -109,7 +109,7 @@ def _ct_cert_age_days(domain: str, client: httpx.Client) -> int | None:
 
 
 def ct_discover(brand_label: str, client: httpx.Client, limit: int = 200) -> list[str]:
-    """Descobre domínios contendo a marca via CT logs (wildcard %marca%)."""
+    """Discovers domains containing the brand through CT logs (wildcard %brand%)."""
     try:
         r = client.get(
             CRTSH_URL, params={"q": f"%{brand_label}%", "output": "json"}, timeout=20.0
@@ -133,7 +133,7 @@ def scan_brand(brand: Brand, db: Session, deep: bool = True) -> dict:
     (mais rápido; usa só resolução DNS e descoberta via CT)."""
     official = set(brand.domain_list())
     if not official:
-        return {"error": "marca sem domínios oficiais cadastrados"}
+        return {"error": "brand has no registered official domains"}
 
     primary = next(iter(official))
     label, _ = split_domain(primary)
@@ -149,7 +149,7 @@ def scan_brand(brand: Brand, db: Session, deep: bool = True) -> dict:
         headers={"User-Agent": "ThreatForge/0.2 (open-source CTI; brand-monitor)"},
         follow_redirects=True,
     ) as client:
-        # descoberta por CT (pega domínios reais que mencionam a marca)
+        # CT discovery (captures real domains mentioning the brand)
         for d in ct_discover(label, client):
             candidates.add(d)
 
@@ -166,7 +166,7 @@ def scan_brand(brand: Brand, db: Session, deep: bool = True) -> dict:
 
             evidence: dict = {"resolves": resolves, "ips": ips, "similarity": sim}
             # parking/à venda: barato (1 DoH), roda sempre que resolve — corta
-            # falso positivo de domínio especulativo em ambos os modos
+            # speculative domain false positive in both modes
             if resolves:
                 ns = _nameservers(domain, client)
                 evidence["nameservers"] = ns

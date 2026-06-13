@@ -128,10 +128,10 @@ class BrandCreate(BaseModel):
         for d in v:
             d = refang(d).lower().strip()
             if not _RE["domain"].match(d):
-                raise ValueError(f"domínio oficial inválido: {d!r}")
+                raise ValueError(f"invalid official domain: {d!r}")
             cleaned.append(d)
         if not cleaned:
-            raise ValueError("informe ao menos um domínio oficial")
+            raise ValueError("provide at least one official domain")
         return cleaned
 
 
@@ -275,7 +275,7 @@ class AdminResetPassword(BaseModel):
         return v
 
 
-# --- Organização / Setup ---
+# --- Organization / Setup ---
 Criticality = Literal["baixo", "medio", "alto", "critico"]
 
 
@@ -449,7 +449,7 @@ class ApiKeyCreate(BaseModel):
     role: Literal["admin", "analyst", "viewer"] = "analyst"
 
 
-# --- Convites ---
+# --- Invitations ---
 class InviteCreate(BaseModel):
     email: str
     role: Literal["admin", "analyst", "viewer"] = "admin"
@@ -525,7 +525,7 @@ class AuditOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-# --- Operadores ---
+# --- Operators ---
 OperatorRole = Literal["platform_admin", "support_operator", "support_viewer"]
 
 

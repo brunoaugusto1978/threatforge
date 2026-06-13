@@ -122,9 +122,9 @@ def change_password(
         raise HTTPException(status_code=400, detail="Disponível apenas para contas de usuário.")
     user = db.get(User, principal.user_id)
     if user is None:
-        raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+        raise HTTPException(status_code=404, detail="User not found.")
     if not verify_password(payload.current_password, user.hashed_password):
-        raise HTTPException(status_code=401, detail="Senha atual incorreta.")
+        raise HTTPException(status_code=401, detail="Current password is incorrect.")
     if verify_password(payload.new_password, user.hashed_password):
         raise HTTPException(status_code=400, detail="A nova senha deve ser diferente da atual.")
 
@@ -172,7 +172,7 @@ def list_users(db: Session = Depends(get_db), tid: int = Depends(current_tenant_
 def _owned_user(db: Session, user_id: int, tid: int) -> User:
     user = db.get(User, user_id)
     if user is None or user.tenant_id != tid:
-        raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+        raise HTTPException(status_code=404, detail="User not found.")
     return user
 
 
