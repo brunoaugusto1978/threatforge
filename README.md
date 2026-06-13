@@ -122,7 +122,7 @@ curl http://localhost:8000/health
 Expected response:
 
 ```json
-{"status":"ok","service":"threatforge","version":"0.6.0"}
+{"status":"ok","service":"threatforge","version":"0.6.9"}
 ```
 
 The API and UI will be available at:
