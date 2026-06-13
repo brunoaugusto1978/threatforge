@@ -1,6 +1,6 @@
 """Onboarding e perfil — agora multi-tenant.
 
-- 1º acesso da plataforma: criar OPERADOR (público enquanto não há usuários).
+- First platform access: create OPERATOR (public while no users exist).
 - Operator creates tenants (see tenants_routes) and each tenant performs its own onboarding.
 - Organization, scope, threat profile, seeds and audit are ALWAYS tenant-scoped.
 """
@@ -44,7 +44,7 @@ def _org(db: Session, tid: int) -> Organization | None:
     return db.scalar(select(Organization).where(Organization.tenant_id == tid))
 
 
-# ---------- Status público (plataforma) ----------
+# ---------- Public status (platform) ----------
 @router.get("/setup/status", response_model=SetupStatus)
 def setup_status(db: Session = Depends(get_db)):
     users = _user_count(db)
@@ -54,8 +54,8 @@ def setup_status(db: Session = Depends(get_db)):
 @router.post("/setup/operator", status_code=201)
 def bootstrap_operator(payload: AdminBootstrap, request: Request, response: Response,
                        db: Session = Depends(get_db)):
-    """Cria o primeiro usuário: o OPERADOR de plataforma. Público só enquanto
-    não houver nenhum usuário."""
+    """Creates the first user: the platform OPERATOR. Public only while
+    there are no users."""
     if _user_count(db) > 0:
         raise HTTPException(status_code=409, detail="Platform already initialized.")
     op = User(email=payload.email, hashed_password=hash_password(payload.password),
@@ -116,7 +116,7 @@ def save_scope(payload: ScopeIn, request: Request, db: Session = Depends(get_db)
                tid: int = Depends(current_tenant_id)):
     org = _org(db, tid)
     if org is None:
-        raise HTTPException(status_code=400, detail="Configure a organização primeiro.")
+        raise HTTPException(status_code=400, detail="Configure the organization first.")
     org.monitoring_scope = payload.monitoring_scope
     org.updated_at = utcnow()
     db.commit()
@@ -148,7 +148,7 @@ def apply_threat_profile(request: Request, db: Session = Depends(get_db),
                          tid: int = Depends(current_tenant_id)):
     org = _org(db, tid)
     if org is None:
-        raise HTTPException(status_code=400, detail="Configure a organização primeiro.")
+        raise HTTPException(status_code=400, detail="Configure the organization first.")
     brands = list(db.scalars(select(Brand).where(Brand.tenant_id == tid)))
     brand_payload = [{"name": b.name, "domains": b.domain_list()} for b in brands]
 
@@ -193,7 +193,7 @@ def reopen_setup(request: Request, db: Session = Depends(get_db),
                  tid: int = Depends(current_tenant_id)):
     org = _org(db, tid)
     if org is None:
-        raise HTTPException(status_code=400, detail="Nenhuma organização para reabrir.")
+        raise HTTPException(status_code=400, detail="No organization to reopen.")
     org.setup_completed = False
     org.updated_at = utcnow()
     db.commit()
@@ -215,7 +215,7 @@ def complete_setup(request: Request, db: Session = Depends(get_db),
         raise HTTPException(status_code=422, detail="Selecione ao menos uma fonte no escopo.")
     brands = list(db.scalars(select(Brand).where(Brand.tenant_id == tid)))
     if not brands:
-        raise HTTPException(status_code=422, detail="Cadastre ao menos uma marca.")
+        raise HTTPException(status_code=422, detail="Add at least one brand.")
     if not any(b.domain_list() for b in brands):
         raise HTTPException(status_code=422, detail="Register at least one official domain.")
     org.setup_completed = True

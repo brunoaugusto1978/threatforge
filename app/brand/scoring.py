@@ -1,4 +1,4 @@
-"""Scoring explicável para findings de marca.
+"""Explainable scoring for brand findings.
 
 Principle: separate EXISTENCE (similar domain exists/resolves) from THREAT
 ATIVA (capaz de phishing ou já malicioso). Similaridade e "resolve" sozinhos
@@ -6,7 +6,7 @@ são contexto fraco — geram no máximo "low". Para "suspicious"/"malicious" é
 preciso ao menos um sinal forte: MX, URLhaus, registro recente ou cert novo.
 
 This reduces false positives from parked/for-sale domains, which are
-especulação de revenda, não ataque.
+resale speculation, not an attack.
 """
 from dataclasses import asdict, dataclass
 
@@ -100,7 +100,7 @@ def score_finding(
     if parked:
         factors.append(Factor("parked", 0,
             "Parked/for-sale domain (parking nameserver). Likely "
-            "especulação de revenda, não ataque ativo.", "DNS/NS"))
+            "resale speculation, not active attack.", "DNS/NS"))
 
     verdict = "info"
     for threshold, name in VERDICTS:
@@ -109,12 +109,12 @@ def score_finding(
             break
 
     # Sem nenhum sinal FORTE de ameaça, rebaixa para no máximo "low":
-    # similaridade + resolve + termo-isca não bastam para "suspeito".
+    # similarity + DNS resolution + lure term are not enough for "suspicious".
     if verdict in ("suspicious", "malicious") and not strong:
         verdict = "low"
 
     # Parked/for-sale domain never exceeds "low" if there is no
-    # sinal forte de uso ativo malicioso (MX/URLhaus).
+    # strong signal of active malicious use (MX/URLhaus).
     if parked and not ({"mx_record", "urlhaus"} & strong):
         if verdict in ("suspicious", "malicious"):
             verdict = "low"

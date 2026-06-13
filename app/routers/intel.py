@@ -48,7 +48,7 @@ def sync_mitre(db: Session = Depends(get_db)):
 def get_kev(cve_id: str, db: Session = Depends(get_db)):
     entry = db.get(KEVEntry, cve_id.upper())
     if entry is None:
-        raise HTTPException(status_code=404, detail="CVE não consta no KEV local. Rode /sync/kev.")
+        raise HTTPException(status_code=404, detail="CVE is not listed in the local KEV dataset. Run /sync/kev.")
     return {
         "cve_id": entry.cve_id,
         "vendor": entry.vendor,
@@ -66,7 +66,7 @@ def get_technique(technique_id: str, db: Session = Depends(get_db)):
     tech = db.get(AttackTechnique, technique_id.upper())
     if tech is None:
         raise HTTPException(
-            status_code=404, detail="Técnica não encontrada. Rode /sync/mitre."
+            status_code=404, detail="Technique not found. Run /sync/mitre."
         )
     return {
         "technique_id": tech.technique_id,

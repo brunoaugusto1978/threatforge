@@ -281,7 +281,7 @@ async function setTenantStatus(id, status) {
   catch (e) { toast(e.message, true); }
 }
 
-// ---- Modo suporte: entrar/sair do tenant ----
+// ---- Modo support: entrar/sair do tenant ----
 function tenantNameFromList(id) {
   try { return JSON.parse($("#tList").dataset.names || "{}")[id] || ("tenant " + id); }
   catch { return "tenant " + id; }
@@ -292,7 +292,7 @@ function enterTenant(id) {
   $("#supportBanner").classList.remove("hidden");
   showOnly("app");
   $("#who").innerHTML = `${esc(ME.subject)} &nbsp;<span class="badge role-admin">${esc(ME.operator_role || "operador")}</span>`;
-  // operador em suporte: mostra abas conforme papel efetivo
+  // operador em support: mostra abas conforme papel efetivo
   const eff = ME.operator_role === "platform_admin" ? "admin"
     : ME.operator_role === "support_operator" ? "analyst" : "viewer";
   $("#navUsers").style.display = eff === "admin" ? "" : "none";
@@ -316,7 +316,7 @@ async function viewOpOperators(box) {
   p.append(el("div", { class: "row" },
     field("E-mail", inputEl("opEmail", "operador@empresa.com")),
     field("Password (empty = generate)", inputEl("opPass", "", "password")),
-    field("Papel", selectEl("opRole", ["support_operator", "support_viewer", "platform_admin"])),
+    field("Role", selectEl("opRole", ["support_operator", "support_viewer", "platform_admin"])),
     el("button", { onclick: createOperator }, "Create operator")));
   box.append(p);
   const list = el("div", { class: "panel", id: "opList" }, "loading…");
@@ -327,10 +327,10 @@ async function viewOpOperators(box) {
       <tr>
         <td>${esc(o.email)}</td>
         <td><span class="badge role-${o.operator_role === "platform_admin" ? "admin" : "analyst"}">${esc(o.operator_role || "")}</span></td>
-        <td>${o.is_active ? '<span style="color:var(--green)">ativo</span>' : '<span class="muted">inativo</span>'}</td>
+        <td>${o.is_active ? '<span style="color:var(--green)">active</span>' : '<span class="muted">inactive</span>'}</td>
         <td>
           ${o.operator_role !== "platform_admin" ? actBtn("opAccess", o.id, "Allowed tenants") : '<span class="muted">full access</span>'}
-          ${actBtn(o.is_active ? "opOff" : "opOn", o.id, o.is_active ? "Desativar" : "Activate")}
+          ${actBtn(o.is_active ? "opOff" : "opOn", o.id, o.is_active ? "Deactivate" : "Activate")}
         </td>
       </tr>`).join("");
     list.innerHTML = `<table><thead><tr><th>E-mail</th><th>Role</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table><div id="opAccessBox"></div>`;
@@ -343,7 +343,7 @@ async function createOperator() {
   if (pass) body.password = pass;
   try {
     await api("POST", "/operators", body);
-    if (!pass) toast("Operator created — defina a senha via reset (ou informe senha).");
+    if (!pass) toast("Operator created — set the password through reset or provide a password.");
     else toast("Operator created");
     renderOperator();
   } catch (e) { toast(e.message, true); }
@@ -475,8 +475,8 @@ WIZ_RENDER[2] = async () => {
   $("#wizBody").innerHTML = `<h3>Brand and official assets</h3>
     <p class="hint">Register at least one brand. Lists accept comma-separated items.</p>${existing}`;
   const grid = el("div", { class: "srow2" });
-  grid.append(field("Nome da marca", inputEl("wz_b_name", "ex.: Banco Exemplo")));
-  grid.append(field("Domains oficiais (vírgula)", inputEl("wz_b_domains", "exemplo.com.br")));
+  grid.append(field("Brand name", inputEl("wz_b_name", "e.g. Example Bank")));
+  grid.append(field("Official domains (comma-separated)", inputEl("wz_b_domains", "exemplo.com.br")));
   BRAND_LIST_FIELDS.forEach(([k, label]) => grid.append(field(label, inputEl("wz_b_" + k, ""))));
   grid.append(field("Logotipo (URL)", inputEl("wz_b_logo", "https://...")));
   $("#wizBody").append(grid);
@@ -486,8 +486,8 @@ WIZ_SAVE[2] = async () => {
   const name = $("#wz_b_name").value.trim();
   const hadBrands = $("#wizBody").dataset.hasBrands === "1";
   if (!name) {
-    if (hadBrands) return true;  // já existe marca; pode seguir sem adicionar
-    $("#wizErr").textContent = "Cadastre ao menos uma marca."; return false;
+    if (hadBrands) return true;  // a brand already exists; continue without adding another
+    $("#wizErr").textContent = "Add at least one brand."; return false;
   }
   const csv = (id) => $("#" + id).value.split(",").map(s => s.trim()).filter(Boolean);
   const domains = csv("wz_b_domains");
@@ -548,7 +548,7 @@ WIZ_RENDER[4] = async () => {
     });
   } catch (e) { $("#tpBody").textContent = e.message; }
 };
-WIZ_SAVE[4] = async () => true;  // geração de seeds é opcional
+WIZ_SAVE[4] = async () => true;  // seed generation is optional
 
 // ---- Step 5: Review ----
 WIZ_RENDER[5] = async () => {
@@ -563,7 +563,7 @@ WIZ_RENDER[5] = async () => {
   // checklist de pendências que bloqueiam a conclusão
   const checks = [
     [!!(org.name && org.sector), "Organization (name + sector)"],
-    [brands.length > 0, "Pelo menos uma marca"],
+    [brands.length > 0, "At least one brand"],
     [hasDomain, "At least one official domain"],
     [scope.length > 0, "Escopo de monitoramento"],
   ];
@@ -576,13 +576,13 @@ WIZ_RENDER[5] = async () => {
     <table>
       <tr><th>Organization</th><td>${esc(org.name || "—")} ${org.sector ? "· " + esc(org.sector) : ""}</td></tr>
       <tr><th>Brands</th><td>${brands.map(b => esc(b.name)).join(", ") || "—"}</td></tr>
-      <tr><th>Domains oficiais</th><td><code>${brands.map(b => esc(b.official_domains)).filter(Boolean).join("; ") || "—"}</code></td></tr>
+      <tr><th>Official domains</th><td><code>${brands.map(b => esc(b.official_domains)).filter(Boolean).join("; ") || "—"}</code></td></tr>
       <tr><th>Escopo</th><td>${scope.map(esc).join(", ") || "—"}</td></tr>
       <tr><th>Seeds (watchlist)</th><td>${seeds.length} candidatas</td></tr>
     </table>
     <div style="margin-top:16px"><b>Requirements to complete</b>${checklist}</div>
     <p class="hint" style="margin-top:12px">${pending.length
-      ? "Resolva os itens marcados com ⛔ antes de concluir (volte às etapas anteriores)."
+      ? "Resolve the items marked with ⛔ before finishing. Go back to the previous steps."
       : "Everything is ready. After completion, platform tabs will be enabled."}</p>`;
 
   // bloqueia o botão Concluir enquanto houver pendência
@@ -604,10 +604,10 @@ async function viewDashboard() {
   try {
     const s = await api("GET", "/stats");
     $("#cards").innerHTML = `
-      ${cardHtml(s.observables, "IOCs cadastrados")}
-      ${cardHtml(s.observables_malicious, "IOCs maliciosos", true)}
+      ${cardHtml(s.observables, "Registered IOCs")}
+      ${cardHtml(s.observables_malicious, "Malicious IOCs", true)}
       ${cardHtml(s.brands, "Monitored brands")}
-      ${cardHtml(s.findings, "Findings de marca")}
+      ${cardHtml(s.findings, "Brand findings")}
       ${cardHtml(s.findings_priority, "Priority findings", true)}
       ${cardHtml(s.users, "Users")}`;
   } catch (e) { $("#cards").textContent = e.message; }
@@ -619,14 +619,14 @@ function cardHtml(n, label, alert = false) {
 // ---- IOCs ----
 async function viewIocs() {
   const m = $("#main");
-  m.innerHTML = `<h2 class="title">Indicadores (IOCs)</h2>`;
+  m.innerHTML = `<h2 class="title">Indicators (IOCs)</h2>`;
   if (can("analyst")) {
     const p = el("div", { class: "panel" });
     p.append(el("div", { class: "row" },
-      field("Tipo", selectEl("iocType", ["cve", "ip", "domain", "url", "hash", "email"])),
-      field("Valor", inputEl("iocValue", "ex.: CVE-2024-3400 ou evil[.]com")),
-      el("button", { onclick: addIoc }, "Adicionar"),
-      el("button", { class: "ghost", onclick: syncFeeds }, "Sincronizar feeds (KEV/MITRE)")
+      field("Type", selectEl("iocType", ["cve", "ip", "domain", "url", "hash", "email"])),
+      field("Value", inputEl("iocValue", "e.g. CVE-2024-3400 or evil.examplel[.]com")),
+      el("button", { onclick: addIoc }, "Add"),
+      el("button", { class: "ghost", onclick: syncFeeds }, "Sync feeds (KEV/MITRE)")
     ));
     m.append(p);
   }
@@ -645,10 +645,10 @@ async function loadIocs() {
         <td><code>${esc(o.value)}</code></td>
         <td>${scoreBar(o.score)} <span class="muted">${o.score}</span></td>
         <td>${verdictCell(o.verdict)}</td>
-        <td>${can("analyst") ? actBtn("enrich", o.id, "Enriquecer") : ""}
-            ${actBtn("iocDetail", o.id, "Detalhes")}</td>
+        <td>${can("analyst") ? actBtn("enrich", o.id, "Enrich") : ""}
+            ${actBtn("iocDetail", o.id, "Details")}</td>
       </tr>`).join("");
-    box.innerHTML = `<table><thead><tr><th>Type</th><th>Valor</th><th>Score</th><th>Verdict</th><th></th></tr></thead><tbody>${rows}</tbody></table><div id="iocDetail"></div>`;
+    box.innerHTML = `<table><thead><tr><th>Type</th><th>Value</th><th>Score</th><th>Verdict</th><th></th></tr></thead><tbody>${rows}</tbody></table><div id="iocDetail"></div>`;
   } catch (e) { $("#iocList").textContent = e.message; }
 }
 
@@ -688,13 +688,13 @@ async function syncFeeds() {
 // ---- Brands ----
 async function viewBrands() {
   const m = $("#main");
-  m.innerHTML = `<h2 class="title">Monitoramento de marca</h2>`;
+  m.innerHTML = `<h2 class="title">Brand monitoring</h2>`;
   if (can("analyst")) {
     const p = el("div", { class: "panel" });
     p.append(el("div", { class: "row" },
-      field("Nome da marca", inputEl("brName", "ex.: Banco Exemplo")),
-      field("Domains oficiais (vírgula)", inputEl("brDomains", "bancoexemplo.com.br")),
-      el("button", { onclick: addBrand }, "Cadastrar marca")));
+      field("Brand name", inputEl("brName", "e.g. Example Bank")),
+      field("Official domains (comma-separated)", inputEl("brDomains", "example-bank.example")),
+      el("button", { onclick: addBrand }, "Add brand")));
     m.append(p);
   }
   m.append(el("div", { class: "panel", id: "brList" }, "loading…"));
@@ -704,18 +704,18 @@ async function loadBrands() {
   try {
     const items = await api("GET", "/brands");
     const box = $("#brList");
-    if (!items.length) { box.innerHTML = '<span class="muted">Nenhuma marca cadastrada.</span>'; return; }
+    if (!items.length) { box.innerHTML = '<span class="muted">No brands registered.</span>'; return; }
     const rows = items.map(b => `
       <tr>
         <td><b>${esc(b.name)}</b></td>
         <td><code>${esc(b.official_domains)}</code></td>
-        <td class="muted">${b.last_scan_at ? esc(b.last_scan_at.slice(0, 16).replace("T", " ")) : "nunca"}</td>
+        <td class="muted">${b.last_scan_at ? esc(b.last_scan_at.slice(0, 16).replace("T", " ")) : "never"}</td>
         <td>
           ${can("analyst") ? actBtn("scanFast", b.id, "Quick scan") + " " + actBtn("scanDeep", b.id, "Deep scan") : ""}
           ${actBtn("findings", b.id, "Findings")}
         </td>
       </tr>`).join("");
-    box.innerHTML = `<table><thead><tr><th>Brand</th><th>Domains oficiais</th><th>Last scan</th><th></th></tr></thead><tbody>${rows}</tbody></table><div id="findings"></div>`;
+    box.innerHTML = `<table><thead><tr><th>Brand</th><th>Official domains</th><th>Last scan</th><th></th></tr></thead><tbody>${rows}</tbody></table><div id="findings"></div>`;
   } catch (e) { $("#brList").textContent = e.message; }
 }
 async function addBrand() {
@@ -761,9 +761,9 @@ async function viewUsers() {
   m.innerHTML = `<h2 class="title">Users</h2>`;
   const p = el("div", { class: "panel" });
   p.append(el("div", { class: "row" },
-    field("E-mail", inputEl("uEmail", "usuario@empresa.com")),
+    field("E-mail", inputEl("uEmail", "user@example.com")),
     field("Password (min. 8)", inputEl("uPass", "", "password")),
-    field("Papel", selectEl("uRole", ["viewer", "analyst", "admin"])),
+    field("Role", selectEl("uRole", ["viewer", "analyst", "admin"])),
     el("button", { onclick: addUser }, "Create user")));
   m.append(p);
   m.append(el("div", { class: "panel", id: "uList" }, "loading…"));
@@ -776,11 +776,11 @@ async function loadUsers() {
       <tr>
         <td>${esc(u.email)}</td>
         <td><span class="badge role-${esc(u.role)}">${esc(u.role)}</span></td>
-        <td>${u.is_active ? '<span style="color:var(--green)">ativo</span>' : '<span class="muted">inativo</span>'}</td>
+        <td>${u.is_active ? '<span style="color:var(--green)">active</span>' : '<span class="muted">inactive</span>'}</td>
         <td class="muted">${u.last_login_at ? esc(u.last_login_at.slice(0, 16).replace("T", " ")) : "—"}</td>
         <td>
-          ${actBtn(u.is_active ? "userOff" : "userOn", u.id, u.is_active ? "Desativar" : "Activate")}
-          ${actBtn("userReset", u.id, "Resetar senha")}
+          ${actBtn(u.is_active ? "userOff" : "userOn", u.id, u.is_active ? "Deactivate" : "Activate")}
+          ${actBtn("userReset", u.id, "Reset password")}
           ${actBtn("userDel", u.id, "Delete", "danger")}
         </td>
       </tr>`).join("");
@@ -799,7 +799,7 @@ async function toggleUser(id, active) {
   catch (e) { toast(e.message, true); }
 }
 async function delUser(id) {
-  if (!confirm("Delete este usuário?")) return;
+  if (!confirm("Delete this user?")) return;
   try { await api("DELETE", `/users/${id}`); toast("Deleted"); await loadUsers(); }
   catch (e) { toast(e.message, true); }
 }

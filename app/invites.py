@@ -12,7 +12,7 @@ from app.security import generate_invite_token, hash_password, hash_token
 
 
 def _expired(expires_at: datetime) -> bool:
-    """Comparação robusta: alguns bancos (SQLite) devolvem datetime naive."""
+    """Robust comparison: some databases (SQLite) return naive datetimes."""
     if expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
     return expires_at < utcnow()
@@ -27,7 +27,7 @@ def create_invite(
     invited_by: str, request: Request | None = None,
 ) -> dict:
     """Creates a pending invite, generates a token, stores its hash, sends e-mail and audits the event.
-    Retorna dados + link (o link só é exibido aqui/no log; o token não é persistido)."""
+    Returns data plus link. The link is only displayed here/in logs; the token is not persisted."""
     # invalida convites pendentes anteriores para o mesmo e-mail/tenant
     olds = db.query(TenantInvite).filter(
         TenantInvite.tenant_id == tenant.id, TenantInvite.email == email,
@@ -92,7 +92,7 @@ def accept(db: Session, token: str, password: str, request: Request | None = Non
         db.commit()
         raise ValueError("Invite expired.")
 
-    # ativa/cria o usuário vinculado AO TENANT do convite (cliente não escolhe tenant)
+    # activates/creates the user bound to the invitation tenant; the client does not choose the tenant
     user = db.get(User, invite.user_id) if invite.user_id else None
     if user is None:
         user = db.query(User).filter(User.email == invite.email).first()

@@ -1,6 +1,6 @@
-"""Trilha de auditoria para ações sensíveis.
+"""Audit trail for sensitive actions.
 
-Nunca registra senhas, tokens ou segredos — apenas metadados da ação.
+Never logs passwords, tokens or secrets — only action metadata.
 """
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ def record(
     detail: dict | None = None,
     commit: bool = True,
 ) -> None:
-    """Grava um evento de auditoria. Falha de auditoria não derruba a ação."""
+    """Writes an audit event. Audit failure does not break the action."""
     try:
         entry = AuditLog(
             tenant_id=tenant_id,
@@ -71,6 +71,6 @@ def record(
         db.add(entry)
         if commit:
             db.commit()
-    except Exception as exc:  # nunca interrompe o fluxo principal
+    except Exception as exc:  # never interrupts the main flow
         logger.warning("Falha ao gravar audit log (%s): %s", action, type(exc).__name__)
         db.rollback()

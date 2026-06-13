@@ -20,7 +20,7 @@ def utcnow() -> datetime:
 
 
 class Tenant(Base):
-    """Fronteira de isolamento. Cada cliente é um tenant; todo dado sensível
+    """Isolation boundary. Each customer is a tenant; all sensitive data
     referencia tenant_id e toda query filtra por ele."""
     __tablename__ = "tenants"
 
@@ -56,8 +56,8 @@ class TenantInvite(Base):
 
 
 class OperatorTenantAccess(Base):
-    """Quais tenants um operador de suporte pode acessar (modo suporte).
-    platform_admin não precisa de linha aqui (acessa todos)."""
+    """Which tenants a support operator can access in support mode.
+    platform_admin does not need a row here because it can access all tenants."""
     __tablename__ = "operator_tenant_access"
     __table_args__ = (
         UniqueConstraint("operator_user_id", "tenant_id", name="uq_operator_tenant"),
@@ -79,7 +79,7 @@ class OperatorTenantAccess(Base):
 
 
 class ApiKey(Base):
-    """API key por tenant (automação/integração). Guardamos só o hash."""
+    """API key per tenant for automation/integration. Only the hash is stored."""
     __tablename__ = "api_keys"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -135,14 +135,14 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    # nulo para ações de plataforma (operador sem tenant)
+    # null for platform actions where the operator has no tenant
     tenant_id: Mapped[int | None] = mapped_column(
         ForeignKey("tenants.id", ondelete="SET NULL"), nullable=True, index=True
     )
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     actor: Mapped[str] = mapped_column(String(255), index=True)  # email ou "service"
     actor_role: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    # quando a ação é feita por um operador atuando em modo suporte num tenant
+    # when the action is performed by an operator acting in support mode for a tenant
     operator_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     action: Mapped[str] = mapped_column(String(60), index=True)
     target_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
@@ -159,7 +159,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     hashed_password: Mapped[str] = mapped_column(String(512))
     role: Mapped[str] = mapped_column(String(20), default="viewer")  # admin|analyst|viewer
-    # operador de plataforma: tenant_id nulo, enxerga a visão da operação.
+    # platform operator: tenant_id is null and sees the operations view.
     # is_operator=true NÃO concede acesso irrestrito — depende de operator_role
     # e de operator_tenant_access (para support_operator/support_viewer).
     is_operator: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -169,7 +169,7 @@ class User(Base):
         ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    # incrementado a cada troca/reset de senha -> invalida sessões (JWT) antigas
+    # incremented on each password change/reset to invalidate old JWT sessions
     pwd_version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_login_at: Mapped[datetime | None] = mapped_column(
@@ -240,7 +240,7 @@ class AttackTechnique(Base):
 
 
 class MonitoringSeed(Base):
-    """Seed/watchlist setorial — NÃO é finding. Vira finding só com evidência."""
+    """Sector seed/watchlist entry. It is not a finding unless evidence is found."""
     __tablename__ = "monitoring_seeds"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -283,7 +283,7 @@ class Brand(Base):
     official_domains: Mapped[str] = mapped_column(Text, default="")
     # termos extras a vigiar (ex.: nome fantasia, app), separados por vírgula
     keywords: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # ativos oficiais da marca (listas)
+    # official brand assets (lists)
     variations: Mapped[list | None] = mapped_column(JSON, nullable=True)
     aliases: Mapped[list | None] = mapped_column(JSON, nullable=True)  # siglas
     products: Mapped[list | None] = mapped_column(JSON, nullable=True)

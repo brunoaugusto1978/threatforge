@@ -1,4 +1,4 @@
-"""Scanner de marca: gera candidatos, resolve DNS, consulta CT logs (crt.sh)
+"""Brand scanner: generates candidates, resolves DNS and queries CT logs (crt.sh)
 and domain age (RDAP), scores and persists findings.
 
 Tudo em fontes públicas e gratuitas. Sem scraping agressivo, sem dark web.
@@ -75,7 +75,7 @@ def _is_parked(nameservers: list[str]) -> bool:
 
 
 def _rdap_age_days(domain: str, client: httpx.Client) -> int | None:
-    """Idade do registro via RDAP público. Retorna None se indisponível."""
+    """Registration age through public RDAP. Returns None if unavailable."""
     try:
         r = client.get(f"https://rdap.org/domain/{domain}", timeout=10.0)
         if r.status_code != 200:
@@ -109,7 +109,7 @@ def _ct_cert_age_days(domain: str, client: httpx.Client) -> int | None:
 
 
 def ct_discover(brand_label: str, client: httpx.Client, limit: int = 200) -> list[str]:
-    """Discovers domains containing the brand through CT logs (wildcard %brand%)."""
+    """Discovers domains accountining the brand through CT logs (wildcard %brand%)."""
     try:
         r = client.get(
             CRTSH_URL, params={"q": f"%{brand_label}%", "output": "json"}, timeout=20.0
@@ -130,7 +130,7 @@ def ct_discover(brand_label: str, client: httpx.Client, limit: int = 200) -> lis
 
 def scan_brand(brand: Brand, db: Session, deep: bool = True) -> dict:
     """Executa a varredura completa. deep=False pula RDAP/CT por candidato
-    (mais rápido; usa só resolução DNS e descoberta via CT)."""
+    (faster; uses only DNS resolution and CT discovery)."""
     official = set(brand.domain_list())
     if not official:
         return {"error": "brand has no registered official domains"}
@@ -160,7 +160,7 @@ def scan_brand(brand: Brand, db: Session, deep: bool = True) -> dict:
             resolves, ips = _resolves(domain)
             sim = round(ratio(domain, primary) * 100)
 
-            # filtro: só investiga a fundo o que resolve OU é muito similar
+            # filter: only investigates deeply what resolves or is highly similar
             if not resolves and sim < 70:
                 continue
 

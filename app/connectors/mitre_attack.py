@@ -1,7 +1,7 @@
 """Conector MITRE ATT&CK (Enterprise).
 
-Sync: baixa o bundle STIX público e popula a tabela local de técnicas,
-usada para dar contexto de TTPs em relatórios e lookups.
+Sync: downloads the public STIX bundle and populates the local techniques table,
+used to provide TTP context in reports and lookups.
 """
 from sqlalchemy.orm import Session
 
@@ -12,7 +12,7 @@ from app.models import AttackTechnique
 
 class MitreAttackConnector(Connector):
     name = "mitre_attack"
-    supported_types = ()  # contexto/lookup, não enriquece IOC diretamente no MVP
+    supported_types = ()  # context/lookup only; it does not enrich IOCs directly in the MVP
 
     def sync(self, db: Session) -> int:
         with self._client() as client:

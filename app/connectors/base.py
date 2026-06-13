@@ -2,7 +2,7 @@
 
 Para criar um conector novo: herde de Connector, defina `name` e os tipos
 suportados, e implemente `enrich()` retornando um dict serializável (ou None
-se a fonte não tem nada sobre o IOC).
+when the source has no data about the IOC).
 """
 from abc import ABC, abstractmethod
 

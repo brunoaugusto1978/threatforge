@@ -1,4 +1,4 @@
-"""Rotas de autenticação e gestão de usuários."""
+"""Authentication and user management routes."""
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -67,18 +67,18 @@ def login(payload: LoginRequest, request: Request, response: Response,
         )
 
     user = db.scalar(select(User).where(User.email == email))
-    # comparação sempre executa hash para mitigar timing/enumeração de usuário
+    # comparison always computes a hash to mitigate timing/user enumeration
     ok = bool(user) and user.is_active and verify_password(payload.password, user.hashed_password)
     if not ok:
         _record_attempt(email)
         audit.record(db, actor=email, action="auth.login_failed", request=request)
-        # mensagem genérica: não revela se o e-mail existe
+        # generic message: does not reveal whether the e-mail exists
         raise HTTPException(status_code=401, detail="Credenciais inválidas.")
 
     _login_attempts.pop(email, None)
     user.last_login_at = utcnow()
-    # migração transparente de hash (PBKDF2 -> Argon2) sem trocar a versão de senha.
-    # protegido: senha legada fora da política nova não deve impedir o login.
+    # transparent hash migration (PBKDF2 -> Argon2) without changing the password version.
+    # protected: a legacy password outside the new policy must not block login.
     if needs_rehash(user.hashed_password):
         try:
             user.hashed_password = hash_password(payload.password)
@@ -117,21 +117,21 @@ def change_password(
     principal: Principal = Depends(get_principal),
     db: Session = Depends(get_db),
 ):
-    """Auto-serviço: qualquer usuário troca a própria senha."""
+    """Self-service: any user can change their own password."""
     if principal.kind != "user" or principal.user_id is None:
-        raise HTTPException(status_code=400, detail="Disponível apenas para contas de usuário.")
+        raise HTTPException(status_code=400, detail="Available only for user accounts.")
     user = db.get(User, principal.user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found.")
     if not verify_password(payload.current_password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Current password is incorrect.")
     if verify_password(payload.new_password, user.hashed_password):
-        raise HTTPException(status_code=400, detail="A nova senha deve ser diferente da atual.")
+        raise HTTPException(status_code=400, detail="A nova password deve ser diferente da atual.")
 
     user.hashed_password = hash_password(payload.new_password)
-    user.pwd_version += 1  # invalida outras sessões
+    user.pwd_version += 1  # invalidates other sessions
     db.commit()
-    # reemite o cookie desta sessão com a nova versão, para não deslogar quem trocou
+    # reissues this session cookie with the new version so the user is not logged out
     token = create_token(sub=str(user.id), role=user.role, pwd_version=user.pwd_version)
     _set_session_cookie(response, token)
     audit.record(db, actor=user.email, actor_role=user.role,
@@ -140,7 +140,7 @@ def change_password(
     return {"ok": True}
 
 
-# ---------- Gestão de usuários (somente admin) ----------
+# ---------- User management (admin only) ----------
 @router.post("/users", response_model=UserOut, status_code=201)
 def create_user(payload: UserCreate, request: Request, db: Session = Depends(get_db),
                 principal: Principal = Depends(require_admin),
@@ -187,12 +187,12 @@ def update_user(
 ):
     user = _owned_user(db, user_id, tid)
 
-    # proteção: admin não pode rebaixar/desativar a si mesmo (evita lockout)
+    # protection: admin cannot demote/deactivate themselves (prevents lockout)
     if principal.user_id == user_id:
         if payload.role is not None and payload.role != "admin":
-            raise HTTPException(status_code=400, detail="Não é possível rebaixar a própria conta.")
+            raise HTTPException(status_code=400, detail="Não é possível rebaixar a própria account.")
         if payload.is_active is False:
-            raise HTTPException(status_code=400, detail="Não é possível desativar a própria conta.")
+            raise HTTPException(status_code=400, detail="Não é possível desativar a própria account.")
 
     if payload.role is not None:
         user.role = payload.role
@@ -200,7 +200,7 @@ def update_user(
         user.is_active = payload.is_active
     if payload.password is not None:
         user.hashed_password = hash_password(payload.password)
-        user.pwd_version += 1  # invalida sessões do usuário alvo
+        user.pwd_version += 1  # invalidates target user sessions
     db.commit()
     db.refresh(user)
     audit.record(db, actor=principal.subject, actor_role=principal.role, tenant_id=tid,
@@ -220,9 +220,9 @@ def admin_reset_password(
     principal: Principal = Depends(require_admin),
     tid: int = Depends(current_tenant_id),
 ):
-    """Admin reseta a senha de qualquer usuário. Se não enviar uma senha,
-    gera uma temporária e a retorna uma única vez (para repassar ao usuário).
-    A sessão atual do usuário-alvo é invalidada."""
+    """Admin resets any user password. If no password is sent,
+    generates a temporary one and returns it only once for secure delivery to the user.
+    The current target-user session is invalidated."""
     user = _owned_user(db, user_id, tid)
 
     temporary = None
@@ -240,7 +240,7 @@ def admin_reset_password(
     result = {"ok": True, "email": user.email}
     if temporary:
         result["temporary_password"] = temporary
-        result["note"] = "Repasse esta senha ao usuário por canal seguro. Ela não será exibida de novo."
+        result["note"] = "Share this password with the user through a secure channel. It will not be displayed again."
     return result
 
 
@@ -254,8 +254,8 @@ def delete_user(
 ):
     user = _owned_user(db, user_id, tid)
     if principal.user_id == user_id:
-        raise HTTPException(status_code=400, detail="Não é possível excluir a própria conta.")
-    # não deixa remover o último admin ATIVO do tenant
+        raise HTTPException(status_code=400, detail="Não é possível excluir a própria account.")
+    # prevents removing the last ACTIVE admin from the tenant
     if user.role == "admin":
         admins = db.scalar(
             select(func.count()).select_from(User).where(

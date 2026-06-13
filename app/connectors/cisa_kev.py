@@ -1,6 +1,6 @@
 """Conector CISA Known Exploited Vulnerabilities (KEV).
 
-Sync: baixa o feed JSON público e popula a tabela local kev_entries.
+Sync: downloads the public JSON feed and populates the local kev_entries table.
 Enrich: lookup local por CVE (rápido, sem rate limit).
 """
 from sqlalchemy.orm import Session

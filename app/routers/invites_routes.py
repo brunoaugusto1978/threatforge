@@ -1,6 +1,6 @@
-"""Aceite de convite (público). Não exige autenticação — o token É a prova.
+"""Invitation acceptance (public). Does not require authentication — the token is the proof.
 
-O cliente nunca escolhe o tenant: o vínculo vem do convite.
+The client never chooses the tenant: the binding comes from the invitation.
 """
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
@@ -29,7 +29,7 @@ def accept_invite(payload: InviteAccept, request: Request, response: Response,
         user = invites.accept(db, payload.token, payload.password, request=request)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    # já autentica o usuário recém-ativado
+    # already authenticates the newly activated user
     token = create_token(sub=str(user.id), role=user.role, pwd_version=user.pwd_version)
     _set_session_cookie(response, token)
     return {"email": user.email, "role": user.role, "tenant_id": user.tenant_id}

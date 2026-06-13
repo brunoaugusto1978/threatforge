@@ -1,4 +1,4 @@
-"""Schemas Pydantic + validação/normalização de observáveis."""
+"""Pydantic schemas plus observable validation/normalization."""
 import re
 from datetime import datetime
 from typing import Literal
@@ -56,7 +56,7 @@ class ObservableCreate(BaseModel):
     @classmethod
     def _not_blank(cls, v: str) -> str:
         if not v or not v.strip():
-            raise ValueError("value não pode ser vazio")
+            raise ValueError("value cannot be empty")
         if len(v) > 2048:
             raise ValueError("value excede 2048 caracteres")
         return v
@@ -186,7 +186,7 @@ class ScanResult(BaseModel):
     error: str | None = None
 
 
-# --- Auth / usuários ---
+# --- Auth / users ---
 Role = Literal["admin", "analyst", "viewer"]
 
 
@@ -263,7 +263,7 @@ class ChangePasswordRequest(BaseModel):
 
 
 class AdminResetPassword(BaseModel):
-    # se vazio, o servidor gera uma senha temporária e a retorna uma única vez
+    # if empty, the server generates a temporary password and returns it only once
     new_password: str | None = None
 
     @field_validator("new_password")
@@ -302,7 +302,7 @@ class OrganizationIn(BaseModel):
     def _name_ok(cls, v: str) -> str:
         v = (v or "").strip()
         if not v or len(v) > 255:
-            raise ValueError("nome da organização é obrigatório (1–255)")
+            raise ValueError("organization name is required (1–255)")
         return v
 
 
@@ -339,7 +339,7 @@ class SetupRequest(BaseModel):
 
 
 class SetupStatus(BaseModel):
-    needs_operator: bool     # nenhum usuário -> criar operador de plataforma
+    needs_operator: bool     # no users -> create platform operator
     has_users: bool
 
 
@@ -407,7 +407,7 @@ class ThreatProfileResult(BaseModel):
 class TenantCreate(BaseModel):
     name: str
     admin_email: str
-    admin_password: str | None = None  # se vazio, gera senha temporária
+    admin_password: str | None = None  # if empty, generates a temporary password
 
     @field_validator("name")
     @classmethod

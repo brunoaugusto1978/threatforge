@@ -23,8 +23,8 @@ class UrlhausConnector(Connector):
 
     def enrich(self, observable_type: str, value: str, db) -> dict | None:
         if not config.ABUSECH_API_KEY:
-            logger.warning("URLhaus pulado: ABUSECH_API_KEY não configurada")
-            return {"skipped": True, "reason": "ABUSECH_API_KEY não configurada"}
+            logger.warning("URLhaus skipped: ABUSECH_API_KEY is not configured")
+            return {"skipped": True, "reason": "ABUSECH_API_KEY is not configured"}
 
         if observable_type == "url":
             endpoint, payload = "/url/", {"url": value}
