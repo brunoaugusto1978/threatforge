@@ -535,6 +535,32 @@ ThreatForge Enterprise is planned as a private/commercial edition focused on:
 
 Enterprise-only modules must not be committed to this public repository.
 
+## Screenshots
+
+### Dashboard
+
+![ThreatForge dashboard](docs/assets/screenshots/dashboard.png)
+
+### Indicators
+
+![ThreatForge indicators](docs/assets/screenshots/iocs.png)
+
+### Brand monitoring
+
+![ThreatForge brand monitoring](docs/assets/screenshots/brands.png)
+
+### Users
+
+![ThreatForge users](docs/assets/screenshots/users.png)
+
+### Audit trail
+
+![ThreatForge audit trail](docs/assets/screenshots/audit.png)
+
+### Operations and tenants
+
+![ThreatForge operations tenants](docs/assets/screenshots/tenants.png)
+
 ## Current Status
 
 ThreatForge Community has completed the open source readiness baseline.
