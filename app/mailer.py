@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import smtplib
+import re
 from email.message import EmailMessage
 
 from app import config
@@ -17,12 +18,18 @@ def smtp_configured() -> bool:
     return bool(config.SMTP_HOST and config.SMTP_FROM)
 
 
+def _redact_invite_tokens(text: str) -> str:
+    """Redact invitation tokens before writing e-mail content to logs."""
+    return re.sub(r"(?i)(token=)[A-Za-z0-9._~%-]+", r"\1<redacted>", text)
+
+
 def send_email(to: str, subject: str, body: str) -> bool:
     """Send an e-mail. Returns True if sent through SMTP, False if only logged."""
     if not smtp_configured():
+        log_body = _redact_invite_tokens(body)
         logger.warning(
             "\n--- E-MAIL (SMTP not configured, displaying in log) ---\n"
-            "To: %s\nSubject: %s\n\n%s\n--- end ---", to, subject, body,
+            "To: %s\nSubject: %s\n\n%s\n--- end ---", to, subject, log_body,
         )
         return False
     msg = EmailMessage()
