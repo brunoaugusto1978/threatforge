@@ -10,6 +10,15 @@ ThreatForge is an open source platform for Cyber Threat Intelligence, Digital Ri
 v0.6.0
 ```
 
+## Product Strategy
+
+ThreatForge is planned as two editions:
+
+- **Community Edition**: the open source CTI and Digital Risk Protection core.
+- **Enterprise Edition**: a future private/commercial edition with licensing, trial mode, premium reports and enterprise features.
+
+See [Product Strategy](PRODUCT_STRATEGY.md).
+
 ## Key Features
 
 ### CTI / IOC
