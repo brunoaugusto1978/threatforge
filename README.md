@@ -131,7 +131,7 @@ docker compose exec api python -m app.selftest_isolation
 Expected result:
 
 ```text
-ISOLAMENTO + CONVITES + PAPÉIS DE OPERADOR: TODOS OS TESTES PASSARAM ✅
+TENANT ISOLATION + INVITES + OPERATOR ROLES: ALL TESTS PASSED ✅
 ```
 
 This test validates:
@@ -150,7 +150,7 @@ This test validates:
 - audit logging;
 - immediate access revocation for support operators.
 
-Note: some current selftest output messages are still displayed in Portuguese. They will be standardized to English in a future i18n cleanup.
+
 
 ## First Access through the UI
 

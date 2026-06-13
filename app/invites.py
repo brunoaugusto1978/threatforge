@@ -1,4 +1,4 @@
-"""Lógica de convites de tenant: criação, link, e-mail e aceite."""
+"""Tenant invitation logic: creation, link generation, e-mail delivery and acceptance."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -26,7 +26,7 @@ def create_invite(
     db: Session, *, tenant: Tenant, email: str, role: str, user: User | None,
     invited_by: str, request: Request | None = None,
 ) -> dict:
-    """Cria convite pendente, gera token (guarda hash), envia e-mail e audita.
+    """Creates a pending invite, generates a token, stores its hash, sends e-mail and audits the event.
     Retorna dados + link (o link só é exibido aqui/no log; o token não é persistido)."""
     # invalida convites pendentes anteriores para o mesmo e-mail/tenant
     olds = db.query(TenantInvite).filter(
@@ -66,16 +66,16 @@ def _resolve(db: Session, token: str) -> TenantInvite | None:
 def validate_token(db: Session, token: str) -> dict:
     invite = _resolve(db, token)
     if invite is None:
-        return {"valid": False, "reason": "Convite inválido."}
+        return {"valid": False, "reason": "Invalid invite."}
     if invite.status == "accepted":
-        return {"valid": False, "reason": "Convite já utilizado."}
+        return {"valid": False, "reason": "Invite already used."}
     if invite.status == "revoked":
-        return {"valid": False, "reason": "Convite revogado."}
+        return {"valid": False, "reason": "Invite revoked."}
     if invite.status == "expired" or _expired(invite.expires_at):
         if invite.status == "pending":
             invite.status = "expired"
             db.commit()
-        return {"valid": False, "reason": "Convite expirado."}
+        return {"valid": False, "reason": "Invite expired."}
     tenant = db.get(Tenant, invite.tenant_id)
     return {"valid": True, "email": invite.email,
             "tenant_name": tenant.name if tenant else None}
@@ -84,13 +84,13 @@ def validate_token(db: Session, token: str) -> dict:
 def accept(db: Session, token: str, password: str, request: Request | None = None) -> User:
     invite = _resolve(db, token)
     if invite is None:
-        raise ValueError("Convite inválido.")
+        raise ValueError("Invalid invite.")
     if invite.status != "pending":
-        raise ValueError("Convite já utilizado ou revogado.")
+        raise ValueError("Invite already used or revoked.")
     if _expired(invite.expires_at):
         invite.status = "expired"
         db.commit()
-        raise ValueError("Convite expirado.")
+        raise ValueError("Invite expired.")
 
     # ativa/cria o usuário vinculado AO TENANT do convite (cliente não escolhe tenant)
     user = db.get(User, invite.user_id) if invite.user_id else None

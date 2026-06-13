@@ -32,7 +32,7 @@ Tenant isolation: OK
 Expected selftest output:
 
 ```text
-ISOLAMENTO + CONVITES + PAPÉIS DE OPERADOR: TODOS OS TESTES PASSARAM ✅
+TENANT ISOLATION + INVITES + OPERATOR ROLES: ALL TESTS PASSED ✅
 ```
 
 ## Recommended installation
