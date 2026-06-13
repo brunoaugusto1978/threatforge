@@ -10,6 +10,14 @@ ThreatForge is an open source platform for Cyber Threat Intelligence, Digital Ri
 v0.6.0
 ```
 
+## Optional Enterprise Adapter
+
+ThreatForge Community can optionally integrate with the private ThreatForge Enterprise package when it is installed.
+
+The Community repository does not include Enterprise implementation code.
+
+See [Optional Enterprise Adapter](docs/ENTERPRISE_ADAPTER.md).
+
 ## Product Strategy
 
 ThreatForge is planned as two editions:
