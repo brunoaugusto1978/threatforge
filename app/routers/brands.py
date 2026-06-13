@@ -29,7 +29,7 @@ def _owned_brand(db: Session, brand_id: int, tid: int) -> Brand:
 def _owned_finding(db: Session, finding_id: int, tid: int) -> BrandFinding:
     f = db.get(BrandFinding, finding_id)
     if f is None or f.tenant_id != tid:
-        raise HTTPException(status_code=404, detail="Finding não encontrado.")
+        raise HTTPException(status_code=404, detail="Finding not found.")
     return f
 
 

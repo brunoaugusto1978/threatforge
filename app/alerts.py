@@ -1,7 +1,7 @@
 """Despacho de alertas nos principais canais: Telegram, webhook e e-mail SMTP.
 
-Cada canal é independente e best-effort: a falha de um não bloqueia os
-demais nem a varredura. Só canais configurados (via env) são acionados.
+Each channel is independent and best-effort: one channel failure does not block the
+other channels nor the scan. Only configured channels (via env) are triggered.
 """
 from __future__ import annotations
 
@@ -93,27 +93,27 @@ def _email(subject: str, body: str) -> None:
 
 
 def send_finding_alert(brand: Brand, f: BrandFinding) -> dict:
-    """Dispara o alerta de um finding em todos os canais configurados."""
+    """Sends a finding alert to all configured channels."""
     s = _summary(brand, f)
     emoji = _VERDICT_EMOJI.get(f.verdict, "⚪")
     reasons = "; ".join(x["reason"] for x in (f.score_factors or [])[:4])
 
     text = (
-        f"{emoji} <b>ThreatForge — Abuso de marca</b>\n"
+        f"{emoji} <b>ThreatForge — Brand abuse</b>\n"
         f"Brand: <b>{brand.name}</b>\n"
         f"Domain: <code>{_defang(f.domain)}</code>\n"
         f"Veredito: <b>{f.verdict.upper()}</b> (score {f.score}/100, "
         f"{f.similarity}% similar)\n"
         f"Motivos: {reasons or 'n/d'}"
     )
-    subject = f"[ThreatForge] {f.verdict.upper()} — abuso de marca {brand.name}: {_defang(f.domain)}"
+    subject = f"[ThreatForge] {f.verdict.upper()} — brand abuse {brand.name}: {_defang(f.domain)}"
     body = (
-        f"Possível abuso da marca {brand.name}.\n\n"
+        f"Possible brand abuse involving {brand.name}.\n\n"
         f"Domain: {_defang(f.domain)}\n"
         f"Veredito: {f.verdict} | Score: {f.score}/100 | Similaridade: {f.similarity}%\n"
         f"Origem: {f.source}\n\n"
         f"Fatores:\n" + "\n".join(f"- {x['reason']} ({x['source']})" for x in (f.score_factors or []))
-        + f"\n\nFinding ID: {f.id}. Revise no painel/API antes de qualquer ação de takedown."
+        + f"\n\nFinding ID: {f.id}. Review it in the dashboard/API before taking any takedown action."
     )
 
     _telegram(text)
@@ -123,7 +123,7 @@ def send_finding_alert(brand: Brand, f: BrandFinding) -> dict:
 
 
 def dispatch_new_findings(brand: Brand, findings: list[BrandFinding], db) -> int:
-    """Alerta os findings que cruzam o limiar e ainda não foram alertados."""
+    """Alerts findings that crossed the threshold and have not been alerted yet."""
     sent = 0
     for f in findings:
         if f.alerted or not should_alert(f.verdict):

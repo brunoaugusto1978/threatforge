@@ -15,12 +15,12 @@ JWT_TTL_SECONDS: int = int(os.environ.get("JWT_TTL_SECONDS", "28800") or "28800"
 # Cookie Secure (HTTPS). Default false para rodar em http://localhost no MVP.
 COOKIE_SECURE: bool = os.environ.get("COOKIE_SECURE", "false").lower() == "true"
 COOKIE_NAME: str = "tf_session"
-# Admin inicial (criado no startup se não houver nenhum usuário)
+# Initial admin (created on startup if there are no users)
 BOOTSTRAP_ADMIN_EMAIL: str = os.environ.get("BOOTSTRAP_ADMIN_EMAIL", "")
 BOOTSTRAP_ADMIN_PASSWORD: str = os.environ.get("BOOTSTRAP_ADMIN_PASSWORD", "")
 
 # Initial platform operator (multi-tenant). If both are defined, it is created
-# no startup quando não há usuários. Senão, a tela de criar operador cuida disso.
+# on startup when there are no users. Otherwise, the create-operator screen handles it.
 BOOTSTRAP_OPERATOR_EMAIL: str = os.environ.get("BOOTSTRAP_OPERATOR_EMAIL", "")
 BOOTSTRAP_OPERATOR_PASSWORD: str = os.environ.get("BOOTSTRAP_OPERATOR_PASSWORD", "")
 # Header usado pelo operador para atuar dentro de um tenant específico

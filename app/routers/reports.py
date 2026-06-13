@@ -17,5 +17,5 @@ def report_observable(observable_id: int, db: Session = Depends(get_db),
                       tid: int = Depends(current_tenant_id)):
     obs = db.get(Observable, observable_id)
     if obs is None or obs.tenant_id != tid:
-        raise HTTPException(status_code=404, detail="Observável não encontrado.")
+        raise HTTPException(status_code=404, detail="Observable not found.")
     return PlainTextResponse(render_report(obs), media_type="text/markdown; charset=utf-8")

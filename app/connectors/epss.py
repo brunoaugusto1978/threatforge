@@ -1,4 +1,4 @@
-"""Conector EPSS (FIRST.org) — probabilidade de exploração de CVEs."""
+"""EPSS connector (FIRST.org) — CVE exploitation probability."""
 from app import config
 from app.connectors.base import Connector
 

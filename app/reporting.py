@@ -1,4 +1,4 @@
-"""Geração de relatório técnico em Markdown por observável."""
+"""Technical Markdown report generation for an observable."""
 from datetime import datetime, timezone
 
 from app.models import Observable
@@ -13,7 +13,7 @@ _VERDICT_PT = {
 
 
 def _md_escape(text: str) -> str:
-    """Evita injeção de Markdown/HTML a partir de valores controláveis."""
+    """Avoids Markdown/HTML injection from controllable values."""
     for ch in ("\\", "`", "*", "_", "[", "]", "<", ">", "|", "#"):
         text = text.replace(ch, "\\" + ch)
     return text
@@ -47,7 +47,7 @@ def render_report(obs: Observable) -> str:
         f"| Veredito | **{verdict}** |",
         f"| Cadastrado em | {obs.created_at:%Y-%m-%d %H:%M UTC} |",
         f"| Último enriquecimento | "
-        + (f"{obs.last_enriched_at:%Y-%m-%d %H:%M UTC}" if obs.last_enriched_at else "nunca")
+        + (f"{obs.last_enriched_at:%Y-%m-%d %H:%M UTC}" if obs.last_enriched_at else "never")
         + " |",
         "",
         "## Fatores de score (explicáveis)",
@@ -80,11 +80,11 @@ def render_report(obs: Observable) -> str:
                     lines.append(f"- **{k}**: {_md_escape(str(v))}")
             lines.append("")
     else:
-        lines.append("_Observável ainda não enriquecido. Use `POST /observables/{id}/enrich`._")
+        lines.append("_Observable has not been enriched yet. Use `POST /observables/{id}/enrich`._")
 
     lines += [
         "",
-        "## Recomendações",
+        "## Recommendations",
         "",
     ]
     if obs.verdict == "malicious":
@@ -92,16 +92,16 @@ def render_report(obs: Observable) -> str:
             "- Bloquear o indicador em firewall/proxy/EDR e buscar ocorrências "
             "retroativas em logs (SIEM)."
         )
-        lines.append("- Tratar como incidente se houver comunicação confirmada com o indicador.")
+        lines.append("- Treat as an incident if confirmed communication with the indicator exists.")
     elif obs.verdict == "suspicious":
-        lines.append("- Monitorar o indicador e priorizar investigação manual.")
+        lines.append("- Monitor the indicator and prioritize manual investigation.")
     elif obs.verdict in ("low", "no_known_threat"):
         lines.append(
-            "- Sem ação imediata. Ausência de registro nas fontes consultadas "
-            "não garante que o indicador seja benigno."
+            "- No immediate action. Absence from queried sources "
+            "does not guarantee the indicator is benign."
         )
     else:
-        lines.append("- Enriquecer o observável antes de qualquer decisão.")
+        lines.append("- Enrich the observable before making any decision.")
 
     lines += [
         "",

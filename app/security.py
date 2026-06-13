@@ -1,8 +1,8 @@
-"""Segurança: hash de senha (PBKDF2-HMAC-SHA256) e JWT HS256 — só stdlib.
+"""Security: password hashing (PBKDF2-HMAC-SHA256) and JWT HS256 — stdlib only.
 
 Sem dependências externas, reduzindo superfície de cadeia de suprimentos.
 - Passwords: PBKDF2-HMAC-SHA256, per-user salt, 240k iterations.
-- Sessão: JWT HS256 assinado com JWT_SECRET, validação de exp, comparação
+- Session: JWT HS256 signed with JWT_SECRET, exp validation, comparison
   de assinatura em tempo constante.
 """
 from __future__ import annotations
@@ -21,29 +21,29 @@ PBKDF2_ITERATIONS = 240_000
 PBKDF2_ALGO = "sha256"
 SALT_BYTES = 16
 
-# Argon2id é o preferido; se a lib não estiver instalada, cai para PBKDF2 (stdlib).
+# Argon2id is preferred; if the library is not installed, falls back to PBKDF2 (stdlib).
 try:
     from argon2 import PasswordHasher
     from argon2.exceptions import InvalidHashError, VerifyMismatchError
 
-    _ph = PasswordHasher()  # defaults seguros (argon2id)
+    _ph = PasswordHasher()  # defaults secures (argon2id)
     _ARGON2 = True
 except Exception:  # pragma: no cover - ambiente sem argon2-cffi
     _ARGON2 = False
 
 
-# ---------- Política de senha ----------
+# ---------- Política de password ----------
 def check_password_strength(password: str) -> None:
-    """Levanta ValueError se a senha for fraca."""
+    """Levanta ValueError se a password for fraca."""
     if not password or len(password) < 10:
-        raise ValueError("senha deve ter ao menos 10 caracteres")
+        raise ValueError("password deve ter ao menos 10 caracteres")
     if len(password) > 256:
-        raise ValueError("senha muito longa (máx. 256)")
+        raise ValueError("password muito longa (máx. 256)")
     if not re.search(r"[A-Za-z]", password) or not re.search(r"\d", password):
-        raise ValueError("password must contain at least one letter and one number")
+        raise ValueError("password must accountin at least one letter and one number")
 
 
-# ---------- Hash / verificação ----------
+# ---------- Hash / verification ----------
 def _pbkdf2_hash(password: str) -> str:
     salt = secrets.token_bytes(SALT_BYTES)
     dk = hashlib.pbkdf2_hmac(PBKDF2_ALGO, password.encode(), salt, PBKDF2_ITERATIONS)
@@ -85,7 +85,7 @@ def verify_password(password: str, stored: str) -> bool:
 def generate_api_key() -> tuple[str, str, str]:
     """Gera uma API key de tenant. Retorna (chave_completa, prefix, sha256).
 
-    A chave completa só é exibida uma vez; no banco guardamos prefix + hash.
+    The full key is displayed only once; the database stores prefix + hash.
     """
     secret = secrets.token_urlsafe(32)
     full = f"tfk_{secret}"
@@ -99,7 +99,7 @@ def hash_api_key(full_key: str) -> str:
 
 
 def generate_invite_token() -> tuple[str, str]:
-    """Retorna (token_em_claro, sha256). Guardamos só o hash."""
+    """Returns (plaintext_token, sha256). Only the hash is stored."""
     token = secrets.token_urlsafe(32)
     return token, hashlib.sha256(token.encode()).hexdigest()
 
@@ -109,7 +109,7 @@ def hash_token(token: str) -> str:
 
 
 def generate_password(length: int = 16) -> str:
-    """Gera senha aleatória que sempre satisfaz check_password_strength."""
+    """Gera password aleatória que sempre satisfaz check_password_strength."""
     import string
 
     alphabet = string.ascii_letters + string.digits
@@ -123,7 +123,7 @@ def generate_password(length: int = 16) -> str:
 
 
 def needs_rehash(stored: str) -> bool:
-    """True se o hash deve ser regravado (migração PBKDF2->Argon2 ou parâmetros antigos)."""
+    """True if the hash should be rewritten (PBKDF2->Argon2 migration or old parameters)."""
     if not _ARGON2:
         return False
     if not stored.startswith("$argon2"):
@@ -145,7 +145,7 @@ def _b64url_decode(s: str) -> bytes:
 
 def _secret() -> bytes:
     if not config.JWT_SECRET:
-        raise RuntimeError("JWT_SECRET não configurado")
+        raise RuntimeError("JWT_SECRET is not configured")
     return config.JWT_SECRET.encode()
 
 
@@ -168,7 +168,7 @@ def create_token(sub: str, role: str, pwd_version: int = 1, ttl_seconds: int | N
 
 
 def decode_token(token: str) -> dict | None:
-    """Retorna o payload se válido (assinatura + exp), senão None."""
+    """Returns the payload if valid (signature + exp), otherwise None."""
     try:
         header_b64, payload_b64, sig_b64 = token.split(".")
     except ValueError:

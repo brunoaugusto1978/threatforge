@@ -1,30 +1,30 @@
 """Similar domain generator (typosquatting), initially focused on the Brazilian scenario.
 
 Generates permutations of a legitimate domain to detect brand abuse:
-troca de caracteres visualmente parecidos, omissão/duplicação, teclas
-adjacentes (QWERTY), inserção de hífen/termos isca e troca de TLD —
+replacement of visually similar characters, omission/duplication,
+adjacent keys (QWERTY), hyphen/lure term insertion and TLD changes —
 incluindo TLDs muito usados em golpes contra empresas brasileiras.
 """
 from __future__ import annotations
 
 import re
 
-# TLDs frequentes em phishing contra marcas BR + genéricos baratos
+# TLDs commonly used in brand phishing plus cheap generic TLDs
 TLDS = [
     "com", "com.br", "net", "net.br", "org", "app", "online", "site",
     "shop", "store", "info", "xyz", "top", "live", "vip", "digital",
     "com.co", "br.com", "sbs", "icu", "cfd",
 ]
 
-# termos-isca comuns em golpes BR (banco, prêmio, suporte, etc.)
+# termos-isca comuns em golpes BR (banco, prêmio, support, etc.)
 LURES = [
-    "seguro", "suporte", "atendimento", "acesso", "login", "cliente",
+    "secure", "support", "service", "acesso", "login", "customer",
     "promocao", "premio", "sorteio", "app", "central", "oficial",
-    "br", "online", "conta", "cadastro", "verificar", "pagamento",
-    "2via", "boleto", "pix", "ajuda",
+    "br", "online", "account", "cadastro", "verificar", "pagamento",
+    "2via", "payment slip", "pix", "ajuda",
 ]
 
-# substituições homóglifas / visuais comuns
+# common homoglyph/visual substitutions
 HOMOGLYPHS = {
     "o": ["0"], "0": ["o"], "i": ["1", "l"], "l": ["1", "i"],
     "e": ["3"], "a": ["4", "@"], "s": ["5", "$"], "b": ["8"],
@@ -65,17 +65,17 @@ def _char_swaps(label: str) -> set[str]:
             for r in repls:
                 out.add(label[:idx] + r + label[idx + len(src):])
             idx = label.find(src, idx + 1)
-    # teclas adjacentes (typo de digitação)
+    # adjacent keys (typing typo)
     for i, ch in enumerate(label):
         for adj in QWERTY.get(ch, ""):
             out.add(label[:i] + adj + label[i + 1:])
     # omissão de um caractere
     for i in range(len(label)):
         out.add(label[:i] + label[i + 1:])
-    # duplicação
+    # duplication
     for i in range(len(label)):
         out.add(label[:i] + label[i] + label[i:])
-    # transposição de adjacentes
+    # adjacent character transposition
     for i in range(len(label) - 1):
         out.add(label[:i] + label[i + 1] + label[i] + label[i + 2:])
     return out

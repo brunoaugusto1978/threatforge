@@ -1,12 +1,12 @@
-"""Autenticação, autorização e isolamento multi-tenant.
+"""Authentication, authorization and multi-tenant isolation.
 
 Princípios:
-- Todo usuário pertence a um tenant (tenant_id), exceto o OPERADOR de plataforma
-  (is_operator=True, tenant_id=None), que enxerga a visão da operação.
+- Every user belongs to a tenant (tenant_id), except the platform OPERATOR
+  (is_operator=True, tenant_id=None), which can see the operations view.
 - Access through: session (JWT cookie) OR tenant API key (X-API-Key header) OR the
   chave de plataforma do .env (API_KEY -> operador de serviço).
 - `current_tenant_id` resolve o tenant EFETIVO de cada request. Toda query de
-  dados sensíveis DEVE filtrar por esse tenant. Um tenant nunca acessa outro.
+  sensitive data MUST be filtered by this tenant. One tenant must never access another.
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from app.security import decode_token, hash_api_key
 
 ROLE_RANK = {"viewer": 1, "analyst": 2, "admin": 3}
 
-# papel efetivo de um operador quando atua DENTRO de um tenant (modo suporte)
+# papel efetivo de um operador quando atua DENTRO de um tenant (modo support)
 OPERATOR_EFFECTIVE_ROLE = {
     "platform_admin": "admin",
     "support_operator": "analyst",
@@ -102,7 +102,7 @@ def require_role(minimum: str):
     min_rank = ROLE_RANK[minimum]
 
     def _dep(principal: Principal = Depends(get_principal)) -> Principal:
-        # papel efetivo respeita o papel do operador (support_viewer = só leitura)
+        # effective role respects the operator role (support_viewer = read-only)
         if ROLE_RANK.get(principal.effective_role(), 0) < min_rank:
             raise HTTPException(status_code=403,
                                 detail=f"Access denied: requires role '{minimum}' ou superior.")
@@ -123,7 +123,7 @@ def require_operator(principal: Principal = Depends(get_principal)) -> Principal
 
 
 def require_platform_admin(principal: Principal = Depends(get_principal)) -> Principal:
-    """Ações administrativas críticas: só Platform Admin / Super Admin."""
+    """Critical administrative actions: Platform Admin / Super Admin only."""
     if not (principal.is_operator and principal.operator_role == "platform_admin"):
         raise HTTPException(status_code=403,
                             detail="Action restricted to Platform Admin.")
@@ -133,7 +133,7 @@ def require_platform_admin(principal: Principal = Depends(get_principal)) -> Pri
 def operator_can_access_tenant(db: Session, principal: Principal, tenant_id: int) -> bool:
     if principal.operator_role == "platform_admin":
         return True
-    # support_operator/support_viewer: precisa de acesso concedido e ativo
+    # support_operator/support_viewer: requires granted and active access
     row = db.scalar(select(OperatorTenantAccess).where(
         OperatorTenantAccess.operator_user_id == principal.user_id,
         OperatorTenantAccess.tenant_id == tenant_id,
@@ -148,9 +148,9 @@ def current_tenant_id(
     db: Session = Depends(get_db),
 ) -> int:
     """Tenant efetivo da request. Isolamento forte:
-    - usuário/apikey de tenant: SEMPRE o próprio tenant_id (ignora header);
-    - operador: indica o tenant via X-Tenant-Id E precisa ter acesso a ele
-      (platform_admin acessa todos; support_* só os tenants atribuídos).
+    - tenant user/API key: ALWAYS the user's own tenant_id (ignores header);
+    - operator: indicates the tenant through X-Tenant-Id and must have access to it
+      (platform_admin accesses all tenants; support_* only assigned tenants).
     """
     if not principal.is_operator:
         if principal.tenant_id is None:

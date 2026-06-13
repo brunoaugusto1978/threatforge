@@ -1,9 +1,9 @@
-"""Catálogo de Threat Profiles por setor + geração de seeds de monitoramento.
+"""Threat profile catalog by sector plus monitoring seed generation.
 
 Taxonomia (critério principal):
-- IOC GLOBAL........: relevante para todos (KEV, URLhaus...). Vive em `observables`.
+- GLOBAL IOC.........: relevant to all tenants (KEV, URLhaus...). Lives in `observables`.
 - IOC SETORIAL......: ameaças/tecnologias típicas do setor. scope="sector".
-- IOC ORGANIZACIONAL: derivado das marcas/ativos da org ({marca}+termo, slug,
+- ORGANIZATIONAL IOC: derived from organization brands/assets ({brand}+term, slug,
                       domains). scope="organization".
 - FINDING...........: SÓ com evidência real coletada/enriquecida (tabela própria
                       brand_findings). NUNCA gerado aqui.
@@ -15,29 +15,29 @@ from __future__ import annotations
 import re
 import unicodedata
 
-# Termos usados para gerar combinações {marca}+termo (escopo organizacional).
+# Terms used to generate {brand}+term combinations for organizational scope.
 TELECOM_SEED_TERMS = [
-    "segunda via", "2via", "boleto", "pix", "suporte", "atendimento",
-    "login", "senha", "apk", "premium gratis", "recarga", "fatura",
-    "desbloqueio", "central", "minha conta",
+    "segunda via", "2via", "payment slip", "pix", "support", "service",
+    "login", "password", "apk", "free premium", "top-up", "invoice",
+    "desbloqueio", "central", "minha account",
 ]
 
 SECTOR_PROFILES: dict[str, dict] = {
     "Telecom": {
         # (ameaça, confiança)
         "threats": [
-            ("phishing usando a marca", "high"),
-            ("falso atendimento / suporte técnico", "medium"),
-            ("golpe de segunda via de boleto", "high"),
+            ("brand phishing", "high"),
+            ("falso service / support técnico", "medium"),
+            ("golpe de segunda via de payment slip", "high"),
             ("fraude Pix", "high"),
             ("smishing (SMS fraudulento)", "medium"),
             ("SIM swap", "high"),
             ("apps falsos / APK malicioso", "high"),
             ("domain typosquatting", "medium"),
             ("vazamento de credenciais", "high"),
-            ("venda de base de clientes", "high"),
+            ("customer database sale", "high"),
             ("abuso de APIs", "medium"),
-            ("fraude em recarga e promoções", "low"),
+            ("top-up and promotion fraud", "low"),
         ],
         "keywords": TELECOM_SEED_TERMS,
         "seed_terms": TELECOM_SEED_TERMS,
@@ -50,7 +50,7 @@ SECTOR_PROFILES: dict[str, dict] = {
         "cve_watchlist": [
             "VPN", "firewall", "SSO", "IAM", "webmail", "CRM", "billing",
             "API pública", "app mobile", "roteador", "DNS", "BGP",
-            "portal do cliente", "acesso remoto",
+            "customer portal", "remote access",
         ],
         "sources": [
             "certificate_transparency", "urlhaus", "cisa_kev", "epss",
@@ -58,8 +58,8 @@ SECTOR_PROFILES: dict[str, dict] = {
         ],
     },
     "Financeiro": {"threats": [("phishing bancário", "high"), ("fraude Pix", "high")],
-                   "keywords": ["boleto", "pix", "login", "fatura", "investimento", "senha"],
-                   "seed_terms": ["boleto", "pix", "login", "senha", "fatura"],
+                   "keywords": ["payment slip", "pix", "login", "invoice", "investment", "password"],
+                   "seed_terms": ["payment slip", "pix", "login", "password", "invoice"],
                    "ioc_categories": ["dominio", "url", "chave_pix"], "cve_watchlist": ["internet banking", "API pública"],
                    "sources": ["certificate_transparency", "urlhaus", "cisa_kev"]},
     "Varejo": {"threats": [("loja falsa", "high"), ("golpe de frete", "medium")],
@@ -68,8 +68,8 @@ SECTOR_PROFILES: dict[str, dict] = {
                "ioc_categories": ["dominio", "url"], "cve_watchlist": ["e-commerce", "gateway de pagamento"],
                "sources": ["certificate_transparency", "urlhaus"]},
     "Saúde": {"threats": [("vazamento de dados de paciente", "high")],
-              "keywords": ["agendamento", "exame", "convenio", "login", "senha"],
-              "seed_terms": ["agendamento", "convenio", "login"],
+              "keywords": ["appointment", "exam", "health plan", "login", "password"],
+              "seed_terms": ["appointment", "health plan", "login"],
               "ioc_categories": ["dominio", "url"], "cve_watchlist": ["portal do paciente"],
               "sources": ["certificate_transparency"]},
     "Governo": {"threats": [("falso benefício/auxílio", "high")],
@@ -77,16 +77,16 @@ SECTOR_PROFILES: dict[str, dict] = {
                 "seed_terms": ["beneficio", "auxilio", "cadastro"],
                 "ioc_categories": ["dominio", "url"], "cve_watchlist": ["portal gov"],
                 "sources": ["certificate_transparency"]},
-    "Tecnologia": {"threats": [("comprometimento de conta", "medium")],
-                   "keywords": ["login", "suporte", "api", "conta", "senha"],
-                   "seed_terms": ["login", "suporte", "senha"],
+    "Tecnologia": {"threats": [("comprometimento de account", "medium")],
+                   "keywords": ["login", "support", "api", "account", "password"],
+                   "seed_terms": ["login", "support", "password"],
                    "ioc_categories": ["dominio", "url", "cve"], "cve_watchlist": ["SSO", "API pública"],
                    "sources": ["cisa_kev", "epss", "github"]},
 }
 
 DEFAULT_PROFILE = {
-    "threats": [], "keywords": ["login", "suporte", "atendimento", "pagamento"],
-    "seed_terms": ["login", "suporte", "pagamento"],
+    "threats": [], "keywords": ["login", "support", "service", "pagamento"],
+    "seed_terms": ["login", "support", "pagamento"],
     "ioc_categories": ["dominio", "url"], "cve_watchlist": [],
     "sources": ["certificate_transparency", "urlhaus"],
 }
@@ -152,17 +152,17 @@ def generate_seeds(sector: str | None, brands: list[dict]) -> list[dict]:
     for tech in profile.get("cve_watchlist", []):
         add(f"CVE watchlist: {tech}", "cve_tech", "sector", "low", "sector_profile")
 
-    # ---- ESCOPO ORGANIZACIONAL: derivado das marcas ----
+    # ---- ORGANIZATIONAL SCOPE: derived from brands ----
     terms = profile.get("seed_terms", profile.get("keywords", []))
     for b in brands:
         name = (b.get("name") or "").strip()
         if not name:
             continue
-        # combinações {marca}+termo: derivam de marca + termo de risco do setor
+        # {brand}+term combinations derived from the brand plus sector risk terms
         for term in terms:
             add(f"{name} {_display_term(term)}", "keyword_combo", "organization",
                 "low", "sector_profile+brand_profile")
-        # slug da marca (perfil da marca)
+        # brand slug (brand profile)
         slug = slugify(name)
         if slug:
             add(slug, "slug", "organization", "medium", "brand_profile")

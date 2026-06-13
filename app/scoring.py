@@ -27,7 +27,7 @@ def compute_score(enrichments: dict[str, dict | None]) -> tuple[int, str, list[d
             ScoreFactor(
                 "kev_listed",
                 50,
-                f"CVE consta no catálogo CISA KEV (exploração ativa confirmada). "
+                f"CVE is listed in the CISA KEV catalog (confirmed active exploitation). "
                 f"Adicionada em {kev.get('date_added')}.",
                 "CISA KEV",
             )
@@ -51,7 +51,7 @@ def compute_score(enrichments: dict[str, dict | None]) -> tuple[int, str, list[d
                 ScoreFactor(
                     "epss",
                     pts,
-                    f"Probabilidade EPSS de exploração em 30 dias: {prob:.1%} "
+                    f"EPSS exploitation probability in 30 days: {prob:.1%} "
                     f"(percentil {float(epss.get('percentile', 0)):.1%}).",
                     "FIRST EPSS",
                 )
@@ -84,7 +84,7 @@ def compute_score(enrichments: dict[str, dict | None]) -> tuple[int, str, list[d
                     "urlhaus_host",
                     35,
                     f"Host associado a {uh.get('url_count', '?')} URL(s) de "
-                    f"distribuição de malware no URLhaus.",
+                    f"malware distribution in URLhaus.",
                     "abuse.ch URLhaus",
                 )
             )

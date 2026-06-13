@@ -3,7 +3,7 @@
 Uses its own temporary SQLite database, does not touch the production database, and uses TestClient
 FastAPI to prove that Tenant A cannot access Tenant B data.
 
-Run inside the container:
+Run inside the accountiner:
     docker compose -f docker-compose.yml -f docker-compose.podman.yml exec api python -m app.selftest_isolation
 """
 import os

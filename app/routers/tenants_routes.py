@@ -3,8 +3,8 @@
 Regras:
 - Platform Admin: administra a plataforma (criar/bloquear/excluir tenants,
   criar operadores, gerar/revogar API keys, etc.).
-- Support Operator/Viewer: presta suporte SOMENTE nos tenants atribuídos; sem
-  ações destrutivas/administrativas.
+- Support Operator/Viewer: provides support ONLY for assigned tenants; no
+  destructive/administrative actions.
 """
 import re
 
@@ -54,7 +54,7 @@ def _slugify(name: str) -> str:
 def _assert_tenant_access(db: Session, principal: Principal, tenant_id: int) -> Tenant:
     tenant = db.get(Tenant, tenant_id)
     if tenant is None:
-        raise HTTPException(status_code=404, detail="Tenant não encontrado.")
+        raise HTTPException(status_code=404, detail="Tenant not found.")
     if not operator_can_access_tenant(db, principal, tenant_id):
         raise HTTPException(status_code=403, detail="Operator has no access to this tenant.")
     return tenant
@@ -109,7 +109,7 @@ def create_tenant(payload: TenantCreate, request: Request, db: Session = Depends
 def list_tenants(db: Session = Depends(get_db), principal: Principal = Depends(require_operator)):
     stmt = select(Tenant).order_by(Tenant.id)
     if principal.operator_role != "platform_admin":
-        # support: só os tenants atribuídos e ativos
+        # support: only assigned and active tenants
         allowed = select(OperatorTenantAccess.tenant_id).where(
             OperatorTenantAccess.operator_user_id == principal.user_id,
             OperatorTenantAccess.is_active == True,  # noqa: E712
@@ -127,7 +127,7 @@ def set_tenant_status(tenant_id: int, request: Request, status: str,
         raise HTTPException(status_code=422, detail="status deve ser active|suspended.")
     tenant = db.get(Tenant, tenant_id)
     if tenant is None:
-        raise HTTPException(status_code=404, detail="Tenant não encontrado.")
+        raise HTTPException(status_code=404, detail="Tenant not found.")
     tenant.status = status
     db.commit()
     db.refresh(tenant)
@@ -168,7 +168,7 @@ def list_invites(tenant_id: int, db: Session = Depends(get_db),
 def create_or_resend_invite(tenant_id: int, payload: InviteCreate, request: Request,
                             db: Session = Depends(get_db),
                             principal: Principal = Depends(require_operator)):
-    # support pode reenviar convite ao admin do cliente (tenant atribuído)
+    # support can resend an invitation to the customer admin for the assigned tenant
     tenant = _assert_tenant_access(db, principal, tenant_id)
     other = db.query(User).filter(User.email == payload.email).first()
     if other is not None and other.tenant_id not in (None, tenant_id):
@@ -201,7 +201,7 @@ def create_api_key(tenant_id: int, payload: ApiKeyCreate, request: Request,
                    principal: Principal = Depends(require_platform_admin)):
     tenant = db.get(Tenant, tenant_id)
     if tenant is None:
-        raise HTTPException(status_code=404, detail="Tenant não encontrado.")
+        raise HTTPException(status_code=404, detail="Tenant not found.")
     full, prefix, digest = generate_api_key()
     row = ApiKey(tenant_id=tenant_id, label=payload.label, prefix=prefix,
                  key_hash=digest, role=payload.role, active=True)
@@ -213,13 +213,13 @@ def create_api_key(tenant_id: int, payload: ApiKeyCreate, request: Request,
                  target_type="api_key", target_id=row.id, request=request,
                  detail={"label": payload.label, "role": payload.role})
     return {"id": row.id, "tenant_id": tenant_id, "label": row.label, "role": row.role,
-            "api_key": full, "note": "Guarde agora — não será exibida de novo."}
+            "api_key": full, "note": "Store it now — it will not be displayed again."}
 
 
 @router.get("/tenants/{tenant_id}/api-keys", response_model=list[ApiKeyOut])
 def list_api_keys(tenant_id: int, db: Session = Depends(get_db),
                   principal: Principal = Depends(require_operator)):
-    # support pode listar (sem segredo, só prefix) para troubleshooting
+    # support can list entries for troubleshooting without the secret, prefix only
     _assert_tenant_access(db, principal, tenant_id)
     return list(db.scalars(select(ApiKey).where(ApiKey.tenant_id == tenant_id)
                            .order_by(ApiKey.id)))
@@ -231,7 +231,7 @@ def revoke_api_key(tenant_id: int, key_id: int, request: Request,
                    principal: Principal = Depends(require_platform_admin)):
     row = db.get(ApiKey, key_id)
     if row is None or row.tenant_id != tenant_id:
-        raise HTTPException(status_code=404, detail="API key não encontrada.")
+        raise HTTPException(status_code=404, detail="API key not found.")
     row.active = False
     db.commit()
     audit.record(db, actor=principal.subject, actor_role="platform_admin", tenant_id=tenant_id,
@@ -273,18 +273,18 @@ def update_operator(operator_id: int, payload: OperatorUpdate, request: Request,
     op = db.get(User, operator_id)
     if op is None or not op.is_operator:
         raise HTTPException(status_code=404, detail="Operator not found.")
-    # proteção: não rebaixar/desativar a si mesmo (evita lockout do super admin)
+    # protection: do not demote/deactivate yourself (prevents super admin lockout)
     if principal.user_id == operator_id:
         if payload.operator_role and payload.operator_role != "platform_admin":
-            raise HTTPException(status_code=400, detail="Não é possível rebaixar a própria conta.")
+            raise HTTPException(status_code=400, detail="Não é possível rebaixar a própria account.")
         if payload.is_active is False:
-            raise HTTPException(status_code=400, detail="Não é possível desativar a própria conta.")
+            raise HTTPException(status_code=400, detail="Não é possível desativar a própria account.")
     if payload.operator_role is not None:
         op.operator_role = payload.operator_role
     if payload.is_active is not None:
         op.is_active = payload.is_active
         if not payload.is_active:
-            op.pwd_version += 1  # encerra sessões
+            op.pwd_version += 1  # terminates sessions
     db.commit()
     db.refresh(op)
     audit.record(db, actor=principal.subject, actor_role="platform_admin",
@@ -311,7 +311,7 @@ def grant_tenant_access(operator_id: int, payload: TenantAccessGrant, request: R
     if op is None or not op.is_operator:
         raise HTTPException(status_code=404, detail="Operator not found.")
     if db.get(Tenant, payload.tenant_id) is None:
-        raise HTTPException(status_code=404, detail="Tenant não encontrado.")
+        raise HTTPException(status_code=404, detail="Tenant not found.")
     existing = db.scalar(select(OperatorTenantAccess).where(
         OperatorTenantAccess.operator_user_id == operator_id,
         OperatorTenantAccess.tenant_id == payload.tenant_id))

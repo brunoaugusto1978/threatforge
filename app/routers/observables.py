@@ -63,9 +63,9 @@ def list_observables(
 
 def _get_owned(db: Session, observable_id: int, tid: int) -> Observable:
     obs = db.get(Observable, observable_id)
-    # isolamento: 404 (não 403) para não revelar existência em outro tenant
+    # isolation: 404, not 403, to avoid revealing existence in another tenant
     if obs is None or obs.tenant_id != tid:
-        raise HTTPException(status_code=404, detail="Observável não encontrado.")
+        raise HTTPException(status_code=404, detail="Observable not found.")
     return obs
 
 
@@ -88,7 +88,7 @@ def enrich_observable(observable_id: int, db: Session = Depends(get_db),
             continue
         try:
             data = connector.enrich(obs.type, obs.value, db)
-        except Exception as exc:  # fonte fora do ar não derruba o enriquecimento
+        except Exception as exc:  # an unavailable source does not break enrichment
             errors.append(f"{connector.name}: {type(exc).__name__}")
             continue
         results[connector.name] = data
