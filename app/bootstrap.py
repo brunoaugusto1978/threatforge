@@ -1,8 +1,8 @@
-"""Bootstrap opcional do operador de plataforma (deploy headless).
+"""Optional platform operator bootstrap for headless deployments.
 
-O caminho padrão é a tela "criar operador" (/setup/operator). Este bootstrap só
+The default path is the "create operator" screen (/setup/operator). This bootstrap only
 age se AMBOS BOOTSTRAP_OPERATOR_EMAIL e BOOTSTRAP_OPERATOR_PASSWORD estiverem
-definidos e não houver nenhum usuário — útil para provisionamento automatizado.
+runs when both variables are defined and no user exists; useful for automated provisioning.
 """
 import logging
 
@@ -25,7 +25,7 @@ def ensure_operator() -> None:
         email = config.BOOTSTRAP_OPERATOR_EMAIL or config.BOOTSTRAP_ADMIN_EMAIL
         password = config.BOOTSTRAP_OPERATOR_PASSWORD or config.BOOTSTRAP_ADMIN_PASSWORD
         if not (email and password):
-            logger.info("Sem usuários e sem BOOTSTRAP_OPERATOR_*: aguardando /setup/operator")
+            logger.info("No users and no BOOTSTRAP_OPERATOR_* variables: waiting for /setup/operator")
             return
         op = User(email=email.strip().lower(), hashed_password=hash_password(password),
                   role="admin", is_operator=True, operator_role="platform_admin",
@@ -34,7 +34,7 @@ def ensure_operator() -> None:
         db.commit()
         logger.info("Operador de plataforma provisionado via env: %s", email)
     except Exception as exc:
-        logger.warning("Bootstrap do operador falhou: %s", type(exc).__name__)
+        logger.warning("Operator bootstrap failed: %s", type(exc).__name__)
         db.rollback()
     finally:
         db.close()

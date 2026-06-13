@@ -1,6 +1,6 @@
-"""Envio de e-mail (SMTP). Em dev sem SMTP, apenas registra o conteúdo no log.
+"""E-mail delivery through SMTP. In development without SMTP, content is only logged.
 
-Reutiliza as variáveis SMTP_* já usadas pelos alertas.
+Reuses the SMTP_* variables already used by alerts.
 """
 from __future__ import annotations
 
@@ -18,11 +18,11 @@ def smtp_configured() -> bool:
 
 
 def send_email(to: str, subject: str, body: str) -> bool:
-    """Envia um e-mail. Retorna True se enviado por SMTP, False se só logado."""
+    """Send an e-mail. Returns True if sent through SMTP, False if only logged."""
     if not smtp_configured():
         logger.warning(
-            "\n--- E-MAIL (SMTP não configurado, exibindo no log) ---\n"
-            "Para: %s\nAssunto: %s\n\n%s\n--- fim ---", to, subject, body,
+            "\n--- E-MAIL (SMTP not configured, displaying in log) ---\n"
+            "To: %s\nSubject: %s\n\n%s\n--- end ---", to, subject, body,
         )
         return False
     msg = EmailMessage()
@@ -39,17 +39,17 @@ def send_email(to: str, subject: str, body: str) -> bool:
             server.send_message(msg)
         return True
     except Exception as exc:
-        logger.warning("Falha ao enviar e-mail para %s: %s", to, type(exc).__name__)
+        logger.warning("Failed to send e-mail to %s: %s", to, type(exc).__name__)
         return False
 
 
 def send_invite(to: str, tenant_name: str, accept_url: str) -> bool:
-    subject = f"[ThreatForge] Convite de acesso — {tenant_name}"
+    subject = f"[ThreatForge] Access invitation — {tenant_name}"
     body = (
-        f"Você foi convidado a acessar o ThreatForge como administrador do tenant "
+        f"You have been invited to access ThreatForge as administrator of tenant "
         f"'{tenant_name}'.\n\n"
-        f"Para definir sua senha e ativar o acesso, abra o link abaixo "
-        f"(uso único, expira em breve):\n\n{accept_url}\n\n"
-        f"Se você não esperava este convite, ignore este e-mail."
+        f"To set your password and activate access, open the link below "
+        f"(single use, expires soon):\n\n{accept_url}\n\n"
+        f"If you were not expecting this invitation, ignore this e-mail."
     )
     return send_email(to, subject, body)

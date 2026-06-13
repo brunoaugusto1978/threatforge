@@ -94,7 +94,7 @@ def get_principal(request: Request, db: Session = Depends(get_db)) -> Principal:
     principal = (_from_platform_key(request) or _from_tenant_api_key(request, db)
                  or _from_cookie(request, db))
     if principal is None:
-        raise HTTPException(status_code=401, detail="Não autenticado.")
+        raise HTTPException(status_code=401, detail="Not authenticated.")
     return principal
 
 
@@ -118,7 +118,7 @@ require_admin = require_role("admin")
 
 def require_operator(principal: Principal = Depends(get_principal)) -> Principal:
     if not principal.is_operator:
-        raise HTTPException(status_code=403, detail="Acesso restrito a operadores de plataforma.")
+        raise HTTPException(status_code=403, detail="Access restricted to platform operators.")
     return principal
 
 
@@ -126,7 +126,7 @@ def require_platform_admin(principal: Principal = Depends(get_principal)) -> Pri
     """Ações administrativas críticas: só Platform Admin / Super Admin."""
     if not (principal.is_operator and principal.operator_role == "platform_admin"):
         raise HTTPException(status_code=403,
-                            detail="Ação restrita ao Platform Admin.")
+                            detail="Action restricted to Platform Admin.")
     return principal
 
 
@@ -154,13 +154,13 @@ def current_tenant_id(
     """
     if not principal.is_operator:
         if principal.tenant_id is None:
-            raise HTTPException(status_code=403, detail="Conta sem tenant associado.")
+            raise HTTPException(status_code=403, detail="Account has no associated tenant.")
         return principal.tenant_id
     if not x_tenant_id or not x_tenant_id.isdigit():
         raise HTTPException(status_code=400,
-                            detail=f"Operador deve indicar o tenant no header {config.TENANT_HEADER}.")
+                            detail=f"Operator must provide the tenant in header {config.TENANT_HEADER}.")
     tid = int(x_tenant_id)
     if not operator_can_access_tenant(db, principal, tid):
         raise HTTPException(status_code=403,
-                            detail="Operador sem acesso a este tenant.")
+                            detail="Operator has no access to this tenant.")
     return tid
