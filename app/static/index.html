@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -25,7 +25,7 @@
     border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
   label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
   .hidden { display: none !important; }
-  /* Login / Criar admin */
+  /* Login / Create operator */
   #login, #createAdmin, #invite { max-width: 380px; margin: 12vh auto; background: var(--panel);
     border: 1px solid var(--line); border-radius: 12px; padding: 28px; }
   #login h1, #createAdmin h1, #invite h1 { margin: 0 0 4px; font-size: 22px; }
@@ -125,96 +125,96 @@
     <form id="loginForm">
       <label for="email">E-mail</label>
       <input id="email" type="email" autocomplete="username" required>
-      <label for="password">Senha</label>
+      <label for="password">Password</label>
       <input id="password" type="password" autocomplete="current-password" required>
-      <button type="submit">Entrar</button>
+      <button type="submit">Sign in</button>
       <div class="err" id="loginErr"></div>
     </form>
   </section>
 
-  <!-- CRIAR OPERADOR DE PLATAFORMA -->
+  <!-- CREATE PLATFORM OPERATOR -->
   <section id="createAdmin" class="hidden">
     <h1>Threat<span style="color:var(--accent)">Forge</span></h1>
-    <p class="sub">Primeiro acesso — crie o operador de plataforma</p>
+    <p class="sub">First access — create the platform operator</p>
     <form id="adminForm">
-      <label for="caEmail">E-mail do operador</label>
+      <label for="caEmail">Operator e-mail</label>
       <input id="caEmail" type="email" autocomplete="username" required>
-      <label for="caPass">Senha (mín. 10, com letra e número)</label>
+      <label for="caPass">Password (min. 10 chars, with one letter and one number)</label>
       <input id="caPass" type="password" autocomplete="new-password" required>
-      <button type="submit">Criar operador</button>
+      <button type="submit">Create operator</button>
       <div class="err" id="adminErr"></div>
     </form>
   </section>
 
-  <!-- ACEITE DE CONVITE -->
+  <!-- INVITATION ACCEPTANCE -->
   <section id="invite" class="hidden">
     <h1>Threat<span style="color:var(--accent)">Forge</span></h1>
-    <p class="sub" id="inviteSub">Convite de acesso</p>
+    <p class="sub" id="inviteSub">Access invitation</p>
     <form id="inviteForm">
       <label>E-mail</label>
       <input id="invEmail" type="email" disabled>
-      <label for="invPass">Defina sua senha (mín. 10, com letra e número)</label>
+      <label for="invPass">Set your password (min. 10 chars, with one letter and one number)</label>
       <input id="invPass" type="password" autocomplete="new-password" required>
-      <label for="invPass2">Confirmar senha</label>
+      <label for="invPass2">Confirm password</label>
       <input id="invPass2" type="password" autocomplete="new-password" required>
-      <button type="submit">Ativar acesso</button>
+      <button type="submit">Activate access</button>
       <div class="err" id="inviteErr"></div>
     </form>
   </section>
 
-  <!-- CONSOLE DO OPERADOR (visão da operação) -->
+  <!-- OPERATOR CONSOLE -->
   <div id="operator" class="hidden">
     <header>
-      <div class="logo">Threat<span>Forge</span> <span class="muted" style="font-weight:400">· Operação</span></div>
+      <div class="logo">Threat<span>Forge</span> <span class="muted" style="font-weight:400">· Operations</span></div>
       <div class="spacer"></div>
       <span class="who" id="opWho"></span>
-      <button class="ghost sm" id="opLogout">Sair</button>
+      <button class="ghost sm" id="opLogout">Sign out</button>
     </header>
     <main id="opMain"></main>
   </div>
 
-  <!-- SETUP WIZARD (multi-etapa, obrigatório) -->
+  <!-- SETUP WIZARD -->
   <section id="wizard" class="hidden">
     <div class="wiz-head">
-      <div class="logo">Threat<span>Forge</span> <span class="muted" style="font-weight:400">· Configuração inicial</span></div>
-      <button class="ghost sm" id="wizLogout">Sair</button>
+      <div class="logo">Threat<span>Forge</span> <span class="muted" style="font-weight:400">· Initial setup</span></div>
+      <button class="ghost sm" id="wizLogout">Sign out</button>
     </div>
     <ol class="wiz-steps" id="wizSteps">
-      <li data-step="1">Organização</li>
-      <li data-step="2">Marca e ativos</li>
-      <li data-step="3">Escopo</li>
+      <li data-step="1">Organization</li>
+      <li data-step="2">Brand and assets</li>
+      <li data-step="3">Scope</li>
       <li data-step="4">Threat Profile</li>
-      <li data-step="5">Revisão</li>
+      <li data-step="5">Review</li>
     </ol>
     <div class="wiz-body" id="wizBody"></div>
     <div class="wiz-nav">
-      <button class="ghost" id="wizBack">Voltar</button>
+      <button class="ghost" id="wizBack">Back</button>
       <div class="err" id="wizErr"></div>
-      <button id="wizNext">Continuar</button>
+      <button id="wizNext">Continue</button>
     </div>
   </section>
 
   <!-- APP -->
   <div id="app" class="hidden">
     <div id="supportBanner" class="hidden">
-      <span>🛟 Modo suporte — Tenant: <b id="supportTenantName"></b></span>
-      <button class="ghost sm" id="exitTenant">Voltar para Operação</button>
+      <span>🛟 Support mode — Tenant: <b id="supportTenantName"></b></span>
+      <button class="ghost sm" id="exitTenant">Back to Operations</button>
     </div>
     <header>
       <div class="logo">Threat<span>Forge</span></div>
       <nav id="nav">
         <button data-view="dashboard" class="active">Dashboard</button>
         <button data-view="iocs">IOCs</button>
-        <button data-view="brands">Marcas</button>
+        <button data-view="brands">Brands</button>
         <button data-view="watchlist">Watchlist</button>
-        <button data-view="org" id="navOrg">Organização</button>
-        <button data-view="users" id="navUsers">Usuários</button>
-        <button data-view="audit" id="navAudit">Auditoria</button>
+        <button data-view="org" id="navOrg">Organization</button>
+        <button data-view="users" id="navUsers">Users</button>
+        <button data-view="audit" id="navAudit">Audit</button>
       </nav>
       <div class="spacer"></div>
       <span class="who" id="who"></span>
-      <button class="ghost sm" id="changePw">Trocar senha</button>
-      <button class="ghost sm" id="logout">Sair</button>
+      <button class="ghost sm" id="changePw">Change password</button>
+      <button class="ghost sm" id="logout">Sign out</button>
     </header>
     <main id="main"></main>
   </div>
