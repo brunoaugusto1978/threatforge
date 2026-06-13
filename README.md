@@ -537,10 +537,15 @@ Enterprise-only modules must not be committed to this public repository.
 
 ## Roadmap
 
-- **v0.7** — open source readiness, CI, security hardening, documentation and UI improvements.
-- **v0.8** — investigation cases, timeline and exports.
-- **v0.9** — relationship graph with Neo4j.
-- **v1.0** — partial STIX model, MISP/OpenCTI integrations, production hardening and stable packaging.
+- **v0.6.x** — Community open source readiness, CI, baseline security hardening, documentation, optional Enterprise adapter and public readiness validation. Completed.
+- **v0.7** — Investigation cases, case workflow, analyst notes, evidence attachments and case-level exports.
+- **v0.8** — Timeline, investigation activity history, report exports and operational review workflows.
+- **v0.9** — Relationship graph, Neo4j integration and entity correlation views.
+- **v1.0** — Partial STIX model, MISP/OpenCTI integrations, production hardening, stable packaging and public stable release.
+
+## Enterprise
+
+Enterprise features such as signed licensing, trial mode, feature flags and premium PDF reports are maintained separately in the private `threatforge-enterprise` repository.
 
 ## License
 
