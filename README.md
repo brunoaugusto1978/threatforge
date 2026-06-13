@@ -2,232 +2,504 @@
 
 **Open Source Cyber Threat Intelligence Platform**
 
-Plataforma open source de CTI para ingestão, enriquecimento, scoring explicável e geração de inteligência acionável a partir de fontes públicas. Foco no cenário brasileiro: monitoramento de marca, phishing e abuso de domínios.
+Plataforma open source de CTI para ingestão, enriquecimento, scoring explicável e geração de inteligência acionável a partir de fontes públicas. O objetivo é apoiar analistas de segurança, SOC, times antifraude e pesquisadores na organização de indicadores, monitoramento de marca, abuso de domínios, phishing e investigação de risco digital.
 
 ## Funcionalidades
 
-**CTI / IOC (v0.1)**
+### CTI / IOC
 
-- **IOC Intake** — cadastre IP, domínio, URL, hash, e-mail ou CVE via API
-- **Conectores públicos** — CISA KEV, URLhaus (abuse.ch), MITRE ATT&CK, EPSS (FIRST)
-- **Enriquecimento** — consulta automática das fontes relevantes para cada tipo de IOC
-- **Scoring explicável** — score 0–100 com fatores e justificativas, não uma "nota mágica"
-- **Relatórios** — relatório técnico em Markdown por observável
+* **IOC Intake** — cadastro de IP, domínio, URL, hash, e-mail ou CVE via API.
+* **Conectores públicos** — CISA KEV, URLhaus/abuse.ch, MITRE ATT&CK e EPSS/FIRST.
+* **Enriquecimento** — consulta automática das fontes relevantes para cada tipo de observável.
+* **Scoring explicável** — score de 0 a 100 com fatores e justificativas.
+* **Relatórios** — geração de relatório técnico em Markdown por observável.
 
-**Monitoramento de marca / DRP (v0.2)**
+### Monitoramento de marca / DRP
 
-- **Brand intake** — cadastre a marca, domínios oficiais (allowlist) e keywords
-- **Detecção de typosquatting** — gera centenas de variações (homóglifos, teclas adjacentes, omissão, termos-isca BR como `seguro`, `pix`, `2via`, `boleto`) em TLDs abusados
-- **Descoberta via Certificate Transparency** — encontra domínios reais que mencionam a marca em CT logs (crt.sh)
-- **Enriquecimento do finding** — resolução DNS, registro MX, idade do domínio (RDAP), idade do certificado (CT), cruzamento com URLhaus
-- **Scoring de abuso explicável** — prioriza domínios ativos, recém-registrados e similares
-- **Alertas nos principais canais** — Telegram, webhook (Slack/Discord/Teams/SIEM) e e-mail SMTP, disparados automaticamente para findings suspeitos/maliciosos
+* **Brand intake** — cadastro de marca, domínios oficiais e keywords.
+* **Detecção de typosquatting** — geração de variações usando homóglifos, teclas adjacentes, omissões e termos-isca como `seguro`, `pix`, `2via` e `boleto`.
+* **Descoberta via Certificate Transparency** — busca de domínios reais que mencionam a marca em CT logs.
+* **Enriquecimento de findings** — DNS, MX, RDAP, idade de domínio, idade de certificado e cruzamento com URLhaus.
+* **Scoring de abuso explicável** — priorização de domínios ativos, recentes e similares à marca.
+* **Alertas** — Telegram, webhook e SMTP para findings suspeitos ou maliciosos.
 
-**Interface web e usuários (v0.3)**
+### Interface web, usuários e RBAC
 
-- **Login web** — interface servida pela própria API em `http://localhost:8000/`
-- **Autenticação real** — senhas com PBKDF2-HMAC-SHA256 (salt único, 240k iterações), sessão em JWT HS256 dentro de cookie `httpOnly`/`SameSite=Strict` (token inacessível a JavaScript — XSS não rouba sessão). Sem dependências externas de auth.
-- **RBAC em 3 papéis** — `admin` (gerencia usuários e tudo), `analyst` (cadastra IOC, roda scan, edita findings), `viewer` (só leitura). Enforcement no servidor em toda rota.
-- **Gestão de usuários** — criar, ativar/desativar, trocar papel e senha (admin). Proteções contra lockout (não remove o último admin, não rebaixa a própria conta).
-- **Hardening** — CSP restritiva, headers de segurança, rate-limit de login, mensagem de erro genérica (anti-enumeração de usuário).
+* **Login web** — interface servida pela própria API em `http://localhost:8000/`.
+* **Autenticação** — sessão em JWT dentro de cookie `httpOnly`/`SameSite=Strict`.
+* **Senhas seguras** — Argon2id quando disponível, com fallback para PBKDF2-HMAC-SHA256.
+* **Papéis de tenant** — `admin`, `analyst` e `viewer`.
+* **Papéis de plataforma** — `platform_admin`, `support_operator` e `support_viewer`.
+* **Auditoria** — ações sensíveis registradas com usuário, operador, tenant, IP e user-agent.
+* **Hardening web** — CSP, headers de segurança, rate-limit de login e mensagens genéricas de erro.
 
-**Comum**
+### Multi-tenant
 
-- **API REST** — FastAPI; autenticação por sessão (cookie) na UI ou por API key de serviço (header `X-API-Key`, papel admin) para automação. Docs em `/docs`.
+A plataforma é multi-tenant. Cada cliente é um **tenant** isolado. As tabelas sensíveis possuem `tenant_id` e as consultas são filtradas pelo tenant, impedindo que um cliente acesse dados de outro.
+
+Existem duas visões principais:
+
+* **Operador de plataforma** — cria e gerencia tenants, operadores, convites e API keys. Para atuar em um tenant específico via API, usa o header `X-Tenant-Id`.
+* **Usuário de tenant** — fica preso ao próprio `tenant_id` e visualiza apenas os dados do seu cliente.
+
+API keys são por tenant. A chave definida em `API_KEY` no `.env` funciona como chave de plataforma para automação administrativa.
 
 ## Subindo com Docker Compose
 
+Copie o arquivo de exemplo:
+
 ```bash
 cp .env.example .env
-# Edite .env: defina API_KEY com um valor forte (ex.: openssl rand -hex 32)
+```
+
+Gere valores fortes para as variáveis sensíveis:
+
+```bash
+openssl rand -hex 32
+openssl rand -hex 32
+openssl rand -hex 32
+```
+
+Edite o arquivo `.env`:
+
+```bash
+vi .env
+```
+
+Configure pelo menos as variáveis abaixo:
+
+```env
+API_KEY=<valor_gerado>
+POSTGRES_PASSWORD=<valor_gerado>
+JWT_SECRET=<valor_gerado>
+COOKIE_SECURE=false
+APP_BASE_URL=http://localhost:8000
+```
+
+Observações:
+
+* use valores diferentes para `API_KEY`, `POSTGRES_PASSWORD` e `JWT_SECRET`;
+* não versionar o arquivo `.env`;
+* em ambiente local com HTTP, mantenha `COOKIE_SECURE=false`;
+* em produção com HTTPS, use `COOKIE_SECURE=true`;
+* `APP_BASE_URL` é usado para montar links de convite.
+
+Suba a aplicação:
+
+```bash
 docker compose up -d --build
 ```
 
-A API e a interface web sobem em `http://localhost:8000`. Documentação interativa da API: `http://localhost:8000/docs`.
-
-### Multi-tenant (isolamento por cliente)
-
-A plataforma é multi-tenant: cada cliente é um **tenant** isolado. Toda tabela
-sensível tem `tenant_id` e toda query filtra por ele — um tenant nunca acessa
-dados de outro. Há duas visões:
-
-- **Operador de plataforma** (`is_operator`): cria/gerencia tenants e API keys,
-  e atua dentro de um tenant indicando o header `X-Tenant-Id`. Acessa a visão
-  da operação.
-- **Usuário de tenant** (admin/analyst/viewer): preso ao próprio `tenant_id`,
-  vê apenas os dados do seu cliente.
-
-API keys são **por tenant** (header `X-API-Key`); a chave fica presa ao tenant
-dela. A `API_KEY` do `.env` é a chave de plataforma (operador de serviço).
-
-**Convite de acesso do cliente.** Ao criar um tenant **sem senha**, o operador
-gera um **convite por e-mail**: o sistema cria um token único (guardado como
-hash, com expiração e uso único), monta o link com `APP_BASE_URL` e envia por
-SMTP. O cliente abre `…/invite/accept?token=…`, define a senha e é ativado como
-admin **vinculado ao tenant do convite** (não escolhe tenant). Statuses do
-convite: `pending`, `accepted`, `expired`, `revoked` — tudo auditado.
-
-Em dev sem SMTP, o link é exibido no console do operador e no log. Para capturar
-e-mails localmente, suba o **MailHog** (UI em `http://localhost:8025`):
+Valide a instalação:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.podman.yml \
-    -f docker-compose.mailhog.yml up -d
+curl http://localhost:8000/health
 ```
 
-**Teste de isolamento** (prova que Tenant A não vê Tenant B, e o fluxo de convite):
+Resultado esperado:
 
-```bash
-docker compose -f docker-compose.yml -f docker-compose.podman.yml \
-    exec api python -m app.selftest_isolation
+```json
+{"status":"ok","service":"threatforge","version":"0.6.0"}
 ```
 
-### Primeiro acesso: onboarding obrigatório
+A API e a interface web ficam disponíveis em:
 
-Abra `http://localhost:8000/` no navegador. O onboarding é um fluxo obrigatório:
+```text
+http://localhost:8000
+```
 
-1. **Criar 1º admin** — instalação virgem (sem usuários) mostra a tela de criação
-   do primeiro administrador. O primeiro usuário é sempre `admin` (auditado como
-   `bootstrap_admin_created`).
-2. **Setup Wizard (5 etapas)** — após o login do admin, enquanto o setup não
-   estiver concluído, **todas as abas ficam travadas** e o sistema força o wizard:
-   Organização → Marca e ativos → Escopo de monitoramento → Threat Profile por
-   setor → Revisão. Ao concluir, grava `setup_completed`/`setup_completed_at`,
-   audita `organization_setup_completed` e **libera as abas**.
+A documentação interativa da API fica em:
 
-No Threat Profile, ao escolher o setor (ex.: **Telecom**), a plataforma sugere
-keywords, ameaças, categorias de IOC e fontes típicas e gera **seeds de
-monitoramento** (`status=candidate`, `confirmed=false`, fonte `sector_profile`) —
-nunca findings confirmados. Um finding só nasce depois, com evidência real.
+```text
+http://localhost:8000/docs
+```
 
-### Taxonomia de indicadores
+## Teste automatizado de isolamento
 
-A plataforma separa quatro níveis (veja na aba **Watchlist**):
-
-- **IOC global** — vale para qualquer organização (KEV, URLhaus, EPSS). Vive em IOCs.
-- **IOC setorial** (`scope=sector`) — ameaças e tecnologias típicas do setor
-  (ex.: SIM swap, fraude Pix, CVEs de VPN/SSO/webmail).
-- **IOC organizacional** (`scope=organization`) — derivado das marcas: combinações
-  `{marca}+termo` (ex.: `Claro Música APK`, `Claro Música premium grátis`), o slug
-  da marca (`claromusica`) e os domínios oficiais (`claromusica.com.br`).
-- **Finding com evidência** — criado **somente** com coleta/enriquecimento real
-  (CT logs, DNS, URLhaus...). Fica na aba **Marcas**, separado das seeds.
-
-Provisionamento headless (sem interface) continua possível: defina
-`BOOTSTRAP_ADMIN_EMAIL` **e** `BOOTSTRAP_ADMIN_PASSWORD` no `.env` e o admin é
-criado no start (o wizard de organização ainda será exigido no 1º login).
-
-Papéis: **admin** (organização, usuários, configurações, auditoria), **analyst**
-(IOCs, marcas, scans, findings, relatórios) e **viewer** (somente leitura).
-Toda ação sensível (login, criação/edição de usuário, scan, setup) é registrada
-na **trilha de auditoria** (aba Auditoria, admin).
-
-### Segurança das senhas
-
-Senhas usam **Argon2id** quando a lib está disponível (default no Docker), com
-fallback automático para PBKDF2-HMAC-SHA256 (stdlib). Hashes PBKDF2 antigos são
-**migrados para Argon2 de forma transparente no próximo login**. Política mínima:
-10 caracteres com ao menos uma letra e um número.
-
-## Uso rápido
+Execute o selftest principal:
 
 ```bash
-export API_KEY="sua-chave-do-.env"
+docker compose exec api python -m app.selftest_isolation
+```
 
-# 1. Sincronizar feeds locais (KEV + ATT&CK)
+Resultado esperado:
+
+```text
+ISOLAMENTO + CONVITES + PAPÉIS DE OPERADOR: TODOS OS TESTES PASSARAM ✅
+```
+
+Esse teste valida:
+
+* criação do primeiro operador de plataforma;
+* criação de tenants;
+* autenticação de admins de clientes;
+* isolamento de marcas e observáveis por tenant;
+* bloqueio de acesso cruzado por ID;
+* API key presa ao tenant correto;
+* convite por e-mail com token hasheado, uso único e expiração;
+* suporte sem tenant atribuído bloqueado;
+* suporte acessando apenas tenant permitido;
+* suporte bloqueado em ações administrativas/destrutivas;
+* bloqueio/ativação de tenant por platform admin;
+* auditoria;
+* revogação imediata de acesso do suporte.
+
+## Primeiro acesso pela interface
+
+Abra:
+
+```text
+http://localhost:8000/
+```
+
+Em uma instalação limpa, o primeiro passo é criar o **operador de plataforma**.
+
+Esse primeiro usuário será o `platform_admin` e poderá:
+
+* criar tenants/clientes;
+* criar operadores de suporte;
+* criar convites de acesso;
+* criar API keys por tenant;
+* acessar a visão operacional da plataforma;
+* consultar auditoria.
+
+## Fluxo recomendado de validação manual
+
+### 1. Platform admin
+
+Crie o primeiro operador pela interface.
+
+Depois crie dois tenants, por exemplo:
+
+```text
+Cliente A
+Cliente B
+```
+
+Crie um admin para cada tenant.
+
+Resultado esperado:
+
+* platform admin visualiza operação da plataforma;
+* tenants são criados corretamente;
+* usuários de cliente ficam vinculados ao tenant correto.
+
+### 2. Cliente / tenant admin
+
+Entre como admin do Cliente A e crie dados, como marca e observáveis.
+
+Depois entre como admin do Cliente B e crie outros dados.
+
+Resultado esperado:
+
+* Cliente A vê apenas dados do Cliente A;
+* Cliente B vê apenas dados do Cliente B;
+* acesso cruzado por ID não deve revelar dados de outro tenant.
+
+### 3. Suporte
+
+Crie um operador de suporte.
+
+Conceda acesso apenas ao Cliente A.
+
+Resultado esperado:
+
+* suporte visualiza apenas o Cliente A;
+* suporte não visualiza o Cliente B;
+* suporte não cria tenant;
+* suporte não cria operador;
+* suporte não cria API key;
+* suporte não executa ações destrutivas;
+* ao revogar o acesso, o suporte perde acesso imediatamente.
+
+## Convites de acesso
+
+Ao criar um tenant sem senha para o admin, o sistema gera um convite por e-mail.
+
+O convite usa:
+
+* token aleatório;
+* hash do token no banco;
+* expiração;
+* uso único;
+* vínculo fixo ao tenant;
+* ativação apenas após aceite.
+
+O link é montado usando `APP_BASE_URL`.
+
+Em ambiente de desenvolvimento sem SMTP configurado, o convite aparece no log da API.
+
+Para acompanhar os logs:
+
+```bash
+docker compose logs -f api
+```
+
+Também é possível subir o MailHog para capturar e-mails localmente:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.mailhog.yml up -d --build
+```
+
+A interface do MailHog fica em:
+
+```text
+http://localhost:8025
+```
+
+## Provisionamento headless
+
+O fluxo padrão é criar o primeiro operador pela interface.
+
+Para ambientes automatizados, é possível criar o operador inicial no primeiro start definindo:
+
+```env
+BOOTSTRAP_OPERATOR_EMAIL=admin.platform@threatforge.local
+BOOTSTRAP_OPERATOR_PASSWORD=<senha_forte>
+```
+
+Use esse modo apenas quando fizer sentido para automação. Em ambiente local, o onboarding pela interface é mais simples.
+
+As variáveis abaixo são legadas do fluxo single-tenant e não devem ser usadas no fluxo multi-tenant atual:
+
+```env
+BOOTSTRAP_ADMIN_EMAIL=
+BOOTSTRAP_ADMIN_PASSWORD=
+```
+
+## Uso rápido via API
+
+Defina a chave de plataforma:
+
+```bash
+export API_KEY="valor-definido-no-.env"
+```
+
+Para chamadas de plataforma que atuam em um tenant específico, informe também `X-Tenant-Id`.
+
+Exemplo:
+
+```bash
+export TENANT_ID=1
+```
+
+Sincronizar feeds locais:
+
+```bash
 curl -X POST -H "X-API-Key: $API_KEY" http://localhost:8000/sync/kev
 curl -X POST -H "X-API-Key: $API_KEY" http://localhost:8000/sync/mitre
-
-# 2. Cadastrar um IOC
-curl -X POST -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \
-  -d '{"type": "cve", "value": "CVE-2024-3400"}' \
-  http://localhost:8000/observables
-
-# 3. Enriquecer e pontuar
-curl -X POST -H "X-API-Key: $API_KEY" http://localhost:8000/observables/1/enrich
-
-# 4. Gerar relatório Markdown
-curl -H "X-API-Key: $API_KEY" http://localhost:8000/reports/observable/1
 ```
 
-Observáveis aceitam valores "defanged" (`hxxp://`, `[.]`) — são normalizados automaticamente.
+Cadastrar um observável em um tenant:
+
+```bash
+curl -X POST \
+  -H "X-API-Key: $API_KEY" \
+  -H "X-Tenant-Id: $TENANT_ID" \
+  -H "Content-Type: application/json" \
+  -d '{"type": "cve", "value": "CVE-2024-3400"}' \
+  http://localhost:8000/observables
+```
+
+Enriquecer e pontuar:
+
+```bash
+curl -X POST \
+  -H "X-API-Key: $API_KEY" \
+  -H "X-Tenant-Id: $TENANT_ID" \
+  http://localhost:8000/observables/1/enrich
+```
+
+Gerar relatório Markdown:
+
+```bash
+curl \
+  -H "X-API-Key: $API_KEY" \
+  -H "X-Tenant-Id: $TENANT_ID" \
+  http://localhost:8000/reports/observable/1
+```
+
+Observáveis aceitam valores defanged, como:
+
+```text
+hxxp://example[.]com
+```
+
+Esses valores são normalizados automaticamente.
 
 ## Monitoramento de marca
 
+Cadastrar marca com domínios oficiais:
+
 ```bash
-# 1. Cadastrar a marca com domínios oficiais (allowlist)
-curl -X POST -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \
+curl -X POST \
+  -H "X-API-Key: $API_KEY" \
+  -H "X-Tenant-Id: $TENANT_ID" \
+  -H "Content-Type: application/json" \
   -d '{"name": "Banco Exemplo", "official_domains": ["bancoexemplo.com.br"], "keywords": ["bexemplo"]}' \
   http://localhost:8000/brands
+```
 
-# 2. Rodar a varredura (gera typosquats, consulta CT, DNS, RDAP, URLhaus e alerta)
-curl -X POST -H "X-API-Key: $API_KEY" http://localhost:8000/brands/1/scan
+Rodar varredura:
 
-# 3. Listar findings priorizados (maior score primeiro)
-curl -H "X-API-Key: $API_KEY" "http://localhost:8000/brands/1/findings?min_score=45"
+```bash
+curl -X POST \
+  -H "X-API-Key: $API_KEY" \
+  -H "X-Tenant-Id: $TENANT_ID" \
+  http://localhost:8000/brands/1/scan
+```
 
-# 4. Atualizar status de um finding no workflow de investigação
-curl -X PATCH -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \
+Listar findings priorizados:
+
+```bash
+curl \
+  -H "X-API-Key: $API_KEY" \
+  -H "X-Tenant-Id: $TENANT_ID" \
+  "http://localhost:8000/brands/1/findings?min_score=45"
+```
+
+Atualizar status de um finding:
+
+```bash
+curl -X PATCH \
+  -H "X-API-Key: $API_KEY" \
+  -H "X-Tenant-Id: $TENANT_ID" \
+  -H "Content-Type: application/json" \
   -d '{"status": "takedown_requested"}' \
   http://localhost:8000/brands/findings/10
 ```
 
-Use `?deep=false` no scan para uma varredura rápida (só DNS + descoberta CT, sem RDAP/cert por candidato). Para varredura recorrente, agende `POST /brands/{id}/scan` (ex.: cron a cada 6h). Os alertas só disparam para findings com veredito ≥ `ALERT_MIN_VERDICT` (default `suspicious`) e nunca repetem para o mesmo finding.
+Use `?deep=false` no scan para uma varredura rápida.
 
-**Takedown é workflow defensivo, não automático:** o sistema gera a evidência e o finding; a ação de takedown é registrada via status e deve ser executada por canal autorizado, com revisão humana.
+Para varredura recorrente, agende:
+
+```text
+POST /brands/{id}/scan
+```
+
+Os alertas disparam apenas para findings com veredito igual ou superior ao valor de `ALERT_MIN_VERDICT`.
+
+## Takedown
+
+O ThreatForge não executa takedown automático.
+
+O sistema apoia o fluxo defensivo:
+
+* identifica o finding;
+* registra evidências;
+* calcula risco;
+* organiza status;
+* permite acompanhamento.
+
+A ação de takedown deve ser executada por canal autorizado e com revisão humana.
 
 ## Tipos de observável suportados
 
-| Tipo | Exemplo | Fontes de enriquecimento |
-|------|---------|--------------------------|
-| `ip` | `203.0.113.10` | URLhaus host |
-| `domain` | `example[.]com` | URLhaus host |
-| `url` | `hxxp://evil.example/x` | URLhaus URL |
-| `hash` | MD5/SHA1/SHA256 | URLhaus payload |
-| `cve` | `CVE-2024-3400` | CISA KEV + EPSS |
-| `email` | `a@b.com` | (intake apenas no MVP) |
+| Tipo     | Exemplo                 | Fontes de enriquecimento |
+| -------- | ----------------------- | ------------------------ |
+| `ip`     | `203.0.113.10`          | URLhaus host             |
+| `domain` | `example[.]com`         | URLhaus host             |
+| `url`    | `hxxp://evil.example/x` | URLhaus URL              |
+| `hash`   | MD5/SHA1/SHA256         | URLhaus payload          |
+| `cve`    | `CVE-2024-3400`         | CISA KEV + EPSS          |
+| `email`  | `a@b.com`               | Intake apenas no MVP     |
 
 ## Scoring
 
-O score é a soma de fatores explicáveis, limitado a 0–100:
+O score é a soma de fatores explicáveis, limitado a 0–100.
 
-| Fator | Pontos | Fonte |
-|-------|--------|-------|
-| Listado no CISA KEV | +50 | CISA |
-| Uso conhecido em ransomware (KEV) | +10 | CISA |
-| EPSS (probabilidade de exploração) | até +30 | FIRST |
-| URL ativa no URLhaus | +45 (+10 se online) | abuse.ch |
-| Host com URLs maliciosas no URLhaus | +35 | abuse.ch |
-| Payload conhecido no URLhaus | +45 | abuse.ch |
+| Fator                               |                   Pontos | Fonte    |
+| ----------------------------------- | -----------------------: | -------- |
+| Listado no CISA KEV                 |                      +50 | CISA     |
+| Uso conhecido em ransomware no KEV  |                      +10 | CISA     |
+| EPSS                                |                  até +30 | FIRST    |
+| URL ativa no URLhaus                | +45, com bônus se online | abuse.ch |
+| Host com URLs maliciosas no URLhaus |                      +35 | abuse.ch |
+| Payload conhecido no URLhaus        |                      +45 | abuse.ch |
 
-Veredito: `malicious` (≥70), `suspicious` (≥40), `low` (1–39), `no_known_threat` (0).
+Vereditos:
+
+|  Score | Veredito          |
+| -----: | ----------------- |
+| 70–100 | `malicious`       |
+|  40–69 | `suspicious`      |
+|   1–39 | `low`             |
+|      0 | `no_known_threat` |
 
 ## Configuração
 
-| Variável | Obrigatória | Descrição |
-|----------|-------------|-----------|
-| `API_KEY` | sim | Chave de autenticação da API (header `X-API-Key`) |
-| `DATABASE_URL` | não | Default: PostgreSQL do compose. Aceita SQLite p/ dev |
-| `ABUSECH_API_KEY` | não | Auth-Key do abuse.ch (necessária para a API do URLhaus — gratuita em https://auth.abuse.ch) |
-| `CORS_ORIGINS` | não | Origens permitidas, separadas por vírgula. Default: nenhuma |
+| Variável            | Obrigatória           | Descrição                                                 |
+| ------------------- | --------------------- | --------------------------------------------------------- |
+| `API_KEY`           | sim                   | Chave de plataforma para automação via header `X-API-Key` |
+| `POSTGRES_PASSWORD` | sim no Docker Compose | Senha do PostgreSQL usada pelo compose                    |
+| `JWT_SECRET`        | recomendado           | Segredo para assinar sessões JWT                          |
+| `DATABASE_URL`      | não                   | Default: PostgreSQL do compose. Aceita SQLite para dev    |
+| `COOKIE_SECURE`     | sim                   | `false` em localhost HTTP; `true` em produção HTTPS       |
+| `APP_BASE_URL`      | sim                   | URL base usada em links de convite                        |
+| `INVITE_TTL_HOURS`  | não                   | Validade do convite em horas. Default: 168                |
+| `CORS_ORIGINS`      | não                   | Origens permitidas, separadas por vírgula                 |
+| `ABUSECH_API_KEY`   | não                   | Auth-Key do abuse.ch para URLhaus                         |
 
 ## Configuração de alertas
 
-| Variável | Descrição |
-|----------|-----------|
-| `ALERT_MIN_VERDICT` | Veredito mínimo p/ alertar: `low`, `suspicious` (default) ou `malicious` |
-| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Bot do Telegram (crie via @BotFather) |
-| `ALERT_WEBHOOK_URL` | Webhook que recebe o JSON do alerta (Slack/Discord/Teams/SIEM) |
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` / `SMTP_FROM` / `SMTP_TO` | E-mail via SMTP |
+| Variável             | Descrição                                                        |
+| -------------------- | ---------------------------------------------------------------- |
+| `ALERT_MIN_VERDICT`  | Veredito mínimo para alertar: `low`, `suspicious` ou `malicious` |
+| `TELEGRAM_BOT_TOKEN` | Token do bot Telegram                                            |
+| `TELEGRAM_CHAT_ID`   | Chat ID de destino                                               |
+| `ALERT_WEBHOOK_URL`  | Webhook para Slack, Discord, Teams, SIEM ou SOAR                 |
+| `SMTP_HOST`          | Servidor SMTP                                                    |
+| `SMTP_PORT`          | Porta SMTP                                                       |
+| `SMTP_USER`          | Usuário SMTP                                                     |
+| `SMTP_PASSWORD`      | Senha SMTP                                                       |
+| `SMTP_FROM`          | Remetente                                                        |
+| `SMTP_TO`            | Destinatário                                                     |
+| `SMTP_STARTTLS`      | Ativa STARTTLS                                                   |
 
-Cada canal é independente e best-effort: só os configurados disparam, e a falha de um não bloqueia os demais nem a varredura.
+Cada canal é independente e best-effort. Falha em um canal não bloqueia a varredura nem os demais alertas.
+
+## Comandos úteis
+
+Ver containers:
+
+```bash
+docker compose ps
+```
+
+Ver logs da API:
+
+```bash
+docker compose logs -f api
+```
+
+Reiniciar:
+
+```bash
+docker compose restart
+```
+
+Parar:
+
+```bash
+docker compose down
+```
+
+Parar e apagar volumes locais:
+
+```bash
+docker compose down -v
+```
+
+Use `docker compose down -v` somente quando quiser apagar o banco local e começar do zero.
 
 ## Roadmap
 
-- **v0.3** — Dashboard web, casos investigativos, timeline, export JSON/CSV/PDF
-- **v0.4** — Grafo de relacionamento (Neo4j), STIX parcial, integração MISP/OpenCTI
-- **v0.5** — Multi-tenant, API keys por organização, auditoria, SLA por cliente
+* **v0.7** — melhoria da experiência da UI, mensagens de erro, onboarding e documentação.
+* **v0.8** — casos investigativos, timeline e exportações.
+* **v0.9** — grafo de relacionamento com Neo4j.
+* **v1.0** — modelo STIX parcial, integrações MISP/OpenCTI, hardening de produção e empacotamento estável.
 
 ## Licença
 
 Apache-2.0
+
