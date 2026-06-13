@@ -42,9 +42,9 @@ function el(tag, attrs = {}, ...children) {
 
 // escape text before inserting into innerHTML (XSS defense for external data)
 function esc(s) {
-  return String(s == null ? "" : s)
-    .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+  const div = document.createElement("div");
+  div.textContent = String(s == null ? "" : s);
+  return div.innerHTML;
 }
 function defang(s) { return String(s || "").replace(/\./g, "[.]").replace(/^http/, "hxxp"); }
 
