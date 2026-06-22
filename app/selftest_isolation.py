@@ -170,7 +170,56 @@ def run():
     if not sc.get('/brands', headers={'X-Tenant-Id': str(ta)}).status_code == 403:
         raise RuntimeError('selftest check failed: sc.get("/brands", headers={"X-Tenant-Id": str(ta)}).status_code == 403')
     _ok('access revocation blocks support immediately')
-    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES: ALL TESTS PASSED ✅')
+    # ============ BRAND EDIT (tenant-scoped PATCH /brands/{id}) ============
+    # 1) tenant_admin edits own brand name + official_domains
+    r = ca.patch(f"/brands/{ba_id}", json={
+        "name": "BrandA Renamed",
+        "official_domains": ["a-corp.com.br", "A-Corp.com.br", "extra[.]com"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["name"] == "BrandA Renamed"
+    # 2) refang + lowercase + dedup -> 2 domains
+    assert r.json()["official_domains"] == "a-corp.com.br,extra.com", r.json()["official_domains"]
+    _ok("tenant_admin edits brand name/domains (refang+lower+dedup)")
+
+    # 3) empty official_domains -> 422
+    assert ca.patch(f"/brands/{ba_id}", json={"official_domains": []}).status_code == 422
+    _ok("empty official_domains -> 422")
+
+    # 4) tenant analyst -> 403
+    ca.post("/users", json={"email": "analyst@a.com", "password": "AnalystA123", "role": "analyst"})
+    an = TestClient(app)
+    an.post("/auth/login", json={"email": "analyst@a.com", "password": "AnalystA123"})
+    assert an.patch(f"/brands/{ba_id}", json={"name": "x"}).status_code == 403
+    # support_operator WITH access -> still 403 (edit requires admin)
+    op.post(f"/operators/{sop_id}/tenant-access", json={"tenant_id": ta, "access_role": "support_operator"})
+    assert sc.patch(f"/brands/{ba_id}", headers={"X-Tenant-Id": str(ta)}, json={"name": "x"}).status_code == 403
+    _ok("analyst and support_operator -> 403 (cannot edit brand)")
+
+    # 5) editing a brand from another tenant -> 404
+    assert cb.patch(f"/brands/{ba_id}", json={"name": "x"}).status_code == 404
+    _ok("editing another tenant's brand -> 404")
+
+    # 6) clear_findings=true removes old findings after scope change
+    from app.database import SessionLocal
+    from app.models import BrandFinding
+    _s = SessionLocal()
+    _s.add(BrandFinding(tenant_id=ta, brand_id=ba_id, domain="fake-a.example", source="typosquat"))
+    _s.commit(); _s.close()
+    assert len(ca.get(f"/brands/{ba_id}/findings").json()) == 1
+    r = ca.patch(f"/brands/{ba_id}?clear_findings=true", json={"official_domains": ["a-corp.com.br"]})
+    assert r.status_code == 200, r.text
+    assert ca.get(f"/brands/{ba_id}/findings").json() == []
+    _ok("clear_findings=true removes old findings after scope change")
+
+    # 7) audit records brand.update with before/after + operator/ip/user-agent fields
+    arows = ca.get("/audit").json()
+    bu = [a for a in arows if a.get("action") == "brand.update"]
+    assert bu, "no brand.update audit entry"
+    assert bu[0]["detail"].get("changes"), bu[0]
+    assert "user_agent" in bu[0] and "operator_user_id" in bu[0] and "ip" in bu[0]
+    _ok("audit logs brand.update with before/after + operator/ip/user-agent")
+
+    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT: ALL TESTS PASSED ✅')
 if __name__ == '__main__':
     try:
         run()

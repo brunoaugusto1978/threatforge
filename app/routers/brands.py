@@ -11,6 +11,7 @@ from app.models import Brand, BrandFinding
 from app.schemas import (
     BrandCreate,
     BrandOut,
+    BrandUpdate,
     FindingOut,
     FindingStatusUpdate,
     ScanResult,
@@ -68,6 +69,46 @@ def list_brands(db: Session = Depends(get_db), tid: int = Depends(current_tenant
 def get_brand(brand_id: int, db: Session = Depends(get_db),
               tid: int = Depends(current_tenant_id)):
     return _owned_brand(db, brand_id, tid)
+
+
+@router.patch("/{brand_id}", response_model=BrandOut,
+              dependencies=[Depends(require_admin)])
+def update_brand(brand_id: int, payload: BrandUpdate, request: Request,
+                 db: Session = Depends(get_db),
+                 principal: Principal = Depends(require_admin),
+                 tid: int = Depends(current_tenant_id),
+                 clear_findings: bool = False):
+    """Edita name/official_domains da marca. Tenant-scoped + audit.
+    platform_admin (via X-Tenant-Id) edita qualquer tenant; tenant_admin edita o
+    proprio. support_operator/viewer e analyst nao editam (require_admin)."""
+    brand = _owned_brand(db, brand_id, tid)
+    changes: dict = {}
+    if payload.name is not None and payload.name != brand.name:
+        dup = db.scalar(select(Brand).where(
+            Brand.tenant_id == tid, Brand.name == payload.name, Brand.id != brand_id))
+        if dup is not None:
+            raise HTTPException(status_code=409, detail="Brand already registered.")
+        changes["name"] = {"from": brand.name, "to": payload.name}
+        brand.name = payload.name
+    if payload.official_domains is not None:
+        new_csv = ",".join(payload.official_domains)
+        if new_csv != (brand.official_domains or ""):
+            changes["official_domains"] = {"from": brand.official_domains, "to": new_csv}
+            brand.official_domains = new_csv
+    cleared = 0
+    if clear_findings and "official_domains" in changes:
+        rows = db.query(BrandFinding).filter(
+            BrandFinding.tenant_id == tid, BrandFinding.brand_id == brand_id).all()
+        cleared = len(rows)
+        for r in rows:
+            db.delete(r)
+    db.commit()
+    db.refresh(brand)
+    audit.record(db, actor=principal.subject, actor_role=principal.role, tenant_id=tid,
+                 operator_user_id=principal.user_id, action="brand.update",
+                 target_type="brand", target_id=brand_id, request=request,
+                 detail={"changes": changes, "findings_cleared": cleared})
+    return brand
 
 
 @router.delete("/{brand_id}", status_code=204, dependencies=[Depends(require_admin)])
