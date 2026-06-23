@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import audit
@@ -7,7 +7,7 @@ from app.alerts import dispatch_new_findings, send_finding_alert
 from app.auth import Principal, current_tenant_id, require_admin, require_analyst, require_viewer
 from app.brand.scanner import scan_brand
 from app.database import get_db
-from app.models import Brand, BrandFinding
+from app.models import Brand, BrandFinding, utcnow
 from app.schemas import (
     BrandCreate,
     BrandOut,
@@ -111,12 +111,68 @@ def update_brand(brand_id: int, payload: BrandUpdate, request: Request,
     return brand
 
 
-@router.delete("/{brand_id}", status_code=204, dependencies=[Depends(require_admin)])
-def delete_brand(brand_id: int, db: Session = Depends(get_db),
-                 tid: int = Depends(current_tenant_id)):
+@router.post("/{brand_id}/archive", response_model=BrandOut,
+             dependencies=[Depends(require_admin)])
+def archive_brand(brand_id: int, request: Request, db: Session = Depends(get_db),
+                  principal: Principal = Depends(require_admin),
+                  tid: int = Depends(current_tenant_id)):
+    """Arquiva a marca (preserva histórico/findings; para novos scans)."""
     brand = _owned_brand(db, brand_id, tid)
-    db.delete(brand)
+    before = brand.status
+    if brand.status != "archived":
+        brand.status = "archived"
+        brand.archived_at = utcnow()
+        db.commit()
+        db.refresh(brand)
+    audit.record(db, actor=principal.subject, actor_role=principal.role, tenant_id=tid,
+                 operator_user_id=principal.user_id, action="brand.archive",
+                 target_type="brand", target_id=brand_id, request=request,
+                 detail={"status": {"from": before, "to": "archived"}, "name": brand.name})
+    return brand
+
+
+@router.post("/{brand_id}/unarchive", response_model=BrandOut,
+             dependencies=[Depends(require_admin)])
+def unarchive_brand(brand_id: int, request: Request, db: Session = Depends(get_db),
+                    principal: Principal = Depends(require_admin),
+                    tid: int = Depends(current_tenant_id)):
+    brand = _owned_brand(db, brand_id, tid)
+    before = brand.status
+    brand.status = "active"
+    brand.archived_at = None
     db.commit()
+    db.refresh(brand)
+    audit.record(db, actor=principal.subject, actor_role=principal.role, tenant_id=tid,
+                 operator_user_id=principal.user_id, action="brand.unarchive",
+                 target_type="brand", target_id=brand_id, request=request,
+                 detail={"status": {"from": before, "to": "active"}, "name": brand.name})
+    return brand
+
+
+@router.delete("/{brand_id}", status_code=204)
+def delete_brand(brand_id: int, request: Request, confirm_name: str = "",
+                 force: bool = False, db: Session = Depends(get_db),
+                 principal: Principal = Depends(require_admin),
+                 tid: int = Depends(current_tenant_id)):
+    """Exclui a marca. Exige confirm_name == nome da marca. Se houver findings
+    vinculados, bloqueia (409) salvo force=true (que remove os findings junto)."""
+    brand = _owned_brand(db, brand_id, tid)
+    if confirm_name != brand.name:
+        raise HTTPException(status_code=422,
+                            detail="Confirme enviando confirm_name igual ao nome da marca.")
+    fcount = db.scalar(select(func.count()).select_from(BrandFinding).where(
+        BrandFinding.tenant_id == tid, BrandFinding.brand_id == brand_id)) or 0
+    if fcount and not force:
+        raise HTTPException(status_code=409,
+                            detail=f"Brand has {fcount} findings; pass force=true to delete them too.")
+    snapshot = {"name": brand.name, "official_domains": brand.official_domains,
+                "status": brand.status}
+    db.delete(brand)  # findings caem por ON DELETE CASCADE
+    db.commit()
+    audit.record(db, actor=principal.subject, actor_role=principal.role, tenant_id=tid,
+                 operator_user_id=principal.user_id, action="brand.delete",
+                 target_type="brand", target_id=brand_id, request=request,
+                 detail={"deleted": snapshot, "findings_deleted": fcount})
 
 
 @router.post("/{brand_id}/scan", response_model=ScanResult)
@@ -125,6 +181,8 @@ def scan(brand_id: int, request: Request, deep: bool = True,
          principal: Principal = Depends(require_analyst),
          tid: int = Depends(current_tenant_id)):
     brand = _owned_brand(db, brand_id, tid)
+    if brand.status == "archived":
+        raise HTTPException(status_code=422, detail="Brand is archived; unarchive to scan.")
 
     result = scan_brand(brand, db, deep=deep)
     if result.get("error"):

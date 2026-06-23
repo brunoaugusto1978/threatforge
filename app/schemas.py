@@ -179,6 +179,8 @@ class BrandOut(BaseModel):
     social_profiles: list | None = None
     sensitive_terms: list | None = None
     logo_url: str | None = None
+    status: str = "active"
+    archived_at: datetime | None = None
     created_at: datetime
     last_scan_at: datetime | None
 
