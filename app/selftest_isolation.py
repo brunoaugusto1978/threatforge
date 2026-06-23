@@ -256,7 +256,103 @@ def run():
     assert any(a.get("action") == "brand.delete" for a in arows)
     _ok("audit logs brand.archive and brand.delete")
 
-    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE: ALL TESTS PASSED ✅')
+    # ============ INVESTIGATION CASES ============
+    from app.database import SessionLocal
+    from app.models import BrandFinding
+    # brand + finding frescos no tenant A
+    cbid = ca.post("/brands", json={"name": "CaseBrand", "official_domains": ["case-brand.com.br"]}).json()["id"]
+    _cs = SessionLocal()
+    _f = BrandFinding(tenant_id=ta, brand_id=cbid, domain="case-brand-fake.example",
+                      source="typosquat", verdict="malicious", score=80)
+    _cs.add(_f); _cs.commit(); fid = _f.id; _cs.close()
+    # analyst e viewer do tenant A
+    ua = ca.post("/users", json={"email": "case-analyst@a.com", "password": "CaseAnalyst1", "role": "analyst"}).json()["id"]
+    caa = TestClient(app); caa.post("/auth/login", json={"email": "case-analyst@a.com", "password": "CaseAnalyst1"})
+    ca.post("/users", json={"email": "case-viewer@a.com", "password": "CaseViewer1", "role": "viewer"})
+    cvv = TestClient(app); cvv.post("/auth/login", json={"email": "case-viewer@a.com", "password": "CaseViewer1"})
+
+    # analyst cria case manual
+    r = caa.post("/cases", json={"title": "Manual case", "severity": "alto"})
+    assert r.status_code == 201 and r.json()["status"] == "open", r.text
+    mcid = r.json()["id"]
+    _ok("analyst creates manual case")
+
+    # abrir case a partir de finding (snapshot + severidade do verdict)
+    r = caa.post(f"/brands/{cbid}/findings/{fid}/case")
+    assert r.status_code == 201, r.text
+    fcid = r.json()["id"]
+    assert r.json()["finding_id"] == fid
+    assert r.json()["finding_snapshot"]["domain"] == "case-brand-fake.example"
+    assert r.json()["severity"] == "alto"
+    _ok("open case from finding (snapshot captured, severity from verdict)")
+
+    # duplicidade ativa -> 409 com existing_case_id
+    r = caa.post(f"/brands/{cbid}/findings/{fid}/case")
+    assert r.status_code == 409 and r.json()["detail"]["existing_case_id"] == fcid, r.text
+    _ok("duplicate active case from finding -> 409 with existing_case_id")
+
+    # POST /cases com finding_id que já tem case ativo -> 409
+    r = caa.post("/cases", json={"title": "dup via /cases", "finding_id": fid})
+    assert r.status_code == 409 and r.json()["detail"]["existing_case_id"] == fcid, r.text
+    _ok("POST /cases with duplicate finding_id -> 409 with existing_case_id")
+
+    # POST /cases com brand_id incompatível com finding_id -> 422
+    cbid2 = ca.post("/brands", json={"name": "CaseBrand2", "official_domains": ["case-brand2.com.br"]}).json()["id"]
+    r = caa.post("/cases", json={"title": "mismatch", "brand_id": cbid2, "finding_id": fid})
+    assert r.status_code == 422, r.text
+    _ok("POST /cases with brand_id != finding.brand_id -> 422")
+
+    # cross-tenant -> 404
+    assert cb.get(f"/cases/{mcid}").status_code == 404
+    assert cb.patch(f"/cases/{mcid}", json={"title": "x"}).status_code == 404
+    _ok("cross-tenant case access -> 404")
+
+    # viewer: lê mas não cria (403)
+    assert cvv.post("/cases", json={"title": "nope"}).status_code == 403
+    assert cvv.get("/cases").status_code == 200
+    _ok("viewer read-only on cases (create -> 403)")
+
+    # state machine + RBAC
+    assert caa.patch(f"/cases/{mcid}", json={"status": "investigating"}).status_code == 200  # analyst move ativo
+    assert caa.patch(f"/cases/{mcid}", json={"status": "closed"}).status_code == 403          # analyst nao fecha
+    assert caa.patch(f"/cases/{mcid}", json={"assignee_user_id": ua}).status_code == 403       # analyst nao atribui
+    assert ca.patch(f"/cases/{mcid}", json={"assignee_user_id": ua}).status_code == 200         # admin atribui
+    rc = ca.patch(f"/cases/{mcid}", json={"status": "closed"})
+    assert rc.status_code == 200 and rc.json()["closed_at"], rc.text                            # admin fecha
+    assert ca.patch(f"/cases/{mcid}", json={"status": "false_positive"}).status_code == 422     # terminal->terminal invalido
+    rr = ca.patch(f"/cases/{mcid}", json={"status": "open"})
+    assert rr.status_code == 200 and rr.json()["closed_at"] is None                             # admin reabre
+    _ok("state machine + assign/close/reopen admin-only; invalid transition -> 422")
+
+    # support_operator: com acesso ao tenant cria/lê case; sem acesso -> 403
+    op.post(f"/operators/{sop_id}/tenant-access", json={"tenant_id": ta, "access_role": "support_operator"})
+    assert sc.post("/cases", headers={"X-Tenant-Id": str(ta)}, json={"title": "support case"}).status_code == 201
+    assert sc.get("/cases", headers={"X-Tenant-Id": str(ta)}).status_code == 200
+    op.delete(f"/operators/{sop_id}/tenant-access/{ta}")
+    assert sc.get("/cases", headers={"X-Tenant-Id": str(ta)}).status_code == 403
+    _ok("support_operator: cases require tenant access (create/list ok with access; 403 without)")
+
+    # filtros
+    assert all(c["status"] == "open" for c in caa.get("/cases?status=open").json())
+    assert all(c["severity"] == "alto" for c in caa.get("/cases?severity=alto").json())
+    _ok("case list filters (status/severity)")
+
+    # auditoria
+    arows = ca.get("/audit").json()
+    for act in ("case.create", "case.assign", "case.status_change", "case.close", "case.reopen"):
+        assert any(a.get("action") == act for a in arows), act
+    _ok("audit logs case.create/assign/status_change/close/reopen")
+
+    # CRITICO (cadeia de custodia): case sobrevive ao delete da brand/finding
+    assert ca.delete(f"/brands/{cbid}?confirm_name=CaseBrand&force=true").status_code == 204
+    surv = ca.get(f"/cases/{fcid}")
+    assert surv.status_code == 200, "case foi removido junto com a brand/finding!"
+    sb = surv.json()
+    assert sb["brand_id"] is None and sb["finding_id"] is None, sb
+    assert sb["finding_snapshot"]["domain"] == "case-brand-fake.example", sb
+    _ok("CRITICAL: case survives brand/finding delete (FK SET NULL + snapshot intact)")
+
+    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES: ALL TESTS PASSED ✅')
 if __name__ == '__main__':
     try:
         run()

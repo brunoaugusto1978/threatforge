@@ -13,6 +13,7 @@ from app.bootstrap import ensure_operator
 from app.database import Base, engine, get_db
 from app.models import Brand, BrandFinding, Observable, User
 from app.routers import (
+    cases_routes,
     auth_routes,
     brands,
     intel,
@@ -68,6 +69,8 @@ app.include_router(observables.router)
 app.include_router(intel.router)
 app.include_router(reports.router)
 app.include_router(brands.router)
+app.include_router(cases_routes.router)
+app.include_router(cases_routes.finding_router)
 
 
 @app.get("/health", tags=["meta"])
