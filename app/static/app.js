@@ -19,8 +19,13 @@ async function api(method, path, body) {
   let data;
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
   if (!res.ok) {
-    const msg = (data && data.detail) ? data.detail : `Error ${res.status}`;
-    throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+    const detail = (data && data.detail !== undefined) ? data.detail : null;
+    const msg = (typeof detail === "string" && detail) ? detail
+      : (detail && detail.message) ? detail.message : `Error ${res.status}`;
+    const err = new Error(msg);
+    err.status = res.status;
+    err.detail = detail;
+    throw err;
   }
   return data;
 }
@@ -595,7 +600,7 @@ function navigate(view) {
   document.querySelectorAll("#nav button").forEach(b =>
     b.classList.toggle("active", b.dataset.view === view));
   ({ dashboard: viewDashboard, iocs: viewIocs, brands: viewBrands, watchlist: viewWatchlist,
-     org: viewOrg, users: viewUsers, audit: viewAudit }[view] || viewDashboard)();
+     org: viewOrg, users: viewUsers, audit: viewAudit, cases: viewCases }[view] || viewDashboard)();
 }
 
 async function viewDashboard() {
@@ -750,10 +755,11 @@ async function findings(id) {
         <td class="muted">${esc(f.similarity)}%</td>
         <td><code>${esc(f.source)}</code></td>
         <td class="muted">${esc(f.status)}</td>
+        <td>${can("analyst") ? `<button class="sm ghost" data-action="openCase" data-id="${f.id}" data-bid="${id}">Open case</button>` : ""}</td>
       </tr>`).join("");
     box.innerHTML = `<div class="panel" style="margin-top:14px">
       <b>Findings priorizados</b>
-      <table style="margin-top:8px"><thead><tr><th>Domain</th><th>Score</th><th>Verdict</th><th>Sim.</th><th>Source</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+      <table style="margin-top:8px"><thead><tr><th>Domain</th><th>Score</th><th>Verdict</th><th>Sim.</th><th>Source</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
   } catch (e) { toast(e.message, true); }
 }
 
@@ -818,6 +824,203 @@ async function deleteBrand(id) {
 }
 
 // ---- Users ----
+
+// ---- Investigation Cases ----
+const CASE_STATUSES = ["open", "triage", "investigating", "contained", "closed", "false_positive"];
+const CASE_ACTIVE = ["open", "triage", "investigating", "contained"];
+const SEV_COLOR = { critico: "var(--red)", alto: "var(--orange)", medio: "var(--yellow)", baixo: "var(--gray)" };
+
+function selectHtml(id, opts, current, disabled) {
+  const o = opts.map(v => `<option value="${esc(v)}" ${v === current ? "selected" : ""}>${esc(v || "(any)")}</option>`).join("");
+  return `<select id="${id}" style="width:100%" ${disabled ? "disabled" : ""}>${o}</select>`;
+}
+function selectKV(id, pairs, anyLabel) {
+  const sel = el("select", { id });
+  if (anyLabel !== undefined) sel.append(el("option", { value: "" }, anyLabel));
+  pairs.forEach(([v, label]) => sel.append(el("option", { value: String(v) }, label)));
+  return sel;
+}
+
+async function viewCases() {
+  const m = $("#main");
+  m.innerHTML = `<h2 class="title">Investigation cases</h2>`;
+  let brands = [], users = [];
+  try { brands = await api("GET", "/brands"); } catch {}
+  if (can("admin")) { try { users = await api("GET", "/users"); } catch {} }
+  const brandPairs = brands.map(b => [b.id, b.name]);
+  const userPairs = users.map(u => [u.id, u.email]);
+
+  if (can("analyst")) {
+    const p = el("div", { class: "panel" });
+    const grid = el("div", { class: "srow2" });
+    grid.append(field("Title", inputEl("cs_title", "Investigation title")));
+    grid.append(field("Severity", selectEl("cs_sev", ["baixo", "medio", "alto", "critico"])));
+    grid.append(field("Brand (optional)", selectKV("cs_brand", brandPairs, "(none)")));
+    if (can("admin")) grid.append(field("Assignee (optional)", selectKV("cs_assignee", userPairs, "(unassigned)")));
+    p.append(grid);
+    p.append(field("Description", inputEl("cs_desc", "")));
+    p.append(el("div", { style: "margin-top:10px" }, el("button", { onclick: createCaseManual }, "Create case")));
+    m.append(p);
+  }
+
+  const fp = el("div", { class: "panel" });
+  const frow = el("div", { class: "row" });
+  frow.append(field("Status", selectEl("cs_fstatus", ["", ...CASE_STATUSES])));
+  frow.append(field("Severity", selectEl("cs_fsev", ["", "baixo", "medio", "alto", "critico"])));
+  frow.append(field("Brand", selectKV("cs_fbrand", brandPairs, "(any brand)")));
+  if (can("admin")) frow.append(field("Assignee", selectKV("cs_fassignee", userPairs, "(any assignee)")));
+  else frow.append(field("Assignee id", inputEl("cs_fassignee_num", "")));
+  frow.append(field("Search title", inputEl("cs_q", "")));
+  frow.append(el("button", { class: "ghost", onclick: loadCases }, "Filter"));
+  fp.append(frow);
+  m.append(fp);
+  m.append(el("div", { class: "panel", id: "caseList" }, "loading…"));
+  m.append(el("div", { id: "caseDetail" }));
+  await loadCases();
+}
+
+async function loadCases() {
+  const qp = new URLSearchParams();
+  const v = (id) => { const e = $("#" + id); return e ? e.value : ""; };
+  if (v("cs_fstatus")) qp.set("status", v("cs_fstatus"));
+  if (v("cs_fsev")) qp.set("severity", v("cs_fsev"));
+  if (v("cs_fbrand")) qp.set("brand_id", v("cs_fbrand"));
+  const asg = v("cs_fassignee") || v("cs_fassignee_num");
+  if (asg) qp.set("assignee_user_id", asg);
+  const q = (v("cs_q") || "").trim(); if (q) qp.set("q", q);
+  try {
+    const items = await api("GET", `/cases?${qp.toString()}`);
+    const box = $("#caseList");
+    if (!items.length) { box.innerHTML = '<span class="muted">No cases.</span>'; return; }
+    const rows = items.map(c => `
+      <tr>
+        <td>#${esc(c.id)}</td>
+        <td><b>${esc(c.title)}</b></td>
+        <td><span style="color:${SEV_COLOR[c.severity] || "var(--muted)"}">${esc(c.severity)}</span></td>
+        <td class="muted">${esc(c.status)}</td>
+        <td class="muted">${c.brand_id ?? "—"}</td>
+        <td class="muted">${c.assignee_user_id ?? "—"}</td>
+        <td class="muted">${esc((c.created_at || "").slice(0, 16).replace("T", " "))}</td>
+        <td>${actBtn("caseView", c.id, "View")}</td>
+      </tr>`).join("");
+    box.innerHTML = `<table><thead><tr><th>ID</th><th>Title</th><th>Severity</th><th>Status</th><th>Brand</th><th>Assignee</th><th>Created</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  } catch (e) { $("#caseList").textContent = e.message; }
+}
+
+async function createCaseManual() {
+  const title = $("#cs_title").value.trim();
+  if (!title) { toast("Title is required", true); return; }
+  const body = { title, severity: $("#cs_sev").value };
+  const desc = $("#cs_desc").value.trim(); if (desc) body.description = desc;
+  const brand = $("#cs_brand") && $("#cs_brand").value; if (brand) body.brand_id = Number(brand);
+  const asg = $("#cs_assignee") && $("#cs_assignee").value; if (asg) body.assignee_user_id = Number(asg);
+  try {
+    await api("POST", "/cases", body);
+    $("#cs_title").value = ""; $("#cs_desc").value = "";
+    toast("Case created");
+    await loadCases();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function openCaseFromFinding(brandId, findingId) {
+  try {
+    const c = await api("POST", `/brands/${brandId}/findings/${findingId}/case`);
+    toast(`Case #${c.id} opened`);
+    navigate("cases");
+  } catch (e) {
+    const ex = e.detail && e.detail.existing_case_id;
+    if (ex) {
+      if (confirm(`An active investigation already exists for this finding (case #${ex}). Open it?`)) {
+        navigate("cases");
+        setTimeout(() => caseDetail(ex), 50);
+      }
+    } else { toast(e.message, true); }
+  }
+}
+
+async function caseDetail(id) {
+  let c;
+  try { c = await api("GET", `/cases/${id}`); } catch (e) { toast(e.message, true); return; }
+  const admin = can("admin");
+  const editable = can("analyst");
+  const terminal = !CASE_ACTIVE.includes(c.status);
+
+  // status: admin vê todos; analyst ativo vê ativos; analyst terminal -> read-only
+  let statusOpts, statusDisabled;
+  if (admin) { statusOpts = CASE_STATUSES; statusDisabled = false; }
+  else if (!terminal) { statusOpts = CASE_ACTIVE; statusDisabled = !editable; }
+  else { statusOpts = [c.status]; statusDisabled = true; }
+
+  let assigneeControl = "";
+  if (admin) {
+    let users = [];
+    try { users = await api("GET", "/users"); } catch {}
+    const opts = ['<option value="">(unassigned)</option>'].concat(
+      users.map(u => `<option value="${u.id}" ${c.assignee_user_id === u.id ? "selected" : ""}>${esc(u.email)}</option>`)).join("");
+    assigneeControl = `<label>Assignee</label><select id="cd_assignee" style="width:100%">${opts}</select>`;
+  }
+
+  // botões explícitos de ciclo de vida (admin)
+  let lifecycle = "";
+  if (admin) {
+    if (terminal) {
+      lifecycle = `<button class="ghost" data-action="caseReopen" data-id="${esc(c.id)}">Reopen</button>`;
+    } else {
+      lifecycle = `<button class="ghost" data-action="caseClose" data-id="${esc(c.id)}">Close</button>
+                   <button class="ghost" data-action="caseFP" data-id="${esc(c.id)}">Mark false positive</button>`;
+    }
+  }
+
+  const snap = c.finding_snapshot
+    ? `<div class="muted" style="margin-top:8px">Finding snapshot: <code>${esc(defang(c.finding_snapshot.domain || ""))}</code> · score ${esc(c.finding_snapshot.score)} · ${esc(c.finding_snapshot.verdict)} ${c.finding_id == null ? "· <i>(finding removido — contexto preservado)</i>" : ""}</div>`
+    : "";
+
+  $("#caseDetail").innerHTML = `<div class="panel" style="margin-top:14px;border-left:3px solid var(--accent)">
+    <b>Case #${esc(c.id)}</b> <span class="muted">criado ${esc((c.created_at || "").slice(0, 16).replace("T", " "))}${c.closed_at ? " · fechado " + esc(c.closed_at.slice(0, 16).replace("T", " ")) : ""} · status atual: <b>${esc(c.status)}</b></span>
+    ${snap}
+    <label>Title</label><input id="cd_title" style="width:100%" ${editable ? "" : "disabled"}>
+    <label>Description</label><textarea id="cd_desc" style="width:100%;min-height:70px" ${editable ? "" : "disabled"}></textarea>
+    <div class="srow2">
+      <div><label>Severity</label>${selectHtml("cd_sev", ["baixo", "medio", "alto", "critico"], c.severity, !editable)}</div>
+      <div><label>Status</label>${selectHtml("cd_status", statusOpts, c.status, statusDisabled)}</div>
+    </div>
+    ${assigneeControl}
+    <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap">
+      ${editable ? `<button data-action="caseSave" data-id="${esc(c.id)}">Save</button>` : '<span class="muted">Read-only.</span>'}
+      ${lifecycle}
+    </div>
+    <div class="err" id="cd_err"></div></div>`;
+  $("#cd_title").value = c.title || "";
+  $("#cd_desc").value = c.description || "";
+}
+
+async function saveCaseDetail(id) {
+  const body = {
+    title: $("#cd_title").value.trim(),
+    description: $("#cd_desc").value,
+    severity: $("#cd_sev").value,
+  };
+  const stEl = $("#cd_status");
+  if (stEl && !stEl.disabled) body.status = stEl.value;
+  const asg = $("#cd_assignee");
+  if (asg) body.assignee_user_id = asg.value ? Number(asg.value) : null;
+  try {
+    await api("PATCH", `/cases/${id}`, body);
+    toast("Case updated");
+    await loadCases();
+    await caseDetail(id);
+  } catch (e) { $("#cd_err").textContent = e.message; }
+}
+
+async function setCaseStatus(id, status) {
+  try {
+    await api("PATCH", `/cases/${id}`, { status });
+    toast(`Case → ${status}`);
+    await loadCases();
+    await caseDetail(id);
+  } catch (e) { toast(e.message, true); }
+}
+
 async function viewUsers() {
   const m = $("#main");
   if (!can("admin")) { m.innerHTML = '<span class="muted">Access restricted to administrators.</span>'; return; }
@@ -1051,6 +1254,12 @@ const ACTIONS = {
   scanFast: (id) => scan(id, false),
   scanDeep: (id) => scan(id, true),
   findings: (id) => findings(id),
+  openCase: (id, btn) => openCaseFromFinding(Number(btn.dataset.bid), id),
+  caseView: (id) => caseDetail(id),
+  caseSave: (id) => saveCaseDetail(id),
+  caseClose: (id) => setCaseStatus(id, 'closed'),
+  caseFP: (id) => setCaseStatus(id, 'false_positive'),
+  caseReopen: (id) => setCaseStatus(id, 'open'),
   editBrand: (id) => editBrand(id),
   brandSave: (id) => saveBrand(id),
   brandCancel: () => cancelBrandEdit(),
