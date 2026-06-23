@@ -11,8 +11,8 @@ from sqlalchemy.orm import Session
 from app import audit
 from app.auth import Principal, current_tenant_id, require_analyst, require_viewer
 from app.database import get_db
-from app.models import Brand, BrandFinding, InvestigationCase, User, utcnow
-from app.schemas import CaseCreate, CaseOut, CaseUpdate
+from app.models import Brand, BrandFinding, CaseNote, InvestigationCase, User, utcnow
+from app.schemas import CaseCreate, CaseOut, CaseUpdate, NoteCreate, NoteOut
 
 router = APIRouter(prefix="/cases", tags=["cases"], dependencies=[Depends(require_viewer)])
 
@@ -192,6 +192,33 @@ def update_case(case_id: int, payload: CaseUpdate, request: Request,
     if changes:
         _audit(db, principal, tid, request, "case.update", case.id, {"changes": changes})
     return CaseOut.model_validate(case).model_dump()
+
+
+@router.post("/{case_id}/notes", status_code=201, dependencies=[Depends(require_analyst)])
+def add_note(case_id: int, payload: NoteCreate, request: Request,
+             db: Session = Depends(get_db),
+             principal: Principal = Depends(require_analyst),
+             tid: int = Depends(current_tenant_id)):
+    """Adiciona nota interna ao case (append-only)."""
+    case = _owned_case(db, case_id, tid)
+    note = CaseNote(tenant_id=tid, case_id=case.id, author_user_id=principal.user_id,
+                    body=payload.body, is_internal=payload.is_internal)
+    db.add(note)
+    db.commit()
+    db.refresh(note)
+    _audit(db, principal, tid, request, "case.note_added", case.id,
+           {"note_id": note.id, "length": len(payload.body)})
+    return NoteOut.model_validate(note).model_dump()
+
+
+@router.get("/{case_id}/notes", dependencies=[Depends(require_viewer)])
+def list_notes(case_id: int, db: Session = Depends(get_db),
+               tid: int = Depends(current_tenant_id)):
+    _owned_case(db, case_id, tid)
+    rows = db.scalars(select(CaseNote).where(
+        CaseNote.tenant_id == tid, CaseNote.case_id == case_id)
+        .order_by(CaseNote.created_at.asc(), CaseNote.id.asc()))
+    return [NoteOut.model_validate(n).model_dump() for n in rows]
 
 
 # abrir case a partir de um finding

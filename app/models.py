@@ -373,3 +373,25 @@ class InvestigationCase(Base):
         DateTime(timezone=True), default=utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class CaseNote(Base):
+    """Nota/comentário interno de investigação (append-only). Cai junto com o case."""
+    __tablename__ = "case_notes"
+    __table_args__ = (
+        Index("ix_case_notes_tenant", "tenant_id"),
+        Index("ix_case_notes_case", "case_id"),
+        Index("ix_case_notes_created", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
+    case_id: Mapped[int] = mapped_column(
+        ForeignKey("investigation_cases.id", ondelete="CASCADE"), index=True)
+    author_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    body: Mapped[str] = mapped_column(Text)
+    is_internal: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True)

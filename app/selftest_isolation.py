@@ -352,7 +352,32 @@ def run():
     assert sb["finding_snapshot"]["domain"] == "case-brand-fake.example", sb
     _ok("CRITICAL: case survives brand/finding delete (FK SET NULL + snapshot intact)")
 
-    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES: ALL TESTS PASSED ✅')
+    # ============ ANALYST NOTES ============
+    r = caa.post(f"/cases/{mcid}/notes", json={"body": "First analyst note"})
+    assert r.status_code == 201, r.text
+    nid = r.json()["id"]
+    notes = cvv.get(f"/cases/{mcid}/notes").json()
+    assert any(n["id"] == nid and n["body"] == "First analyst note" for n in notes), notes
+    _ok("analyst adds note; viewer reads notes")
+
+    assert cvv.post(f"/cases/{mcid}/notes", json={"body": "nope"}).status_code == 403
+    _ok("viewer cannot add note (403)")
+
+    assert cb.post(f"/cases/{mcid}/notes", json={"body": "x"}).status_code == 404
+    assert cb.get(f"/cases/{mcid}/notes").status_code == 404
+    _ok("cross-tenant notes -> 404")
+
+    op.post(f"/operators/{sop_id}/tenant-access", json={"tenant_id": ta, "access_role": "support_operator"})
+    assert sc.post(f"/cases/{mcid}/notes", headers={"X-Tenant-Id": str(ta)}, json={"body": "support note"}).status_code == 201
+    op.delete(f"/operators/{sop_id}/tenant-access/{ta}")
+    assert sc.get(f"/cases/{mcid}/notes", headers={"X-Tenant-Id": str(ta)}).status_code == 403
+    _ok("support_operator notes require tenant access (create with; 403 without)")
+
+    arows = ca.get("/audit").json()
+    assert any(a.get("action") == "case.note_added" for a in arows)
+    _ok("audit logs case.note_added")
+
+    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES: ALL TESTS PASSED ✅')
 if __name__ == '__main__':
     try:
         run()
