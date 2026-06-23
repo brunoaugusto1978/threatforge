@@ -989,9 +989,11 @@ async function caseDetail(id) {
       ${editable ? `<button data-action="caseSave" data-id="${esc(c.id)}">Save</button>` : '<span class="muted">Read-only.</span>'}
       ${lifecycle}
     </div>
-    <div class="err" id="cd_err"></div></div>`;
+    <div class="err" id="cd_err"></div></div>
+    <div id="caseNotes"></div>`;
   $("#cd_title").value = c.title || "";
   $("#cd_desc").value = c.description || "";
+  loadNotes(c.id);
 }
 
 async function saveCaseDetail(id) {
@@ -1010,6 +1012,38 @@ async function saveCaseDetail(id) {
     await loadCases();
     await caseDetail(id);
   } catch (e) { $("#cd_err").textContent = e.message; }
+}
+
+async function loadNotes(id) {
+  const box = $("#caseNotes");
+  if (!box) return;
+  let notes = [];
+  try { notes = await api("GET", `/cases/${id}/notes`); }
+  catch (e) { box.innerHTML = `<div class="panel" style="margin-top:14px"><span class="muted">Notes unavailable: ${esc(e.message)}</span></div>`; return; }
+  const items = notes.length ? notes.map(n => `
+    <div style="background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:8px 10px">
+      <div class="muted" style="font-size:12px">user #${esc(n.author_user_id ?? "—")} · ${esc((n.created_at || "").slice(0, 16).replace("T", " "))}${n.is_internal ? " · internal" : ""}</div>
+      <div style="white-space:pre-wrap">${esc(n.body)}</div>
+    </div>`).join("") : '<span class="muted">No notes yet.</span>';
+  const adder = can("analyst") ? `
+    <div style="margin-top:10px">
+      <textarea id="note_body" style="width:100%;min-height:60px" placeholder="Add an internal note…"></textarea>
+      <div style="margin-top:8px"><button data-action="noteAdd" data-id="${esc(id)}">Add note</button></div>
+      <div class="err" id="note_err"></div>
+    </div>` : "";
+  box.innerHTML = `<div class="panel" style="margin-top:14px"><b>Notes</b>
+    <div style="margin-top:8px;display:flex;flex-direction:column;gap:8px">${items}</div>${adder}</div>`;
+}
+
+async function addNote(id) {
+  const t = $("#note_body");
+  const body = t ? t.value.trim() : "";
+  if (!body) { const e = $("#note_err"); if (e) e.textContent = "Note cannot be empty."; return; }
+  try {
+    await api("POST", `/cases/${id}/notes`, { body });
+    toast("Note added");
+    await loadNotes(id);
+  } catch (e) { const el = $("#note_err"); if (el) el.textContent = e.message; }
 }
 
 async function setCaseStatus(id, status) {
@@ -1260,6 +1294,7 @@ const ACTIONS = {
   caseClose: (id) => setCaseStatus(id, 'closed'),
   caseFP: (id) => setCaseStatus(id, 'false_positive'),
   caseReopen: (id) => setCaseStatus(id, 'open'),
+  noteAdd: (id) => addNote(id),
   editBrand: (id) => editBrand(id),
   brandSave: (id) => saveBrand(id),
   brandCancel: () => cancelBrandEdit(),
