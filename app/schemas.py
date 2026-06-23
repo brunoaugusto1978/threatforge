@@ -676,3 +676,31 @@ class CaseOut(BaseModel):
     closed_at: datetime | None
 
     model_config = {"from_attributes": True}
+
+
+# --- Case notes ---
+class NoteCreate(BaseModel):
+    body: str
+    is_internal: bool = True
+
+    @field_validator("body")
+    @classmethod
+    def _body_ok(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not v:
+            raise ValueError("note body is required")
+        if len(v) > 10000:
+            raise ValueError("note too long (max 10000 chars)")
+        return v
+
+
+class NoteOut(BaseModel):
+    id: int
+    tenant_id: int
+    case_id: int
+    author_user_id: int | None
+    body: str
+    is_internal: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
