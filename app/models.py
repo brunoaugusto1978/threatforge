@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    CheckConstraint,
+    Index,
     JSON,
     Boolean,
     DateTime,
@@ -333,3 +335,41 @@ class BrandFinding(Base):
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     brand: Mapped[Brand] = relationship(back_populates="findings")
+
+
+class InvestigationCase(Base):
+    """Caso investigativo (tenant-scoped). Sobrevive a archive/delete/clear de
+    brand/finding via ON DELETE SET NULL + finding_snapshot (cadeia de custódia)."""
+    __tablename__ = "investigation_cases"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('open','triage','investigating','contained','closed','false_positive')",
+            name="ck_case_status"),
+        CheckConstraint(
+            "severity IN ('baixo','medio','alto','critico')", name="ck_case_severity"),
+        Index("ix_cases_tenant_status", "tenant_id", "status"),
+        Index("ix_cases_tenant_created", "tenant_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
+    brand_id: Mapped[int | None] = mapped_column(
+        ForeignKey("brands.id", ondelete="SET NULL"), nullable=True, index=True)
+    finding_id: Mapped[int | None] = mapped_column(
+        ForeignKey("brand_findings.id", ondelete="SET NULL"), nullable=True, index=True)
+    observable_id: Mapped[int | None] = mapped_column(
+        ForeignKey("observables.id", ondelete="SET NULL"), nullable=True, index=True)
+    finding_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    title: Mapped[str] = mapped_column(String(255))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    severity: Mapped[str] = mapped_column(String(10), default="medio", index=True)
+    status: Mapped[str] = mapped_column(String(20), default="open", index=True)
+    assignee_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -616,3 +616,63 @@ class TenantAccessOut(BaseModel):
     created_by: str | None
 
     model_config = {"from_attributes": True}
+
+
+# --- Investigation Cases ---
+CaseSeverity = Literal["baixo", "medio", "alto", "critico"]
+CaseStatus = Literal["open", "triage", "investigating", "contained", "closed", "false_positive"]
+
+
+class CaseCreate(BaseModel):
+    title: str
+    description: str | None = None
+    severity: CaseSeverity = "medio"
+    brand_id: int | None = None
+    finding_id: int | None = None
+    assignee_user_id: int | None = None
+
+    @field_validator("title")
+    @classmethod
+    def _title_ok(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not v or len(v) > 255:
+            raise ValueError("title is required (1-255 chars)")
+        return v
+
+
+class CaseUpdate(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    severity: CaseSeverity | None = None
+    status: CaseStatus | None = None
+    assignee_user_id: int | None = None
+
+    @field_validator("title")
+    @classmethod
+    def _title_ok(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        v = v.strip()
+        if not v or len(v) > 255:
+            raise ValueError("invalid title (1-255 chars)")
+        return v
+
+
+class CaseOut(BaseModel):
+    id: int
+    tenant_id: int
+    brand_id: int | None
+    finding_id: int | None
+    observable_id: int | None
+    finding_snapshot: dict | None
+    title: str
+    description: str | None
+    severity: str
+    status: str
+    assignee_user_id: int | None
+    created_by_user_id: int | None
+    created_at: datetime
+    updated_at: datetime
+    closed_at: datetime | None
+
+    model_config = {"from_attributes": True}
