@@ -4,15 +4,18 @@ RBAC: viewer lê; analyst cria/edita campos e move entre estados ATIVOS;
 assign/close/reopen são admin-only. Cross-tenant -> 404.
 O case sobrevive a archive/delete/clear de brand/finding (FK SET NULL + snapshot).
 """
-from fastapi import APIRouter, Depends, HTTPException, Request
+import os
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import audit
+from app import audit, config, evidence_store
 from app.auth import Principal, current_tenant_id, require_analyst, require_viewer
 from app.database import get_db
-from app.models import Brand, BrandFinding, CaseNote, InvestigationCase, User, utcnow
-from app.schemas import CaseCreate, CaseOut, CaseUpdate, NoteCreate, NoteOut
+from app.models import Brand, BrandFinding, CaseEvidence, CaseNote, InvestigationCase, User, utcnow
+from app.schemas import CaseCreate, CaseOut, CaseUpdate, EvidenceOut, NoteCreate, NoteOut
 
 router = APIRouter(prefix="/cases", tags=["cases"], dependencies=[Depends(require_viewer)])
 
@@ -219,6 +222,119 @@ def list_notes(case_id: int, db: Session = Depends(get_db),
         CaseNote.tenant_id == tid, CaseNote.case_id == case_id)
         .order_by(CaseNote.created_at.asc(), CaseNote.id.asc()))
     return [NoteOut.model_validate(n).model_dump() for n in rows]
+
+
+
+
+def _evidence_out(e: CaseEvidence) -> dict:
+    return {
+        "id": e.id, "tenant_id": e.tenant_id, "case_id": e.case_id,
+        "finding_id": e.finding_id, "filename": e.filename, "mime_type": e.mime_type,
+        "size_bytes": e.size_bytes, "sha256": e.sha256, "origin": e.origin,
+        "description": e.description,
+        "stored": (e.storage_backend == "local" and bool(e.storage_key)),
+        "uploaded_by_user_id": e.uploaded_by_user_id, "created_at": e.created_at,
+    }
+
+
+def _owned_evidence(db, case_id, ev_id, tid):
+    e = db.get(CaseEvidence, ev_id)
+    if e is None or e.tenant_id != tid or e.case_id != case_id:
+        raise HTTPException(status_code=404, detail="Evidence not found.")
+    return e
+
+
+@router.post("/{case_id}/evidence", status_code=201, dependencies=[Depends(require_analyst)])
+def add_evidence(case_id: int, request: Request, file: UploadFile = File(...),
+                 origin: str = Form("manual_upload"), description: str | None = Form(None),
+                 finding_id: int | None = Form(None),
+                 db: Session = Depends(get_db),
+                 principal: Principal = Depends(require_analyst),
+                 tid: int = Depends(current_tenant_id)):
+    case = _owned_case(db, case_id, tid)
+    if origin not in config.EVIDENCE_ORIGINS:
+        raise HTTPException(status_code=422, detail=f"invalid origin: {origin}")
+    if (file.content_type or "") not in config.EVIDENCE_ALLOWED_MIME:
+        raise HTTPException(status_code=415, detail=f"MIME type not allowed: {file.content_type}")
+    if finding_id is not None:
+        f = db.get(BrandFinding, finding_id)
+        if f is None or f.tenant_id != tid:
+            raise HTTPException(status_code=404, detail="Finding not found.")
+        # consistência evidência x case x finding/brand (mesmo tenant)
+        if case.finding_id is not None and finding_id != case.finding_id:
+            raise HTTPException(status_code=422,
+                                detail="finding_id must match the case's finding.")
+        if case.brand_id is not None and f.brand_id != case.brand_id:
+            raise HTTPException(status_code=422,
+                                detail="finding does not belong to the case's brand.")
+    # sniff de conteúdo (anti content-type forjado)
+    head = file.file.read(512)
+    file.file.seek(0)
+    if not evidence_store.sniff_ok(file.content_type or "", head):
+        raise HTTPException(status_code=415,
+                            detail="file content does not match the declared MIME type.")
+    safe = os.path.basename(file.filename or "file")
+    safe = "".join(ch if (ch.isalnum() or ch in "._-") else "_" for ch in safe)[:512] or "file"
+    try:
+        meta = evidence_store.save_stream(file, tid, case_id)
+    except evidence_store.EvidenceTooLarge:
+        raise HTTPException(status_code=413,
+                            detail=f"file exceeds limit ({config.EVIDENCE_MAX_BYTES} bytes)")
+    except evidence_store.EvidenceConfigError:
+        raise HTTPException(status_code=500, detail="evidence storage is misconfigured.")
+    ev = CaseEvidence(
+        tenant_id=tid, case_id=case.id, finding_id=finding_id, filename=safe,
+        mime_type=file.content_type, size_bytes=meta["size"], sha256=meta["sha256"],
+        origin=origin, description=description, storage_backend=meta["backend"],
+        storage_key=meta["storage_key"], uploaded_by_user_id=principal.user_id)
+    try:
+        db.add(ev)
+        db.commit()
+        db.refresh(ev)
+    except Exception:
+        db.rollback()
+        evidence_store.delete_key(meta["storage_key"])  # remove órfão sem registro
+        raise HTTPException(status_code=500, detail="failed to persist evidence record.")
+    out = _evidence_out(ev)
+    _audit(db, principal, tid, request, "evidence.add", case.id,
+           {"evidence_id": ev.id, "filename": ev.filename, "mime_type": ev.mime_type,
+            "size_bytes": ev.size_bytes, "sha256": ev.sha256, "origin": ev.origin,
+            "stored": out["stored"]})
+    return out
+
+
+@router.get("/{case_id}/evidence", dependencies=[Depends(require_viewer)])
+def list_evidence(case_id: int, db: Session = Depends(get_db),
+                  tid: int = Depends(current_tenant_id)):
+    _owned_case(db, case_id, tid)
+    rows = db.scalars(select(CaseEvidence).where(
+        CaseEvidence.tenant_id == tid, CaseEvidence.case_id == case_id)
+        .order_by(CaseEvidence.created_at.asc(), CaseEvidence.id.asc()))
+    return [_evidence_out(e) for e in rows]
+
+
+@router.get("/{case_id}/evidence/{ev_id}", dependencies=[Depends(require_viewer)])
+def get_evidence(case_id: int, ev_id: int, db: Session = Depends(get_db),
+                 tid: int = Depends(current_tenant_id)):
+    return _evidence_out(_owned_evidence(db, case_id, ev_id, tid))
+
+
+@router.get("/{case_id}/evidence/{ev_id}/download")
+def download_evidence(case_id: int, ev_id: int, request: Request,
+                      db: Session = Depends(get_db),
+                      principal: Principal = Depends(require_viewer),
+                      tid: int = Depends(current_tenant_id)):
+    e = _owned_evidence(db, case_id, ev_id, tid)
+    if e.storage_backend != "local" or not e.storage_key:
+        raise HTTPException(status_code=409,
+                            detail="Binary not retained for this evidence (metadata-only).")
+    path = evidence_store.path_for(e.storage_key)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=410, detail="Stored file missing.")
+    _audit(db, principal, tid, request, "evidence.download", case_id,
+           {"evidence_id": e.id, "sha256": e.sha256})
+    return FileResponse(path, media_type=e.mime_type or "application/octet-stream",
+                        filename=e.filename)
 
 
 # abrir case a partir de um finding

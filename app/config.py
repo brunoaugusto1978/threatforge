@@ -69,3 +69,17 @@ SMTP_TO: list[str] = [
     e.strip() for e in os.environ.get("SMTP_TO", "").split(",") if e.strip()
 ]
 SMTP_STARTTLS: bool = os.environ.get("SMTP_STARTTLS", "true").lower() == "true"
+
+
+# --- Evidence attachments ---
+EVIDENCE_STORAGE_BACKEND: str = os.environ.get("EVIDENCE_STORAGE_BACKEND", "local")  # local|none
+EVIDENCE_STORAGE_DIR: str = os.environ.get("EVIDENCE_STORAGE_DIR", "/data/evidence")
+EVIDENCE_MAX_BYTES: int = int(
+    os.environ.get("EVIDENCE_MAX_BYTES", str(25 * 1024 * 1024)) or str(25 * 1024 * 1024))
+EVIDENCE_ALLOWED_MIME: set[str] = {
+    "image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf",
+    "text/plain", "text/csv", "application/json", "message/rfc822", "application/zip",
+}
+EVIDENCE_ORIGINS: set[str] = {
+    "manual_upload", "authorized_export", "whatsapp_intake", "telegram_public", "email", "other",
+}

@@ -704,3 +704,20 @@ class NoteOut(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# --- Evidence ---
+class EvidenceOut(BaseModel):
+    id: int
+    tenant_id: int
+    case_id: int
+    finding_id: int | None
+    filename: str
+    mime_type: str
+    size_bytes: int
+    sha256: str
+    origin: str
+    description: str | None
+    stored: bool
+    uploaded_by_user_id: int | None
+    created_at: datetime
