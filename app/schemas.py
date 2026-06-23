@@ -135,6 +135,38 @@ class BrandCreate(BaseModel):
         return cleaned
 
 
+class BrandUpdate(BaseModel):
+    """Edição parcial de marca (tenant-scoped). name e/ou official_domains."""
+    name: str | None = None
+    official_domains: list[str] | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _name_ok(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        v = v.strip()
+        if not v or len(v) > 255:
+            raise ValueError("invalid name (1-255 chars)")
+        return v
+
+    @field_validator("official_domains")
+    @classmethod
+    def _domains_ok(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return v
+        cleaned = []
+        for d in v:
+            d = refang(d).lower().strip()
+            if not _RE["domain"].match(d):
+                raise ValueError(f"invalid official domain: {d!r}")
+            if d not in cleaned:
+                cleaned.append(d)
+        if not cleaned:
+            raise ValueError("provide at least one official domain")
+        return cleaned
+
+
 class BrandOut(BaseModel):
     id: int
     name: str

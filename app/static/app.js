@@ -439,8 +439,8 @@ WIZ_RENDER[1] = async () => {
   const sectorSel = selectEl("wz_sector",
     [["", ""], ["Telecom", "Telecom"], ["Financeiro", "Finance"], ["Varejo", "Retail"], ["Saúde", "Healthcare"], ["Governo", "Government"], ["Indústria", "Industry"], ["Tecnologia", "Technology"], ["Energia", "Energy"], ["Outro", "Other"]]);
   sectorSel.value = org.sector || "";
-  const critSel = selectEl("wz_criticality", ["low", "medium", "high", "critical"]);
-  critSel.value = org.criticality || "medium";
+  const critSel = selectEl("wz_criticality", [["baixo", "low"], ["medio", "medium"], ["alto", "high"], ["critico", "critical"]]);
+  critSel.value = org.criticality || "medio";
   grid.append(field("Sector *", sectorSel), field("Criticality", critSel));
   ORG_WIZ_FIELDS.forEach(([k, label]) => {
     const inp = inputEl("wz_org_" + k, "");
@@ -713,9 +713,10 @@ async function loadBrands() {
         <td>
           ${can("analyst") ? actBtn("scanFast", b.id, "Quick scan") + " " + actBtn("scanDeep", b.id, "Deep scan") : ""}
           ${actBtn("findings", b.id, "Findings")}
+          ${can("admin") ? actBtn("editBrand", b.id, "Edit") : ""}
         </td>
       </tr>`).join("");
-    box.innerHTML = `<table><thead><tr><th>Brand</th><th>Official domains</th><th>Last scan</th><th></th></tr></thead><tbody>${rows}</tbody></table><div id="findings"></div>`;
+    box.innerHTML = `<table><thead><tr><th>Brand</th><th>Official domains</th><th>Last scan</th><th></th></tr></thead><tbody>${rows}</tbody></table><div id="brandEdit"></div><div id="findings"></div>`;
   } catch (e) { $("#brList").textContent = e.message; }
 }
 async function addBrand() {
@@ -753,6 +754,39 @@ async function findings(id) {
       <table style="margin-top:8px"><thead><tr><th>Domain</th><th>Score</th><th>Verdict</th><th>Sim.</th><th>Source</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table></div>`;
   } catch (e) { toast(e.message, true); }
 }
+
+async function editBrand(id) {
+  try {
+    const b = await api("GET", `/brands/${id}`);
+    const doms = (b.official_domains || "").split(",").map(s => s.trim()).filter(Boolean).join(", ");
+    $("#brandEdit").innerHTML = `<div class="panel" style="margin-top:14px;border-left:3px solid var(--accent)">
+      <b>Edit brand #${esc(b.id)}</b>
+      <label>Name</label><input id="eb_name" style="width:100%">
+      <label>Official domains (comma-separated)</label><input id="eb_domains" style="width:100%">
+      <label style="display:flex;gap:8px;align-items:center;margin-top:10px">
+        <input type="checkbox" id="eb_clear"> Clear existing findings (reprocess after scope change)</label>
+      <div style="margin-top:12px;display:flex;gap:10px">
+        <button data-action="brandSave" data-id="${esc(b.id)}">Save</button>
+        <button class="ghost" data-action="brandCancel" data-id="${esc(b.id)}">Cancel</button>
+      </div>
+      <div class="err" id="eb_err"></div></div>`;
+    $("#eb_name").value = b.name || "";
+    $("#eb_domains").value = doms;
+  } catch (e) { toast(e.message, true); }
+}
+async function saveBrand(id) {
+  const name = $("#eb_name").value.trim();
+  const domains = $("#eb_domains").value.split(",").map(s => s.trim()).filter(Boolean);
+  const clear = $("#eb_clear").checked;
+  if (!domains.length) { $("#eb_err").textContent = "Provide at least one official domain."; return; }
+  try {
+    await api("PATCH", `/brands/${id}?clear_findings=${clear}`, { name, official_domains: domains });
+    toast("Brand updated");
+    $("#brandEdit").innerHTML = "";
+    await loadBrands();
+  } catch (e) { $("#eb_err").textContent = e.message; }
+}
+function cancelBrandEdit() { $("#brandEdit").innerHTML = ""; }
 
 // ---- Users ----
 async function viewUsers() {
@@ -907,8 +941,8 @@ async function viewOrg() {
     grid.append(field(label, inp));
   });
   // criticidade como select
-  const crit = selectEl("org_criticality", ["low", "medium", "high", "critical"]);
-  crit.value = org.criticality || "medium";
+  const crit = selectEl("org_criticality", [["baixo", "low"], ["medio", "medium"], ["alto", "high"], ["critico", "critical"]]);
+  crit.value = org.criticality || "medio";
   if (!editable) crit.setAttribute("disabled", "true");
   grid.append(field("Criticality", crit));
   p.append(grid);
@@ -988,6 +1022,9 @@ const ACTIONS = {
   scanFast: (id) => scan(id, false),
   scanDeep: (id) => scan(id, true),
   findings: (id) => findings(id),
+  editBrand: (id) => editBrand(id),
+  brandSave: (id) => saveBrand(id),
+  brandCancel: () => cancelBrandEdit(),
   userOn: (id) => toggleUser(id, true),
   userOff: (id) => toggleUser(id, false),
   userReset: (id) => resetUser(id),
