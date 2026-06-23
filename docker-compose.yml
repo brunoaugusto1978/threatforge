@@ -39,6 +39,11 @@ services:
       SMTP_FROM: ${SMTP_FROM:-}
       SMTP_TO: ${SMTP_TO:-}
       SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
+      EVIDENCE_STORAGE_BACKEND: ${EVIDENCE_STORAGE_BACKEND:-local}
+      EVIDENCE_STORAGE_DIR: ${EVIDENCE_STORAGE_DIR:-/data/evidence}
+      EVIDENCE_MAX_BYTES: ${EVIDENCE_MAX_BYTES:-26214400}
+    volumes:
+      - evidence_data:/data/evidence
     ports:
       - "8000:8000"
     depends_on:
@@ -48,3 +53,4 @@ services:
 
 volumes:
   pgdata:
+  evidence_data:

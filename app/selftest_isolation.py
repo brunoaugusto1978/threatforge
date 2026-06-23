@@ -25,6 +25,9 @@ os.environ['JWT_SECRET'] = _pw('JwtSecret')
 os.environ['API_KEY'] = ''
 os.environ['BOOTSTRAP_OPERATOR_EMAIL'] = ''
 os.environ['BOOTSTRAP_OPERATOR_PASSWORD'] = str()
+os.environ['EVIDENCE_STORAGE_BACKEND'] = 'local'
+os.environ['EVIDENCE_STORAGE_DIR'] = os.path.join(tempfile.gettempdir(), 'tf_evidence_test')
+os.environ['EVIDENCE_MAX_BYTES'] = '2048'
 from fastapi.testclient import TestClient
 from app.main import app
 
@@ -377,7 +380,87 @@ def run():
     assert any(a.get("action") == "case.note_added" for a in arows)
     _ok("audit logs case.note_added")
 
-    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES: ALL TESTS PASSED ✅')
+    # ============ EVIDENCE ATTACHMENTS ============
+    import hashlib as _hl
+    blob = b"\x89PNG\r\n\x1a\n" + b"fake png body 123"
+    r = caa.post(f"/cases/{mcid}/evidence",
+                 files={"file": ("ev.png", blob, "image/png")},
+                 data={"origin": "manual_upload", "description": "screenshot"})
+    assert r.status_code == 201, r.text
+    ev = r.json()
+    assert ev["sha256"] == _hl.sha256(blob).hexdigest(), "server-side hash mismatch"
+    assert ev["size_bytes"] == len(blob)
+    assert ev["stored"] is True
+    assert "storage_key" not in ev, "storage_key must not be exposed"
+    evid = ev["id"]
+    _ok("analyst uploads evidence; server computes SHA-256 (matches bytes); key not exposed")
+
+    # download retorna bytes idênticos
+    dl = caa.get(f"/cases/{mcid}/evidence/{evid}/download")
+    assert dl.status_code == 200 and dl.content == blob, "download bytes differ"
+    _ok("download returns identical bytes (storage_backend=local)")
+
+    # filename do usuário é sanitizado (nunca usado como path)
+    r = caa.post(f"/cases/{mcid}/evidence",
+                 files={"file": ("../../evil name.png", b"\x89PNG\r\n\x1a\n" + b"x", "image/png")},
+                 data={"origin": "manual_upload"})
+    assert r.status_code == 201 and "/" not in r.json()["filename"] and " " not in r.json()["filename"]
+    _ok("uploaded filename sanitized (no path/space); storage_key server-generated")
+
+    # MIME não permitido -> 415 ; tamanho excedido -> 413
+    assert caa.post(f"/cases/{mcid}/evidence", files={"file": ("x.html", b"<html>", "text/html")},
+                    data={"origin": "manual_upload"}).status_code == 415
+    assert caa.post(f"/cases/{mcid}/evidence", files={"file": ("big.txt", b"a" * 3000, "text/plain")},
+                    data={"origin": "manual_upload"}).status_code == 413
+    _ok("blocked MIME -> 415; oversize -> 413")
+
+    # consistência evidência x case x finding (mesmo tenant)
+    _PNG = b"\x89PNG\r\n\x1a\n" + b"ok"
+    cbX = ca.post("/brands", json={"name": "EvBrand", "official_domains": ["evbrand.com.br"]}).json()["id"]
+    _se = SessionLocal()
+    _f1 = BrandFinding(tenant_id=ta, brand_id=cbX, domain="evf1.example", source="typosquat", verdict="malicious", score=70)
+    _f2 = BrandFinding(tenant_id=ta, brand_id=cbX, domain="evf2.example", source="typosquat", verdict="suspicious", score=40)
+    _se.add(_f1); _se.add(_f2); _se.commit(); f1id = _f1.id; f2id = _f2.id; _se.close()
+    caseX = caa.post(f"/brands/{cbX}/findings/{f1id}/case").json()["id"]
+    # finding_id incompatível com o case -> 422
+    r = caa.post(f"/cases/{caseX}/evidence", files={"file": ("m.png", _PNG, "image/png")},
+                 data={"origin": "manual_upload", "finding_id": str(f2id)})
+    assert r.status_code == 422, r.text
+    # finding_id compatível -> 201
+    r = caa.post(f"/cases/{caseX}/evidence", files={"file": ("ok.png", _PNG, "image/png")},
+                 data={"origin": "manual_upload", "finding_id": str(f1id)})
+    assert r.status_code == 201, r.text
+    _ok("evidence/case/finding consistency enforced (mismatch 422, match 201)")
+
+    # viewer não anexa (403) mas lê/baixa
+    assert cvv.post(f"/cases/{mcid}/evidence", files={"file": ("v.txt", b"x", "text/plain")},
+                    data={"origin": "manual_upload"}).status_code == 403
+    assert cvv.get(f"/cases/{mcid}/evidence").status_code == 200
+    assert cvv.get(f"/cases/{mcid}/evidence/{evid}/download").status_code == 200
+    _ok("viewer read/download ok; upload -> 403")
+
+    # cross-tenant -> 404
+    assert cb.get(f"/cases/{mcid}/evidence").status_code == 404
+    assert cb.post(f"/cases/{mcid}/evidence", files={"file": ("x.txt", b"x", "text/plain")},
+                   data={"origin": "manual_upload"}).status_code == 404
+    _ok("cross-tenant evidence -> 404")
+
+    # support_operator: com acesso anexa; sem acesso -> 403
+    op.post(f"/operators/{sop_id}/tenant-access", json={"tenant_id": ta, "access_role": "support_operator"})
+    assert sc.post(f"/cases/{mcid}/evidence", headers={"X-Tenant-Id": str(ta)},
+                   files={"file": ("s.txt", b"sup", "text/plain")},
+                   data={"origin": "manual_upload"}).status_code == 201
+    op.delete(f"/operators/{sop_id}/tenant-access/{ta}")
+    assert sc.get(f"/cases/{mcid}/evidence", headers={"X-Tenant-Id": str(ta)}).status_code == 403
+    _ok("support_operator evidence requires tenant access (201 with; 403 without)")
+
+    # audit
+    arows = ca.get("/audit").json()
+    assert any(a.get("action") == "evidence.add" for a in arows)
+    assert any(a.get("action") == "evidence.download" for a in arows)
+    _ok("audit logs evidence.add and evidence.download")
+
+    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE: ALL TESTS PASSED ✅')
 if __name__ == '__main__':
     try:
         run()

@@ -395,3 +395,39 @@ class CaseNote(Base):
     is_internal: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, index=True)
+
+
+class CaseEvidence(Base):
+    """Anexo de evidência (append-only / cadeia de custódia). Hash calculado no servidor."""
+    __tablename__ = "case_evidence"
+    __table_args__ = (
+        CheckConstraint(
+            "origin IN ('manual_upload','authorized_export','whatsapp_intake',"
+            "'telegram_public','email','other')", name="ck_evidence_origin"),
+        CheckConstraint("storage_backend IN ('local','none')", name="ck_evidence_backend"),
+        Index("ix_evidence_tenant", "tenant_id"),
+        Index("ix_evidence_case", "case_id"),
+        Index("ix_evidence_finding", "finding_id"),
+        Index("ix_evidence_sha256", "sha256"),
+        Index("ix_evidence_created", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
+    case_id: Mapped[int] = mapped_column(
+        ForeignKey("investigation_cases.id", ondelete="CASCADE"), index=True)
+    finding_id: Mapped[int | None] = mapped_column(
+        ForeignKey("brand_findings.id", ondelete="SET NULL"), nullable=True)
+    filename: Mapped[str] = mapped_column(String(512))
+    mime_type: Mapped[str] = mapped_column(String(120))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    sha256: Mapped[str] = mapped_column(String(64), index=True)
+    origin: Mapped[str] = mapped_column(String(30), default="manual_upload")
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    storage_backend: Mapped[str] = mapped_column(String(20), default="local")
+    storage_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    uploaded_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True)
