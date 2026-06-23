@@ -291,6 +291,9 @@ class Brand(Base):
     social_profiles: Mapped[list | None] = mapped_column(JSON, nullable=True)
     sensitive_terms: Mapped[list | None] = mapped_column(JSON, nullable=True)
     logo_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # ciclo de vida da marca: active | archived (archived para novos scans)
+    status: Mapped[str] = mapped_column(String(20), default="active", index=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_scan_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

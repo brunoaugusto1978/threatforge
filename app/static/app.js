@@ -707,13 +707,15 @@ async function loadBrands() {
     if (!items.length) { box.innerHTML = '<span class="muted">No brands registered.</span>'; return; }
     const rows = items.map(b => `
       <tr>
-        <td><b>${esc(b.name)}</b></td>
+        <td><b>${esc(b.name)}</b>${b.status === "archived" ? ' <span class="muted">(archived)</span>' : ""}</td>
         <td><code>${esc(b.official_domains)}</code></td>
         <td class="muted">${b.last_scan_at ? esc(b.last_scan_at.slice(0, 16).replace("T", " ")) : "never"}</td>
         <td>
-          ${can("analyst") ? actBtn("scanFast", b.id, "Quick scan") + " " + actBtn("scanDeep", b.id, "Deep scan") : ""}
+          ${can("analyst") && b.status !== "archived" ? actBtn("scanFast", b.id, "Quick scan") + " " + actBtn("scanDeep", b.id, "Deep scan") : ""}
           ${actBtn("findings", b.id, "Findings")}
           ${can("admin") ? actBtn("editBrand", b.id, "Edit") : ""}
+          ${can("admin") ? actBtn(b.status === "archived" ? "brandUnarchive" : "brandArchive", b.id, b.status === "archived" ? "Unarchive" : "Archive") : ""}
+          ${can("admin") ? actBtn("brandDelete", b.id, "Delete", "danger") : ""}
         </td>
       </tr>`).join("");
     box.innerHTML = `<table><thead><tr><th>Brand</th><th>Official domains</th><th>Last scan</th><th></th></tr></thead><tbody>${rows}</tbody></table><div id="brandEdit"></div><div id="findings"></div>`;
@@ -787,6 +789,33 @@ async function saveBrand(id) {
   } catch (e) { $("#eb_err").textContent = e.message; }
 }
 function cancelBrandEdit() { $("#brandEdit").innerHTML = ""; }
+
+async function archiveBrand(id, archive) {
+  try {
+    await api("POST", `/brands/${id}/${archive ? "archive" : "unarchive"}`);
+    toast(archive ? "Brand archived" : "Brand unarchived");
+    await loadBrands();
+  } catch (e) { toast(e.message, true); }
+}
+async function deleteBrand(id) {
+  let b;
+  try { b = await api("GET", `/brands/${id}`); } catch (e) { toast(e.message, true); return; }
+  const typed = prompt(`Type the brand name to confirm permanent deletion:\n\n${b.name}`);
+  if (typed === null) return;
+  if (typed !== b.name) { toast("Name does not match — deletion cancelled.", true); return; }
+  const q = `confirm_name=${encodeURIComponent(b.name)}`;
+  try {
+    await api("DELETE", `/brands/${id}?${q}`);
+  } catch (e) {
+    if (/findings/i.test(e.message)) {
+      if (!confirm(`${e.message}\n\nDelete the brand AND its findings?`)) return;
+      try { await api("DELETE", `/brands/${id}?${q}&force=true`); }
+      catch (e2) { toast(e2.message, true); return; }
+    } else { toast(e.message, true); return; }
+  }
+  toast("Brand deleted");
+  await loadBrands();
+}
 
 // ---- Users ----
 async function viewUsers() {
@@ -1025,6 +1054,9 @@ const ACTIONS = {
   editBrand: (id) => editBrand(id),
   brandSave: (id) => saveBrand(id),
   brandCancel: () => cancelBrandEdit(),
+  brandArchive: (id) => archiveBrand(id, true),
+  brandUnarchive: (id) => archiveBrand(id, false),
+  brandDelete: (id) => deleteBrand(id),
   userOn: (id) => toggleUser(id, true),
   userOff: (id) => toggleUser(id, false),
   userReset: (id) => resetUser(id),

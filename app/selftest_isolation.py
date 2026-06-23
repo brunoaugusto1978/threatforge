@@ -219,7 +219,44 @@ def run():
     assert "user_agent" in bu[0] and "operator_user_id" in bu[0] and "ip" in bu[0]
     _ok("audit logs brand.update with before/after + operator/ip/user-agent")
 
-    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT: ALL TESTS PASSED ✅')
+    # ============ ARCHIVE / DELETE BRAND (tenant-scoped) ============
+    r = ca.post(f"/brands/{ba_id}/archive")
+    assert r.status_code == 200 and r.json()["status"] == "archived", r.text
+    assert ca.post(f"/brands/{ba_id}/scan?deep=false").status_code == 422
+    _ok("admin archives brand; scan blocked while archived (422)")
+
+    assert ca.post(f"/brands/{ba_id}/unarchive").json()["status"] == "active"
+    _ok("admin unarchives brand")
+
+    assert an.post(f"/brands/{ba_id}/archive").status_code == 403
+    assert sc.post(f"/brands/{ba_id}/archive", headers={"X-Tenant-Id": str(ta)}).status_code == 403
+    _ok("analyst/support_operator -> 403 (cannot archive)")
+
+    assert cb.post(f"/brands/{ba_id}/archive").status_code == 404
+    _ok("archiving another tenant's brand -> 404")
+
+    assert ca.delete(f"/brands/{ba_id}").status_code == 422
+    assert ca.delete(f"/brands/{ba_id}?confirm_name=wrong").status_code == 422
+    _ok("delete requires matching confirm_name (422)")
+
+    from app.database import SessionLocal
+    from app.models import BrandFinding
+    _s = SessionLocal()
+    _s.add(BrandFinding(tenant_id=ta, brand_id=ba_id, domain="del.example", source="typosquat"))
+    _s.commit(); _s.close()
+    assert ca.delete(f"/brands/{ba_id}?confirm_name=BrandA%20Renamed").status_code == 409
+    _ok("delete blocked when findings exist (409 without force)")
+
+    assert ca.delete(f"/brands/{ba_id}?confirm_name=BrandA%20Renamed&force=true").status_code == 204
+    assert ca.get(f"/brands/{ba_id}").status_code == 404
+    _ok("force delete removes brand and its findings")
+
+    arows = ca.get("/audit").json()
+    assert any(a.get("action") == "brand.archive" for a in arows)
+    assert any(a.get("action") == "brand.delete" for a in arows)
+    _ok("audit logs brand.archive and brand.delete")
+
+    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE: ALL TESTS PASSED ✅')
 if __name__ == '__main__':
     try:
         run()
