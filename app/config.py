@@ -80,6 +80,10 @@ EVIDENCE_ALLOWED_MIME: set[str] = {
     "image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf",
     "text/plain", "text/csv", "application/json", "message/rfc822", "application/zip",
 }
+# Edição do produto: "community" (open source) ou "enterprise" (override externo).
+# A geração real de PDF premium vive no pacote threatforge-enterprise.
+EDITION: str = os.environ.get("THREATFORGE_EDITION", "community").strip().lower() or "community"
+
 EVIDENCE_ORIGINS: set[str] = {
     "manual_upload", "authorized_export", "whatsapp_intake", "telegram_public", "email", "other",
 }

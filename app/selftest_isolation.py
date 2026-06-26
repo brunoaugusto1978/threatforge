@@ -432,6 +432,40 @@ def run():
     assert r.status_code == 201, r.text
     _ok("evidence/case/finding consistency enforced (mismatch 422, match 201)")
 
+    # ============ CASE EXPORT (Community/Enterprise) ============
+    # viewer pode exportar markdown de um case legível (mcid tem notes + evidence)
+    rmd = cvv.get(f"/cases/{mcid}/export.md")
+    assert rmd.status_code == 200, rmd.text
+    md_body = rmd.text
+    assert f"# Case #{mcid}" in md_body, md_body[:200]
+    assert "## Notes" in md_body and "## Evidence" in md_body
+    # não vaza storage_key / caminhos / extensão interna .bin
+    assert "storage_key" not in md_body
+    assert "/data/evidence" not in md_body
+    assert ".bin" not in md_body
+    assert 'attachment; filename="case-' in rmd.headers.get("content-disposition", "")
+    _ok("viewer exports case markdown (metadata only; no storage_key/paths/.bin)")
+
+    # cross-tenant export -> 404 (sem vazar existência)
+    assert cb.get(f"/cases/{mcid}/export.md").status_code == 404
+    _ok("cross-tenant markdown export -> 404")
+
+    # PDF premium bloqueado no Community -> 402 com mensagem Enterprise
+    rpdf = caa.get(f"/cases/{mcid}/export.pdf")
+    assert rpdf.status_code == 402, rpdf.text
+    assert "Enterprise license" in (rpdf.json().get("detail") or ""), rpdf.text
+    _ok("PDF export blocked in Community -> 402 (Enterprise license required)")
+
+    # cross-tenant PDF também -> 404 (não vaza nem o bloqueio)
+    assert cb.get(f"/cases/{mcid}/export.pdf").status_code == 404
+    _ok("cross-tenant PDF export -> 404")
+
+    # auditoria: case.export e case.export_pdf_denied
+    aexp = ca.get("/audit").json()
+    assert any(a.get("action") == "case.export" for a in aexp)
+    assert any(a.get("action") == "case.export_pdf_denied" for a in aexp)
+    _ok("audit logs case.export and case.export_pdf_denied")
+
     # viewer não anexa (403) mas lê/baixa
     assert cvv.post(f"/cases/{mcid}/evidence", files={"file": ("v.txt", b"x", "text/plain")},
                     data={"origin": "manual_upload"}).status_code == 403
@@ -460,7 +494,7 @@ def run():
     assert any(a.get("action") == "evidence.download" for a in arows)
     _ok("audit logs evidence.add and evidence.download")
 
-    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE: ALL TESTS PASSED ✅')
+    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT: ALL TESTS PASSED ✅')
 if __name__ == '__main__':
     try:
         run()

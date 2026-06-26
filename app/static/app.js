@@ -993,6 +993,8 @@ async function caseDetail(id) {
     <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap">
       ${editable ? `<button data-action="caseSave" data-id="${esc(c.id)}">Save</button>` : '<span class="muted">Read-only.</span>'}
       ${lifecycle}
+      <button class="ghost" data-action="caseExportMd" data-id="${esc(c.id)}">Export Markdown</button>
+      <button class="ghost" data-action="caseExportPdf" data-id="${esc(c.id)}" title="ThreatForge Enterprise">Export PDF 🔒</button>
     </div>
     <div class="err" id="cd_err"></div></div>
     <div id="caseNotes"></div>
@@ -1145,6 +1147,49 @@ async function downloadEvidence(evId, btn) {
     document.body.appendChild(a); a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1500);
+  } catch (e) { toast(e.message, true); }
+}
+
+async function exportCaseMarkdown(id) {
+  try {
+    const headers = SUPPORT_TENANT ? { "X-Tenant-Id": String(SUPPORT_TENANT.id) } : {};
+    const res = await fetch(`/cases/${id}/export.md`, { method: "GET", credentials: "same-origin", headers });
+    if (!res.ok) {
+      let msg = `Error ${res.status}`;
+      try { const j = await res.json(); if (j && typeof j.detail === "string") msg = j.detail; } catch {}
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `case-${id}.md`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    toast("Markdown exported");
+  } catch (e) { toast(e.message, true); }
+}
+
+async function exportCasePdf(id) {
+  try {
+    const headers = SUPPORT_TENANT ? { "X-Tenant-Id": String(SUPPORT_TENANT.id) } : {};
+    const res = await fetch(`/cases/${id}/export.pdf`, { method: "GET", credentials: "same-origin", headers });
+    if (res.ok) {
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `case-${id}.pdf`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+      return;
+    }
+    // bloqueado no Community (402/403): mensagem clara de upgrade
+    let msg = "Premium PDF export requires a ThreatForge Enterprise license.";
+    try { const j = await res.json(); if (j && typeof j.detail === "string") msg = j.detail; } catch {}
+    if (res.status === 402 || res.status === 403) {
+      toast(msg + " Contact your administrator to upgrade.", true);
+    } else {
+      toast(msg, true);
+    }
   } catch (e) { toast(e.message, true); }
 }
 
@@ -1418,6 +1463,8 @@ const ACTIONS = {
   opRevoke: (id, btn) => revokeAccess(id, Number(btn.dataset.tid)),
   evidenceAdd: (id) => addEvidence(id),
   evidenceDownload: (id, btn) => downloadEvidence(id, btn),
+  caseExportMd: (id) => exportCaseMarkdown(id),
+  caseExportPdf: (id) => exportCasePdf(id),
 };
 document.addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-action]");

@@ -7,11 +7,11 @@ O case sobrevive a archive/delete/clear de brand/finding (FK SET NULL + snapshot
 import os
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import audit, config, evidence_store
+from app import audit, config, evidence_store, exporters
 from app.auth import Principal, current_tenant_id, require_analyst, require_viewer
 from app.database import get_db
 from app.models import Brand, BrandFinding, CaseEvidence, CaseNote, InvestigationCase, User, utcnow
@@ -338,6 +338,54 @@ def download_evidence(case_id: int, ev_id: int, request: Request,
 
 
 # abrir case a partir de um finding
+@router.get("/{case_id}/export.md", dependencies=[Depends(require_viewer)])
+def export_case_markdown(case_id: int, request: Request,
+                         db: Session = Depends(get_db),
+                         principal: Principal = Depends(require_viewer),
+                         tid: int = Depends(current_tenant_id)):
+    """Export gratuito (Community) em Markdown. viewer+ que pode ler o case.
+
+    Inclui metadados, snapshot do finding, notes e metadados de evidence.
+    Nunca inclui binários, storage_key, caminhos locais ou segredos.
+    """
+    case = _owned_case(db, case_id, tid)  # tenant-scoped; cross-tenant -> 404
+    notes = list(db.scalars(select(CaseNote).where(
+        CaseNote.tenant_id == tid, CaseNote.case_id == case_id)
+        .order_by(CaseNote.created_at.asc(), CaseNote.id.asc())))
+    evidence = list(db.scalars(select(CaseEvidence).where(
+        CaseEvidence.tenant_id == tid, CaseEvidence.case_id == case_id)
+        .order_by(CaseEvidence.created_at.asc(), CaseEvidence.id.asc())))
+    md = exporters.render_case_markdown(case, notes, evidence, edition=config.EDITION)
+    _audit(db, principal, tid, request, "case.export", case.id,
+           {"format": "markdown", "notes": len(notes), "evidence": len(evidence)})
+    return Response(content=md, media_type="text/markdown; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="case-{case.id}.md"'})
+
+
+@router.get("/{case_id}/export.pdf", dependencies=[Depends(require_viewer)])
+def export_case_pdf(case_id: int, request: Request,
+                    db: Session = Depends(get_db),
+                    principal: Principal = Depends(require_viewer),
+                    tid: int = Depends(current_tenant_id)):
+    """PDF premium — bloqueado no Community.
+
+    A geração real vive no pacote threatforge-enterprise (override de
+    exporters.render_case_pdf). Aqui apenas expomos o adapter e recusamos com
+    402, sem vazar detalhes do módulo Enterprise.
+    """
+    case = _owned_case(db, case_id, tid)  # tenant-scoped; cross-tenant -> 404
+    try:
+        pdf_bytes = exporters.render_case_pdf(case, edition=config.EDITION)
+    except exporters.EnterpriseFeatureRequired:
+        _audit(db, principal, tid, request, "case.export_pdf_denied", case.id,
+               {"edition": config.EDITION})
+        raise HTTPException(status_code=402,
+                            detail="Premium PDF export requires a ThreatForge Enterprise license.")
+    # Caminho Enterprise (não presente no Community).
+    return Response(content=pdf_bytes, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="case-{case.id}.pdf"'})
+
+
 finding_router = APIRouter(prefix="/brands", tags=["cases"], dependencies=[Depends(require_viewer)])
 
 
