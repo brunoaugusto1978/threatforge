@@ -121,7 +121,7 @@ class Organization(Base):
     phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
     timezone: Mapped[str | None] = mapped_column(String(60), nullable=True)
     language: Mapped[str | None] = mapped_column(String(10), nullable=True)
-    criticality: Mapped[str] = mapped_column(String(10), default="medium")  # baixo..crítico
+    criticality: Mapped[str] = mapped_column(String(10), default="medio")  # low/medium/high/critical stored as baixo/medio/alto/critico
     # escopo de monitoramento selecionado no wizard (lista de fontes)
     monitoring_scope: Mapped[list | None] = mapped_column(JSON, nullable=True)
     # onboarding obrigatório
