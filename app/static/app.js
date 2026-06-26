@@ -1178,28 +1178,68 @@ async function exportCaseMarkdown(id) {
   } catch (e) { toast(e.message, true); }
 }
 
+
+function enterpriseUpgradeMessage(payload, fallback) {
+  const lines = [];
+
+  if (payload && payload.detail) {
+    lines.push(payload.detail);
+  } else if (fallback) {
+    lines.push(fallback);
+  } else {
+    lines.push("Premium feature requires a ThreatForge Enterprise license.");
+  }
+
+  const upgrade = payload && payload.upgrade ? payload.upgrade : {};
+
+  if (upgrade.message) lines.push(upgrade.message);
+  if (upgrade.email) lines.push(`Contact: ${upgrade.email}`);
+  if (upgrade.whatsapp) lines.push(`WhatsApp: ${upgrade.whatsapp}`);
+  if (upgrade.url) lines.push(`More information: ${upgrade.url}`);
+
+  return lines.filter(Boolean).join("\n");
+}
+
 async function exportCasePdf(id) {
   try {
-    const headers = SUPPORT_TENANT ? { "X-Tenant-Id": String(SUPPORT_TENANT.id) } : {};
-    const res = await fetch(`/cases/${id}/export.pdf`, { method: "GET", credentials: "same-origin", headers });
-    if (res.ok) {
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url; a.download = `case-${id}.pdf`;
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1500);
+    const headers = {};
+    const supportTenant = (typeof SUPPORT_TENANT !== "undefined") ? SUPPORT_TENANT : null;
+
+    if (supportTenant && supportTenant.id) {
+      headers["X-Tenant-Id"] = String(supportTenant.id);
+    }
+
+    const fallback = "Premium PDF export requires a ThreatForge Enterprise license.";
+    const res = await fetch(`/cases/${id}/export.pdf`, {
+      method: "GET",
+      credentials: "same-origin",
+      headers,
+    });
+
+    if (!res.ok) {
+      let data = {};
+      try {
+        data = await res.json();
+      } catch (_) {
+        data = {};
+      }
+
+      toast(enterpriseUpgradeMessage(data, fallback), true);
       return;
     }
-    // bloqueado no Community (402/403): mensagem clara de upgrade
-    let msg = "Premium PDF export requires a ThreatForge Enterprise license.\nContact: to.brunoaugusto@yahoo.com.br\nWhatsApp: +55 21 964946855\nMore information: https://cbgsecurity.com.br";
-    try { const j = await res.json(); if (j && typeof j.detail === "string") msg = j.detail; } catch {}
-    if (res.status === 402 || res.status === 403) {
-      toast(msg + " Contact your administrator to upgrade.", true);
-    } else {
-      toast(msg, true);
-    }
-  } catch (e) { toast(e.message, true); }
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `case-${id}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  } catch (e) {
+    toast(e.message || "PDF export failed", true);
+  }
 }
 
 async function setCaseStatus(id, status) {

@@ -86,14 +86,14 @@ EDITION: str = os.environ.get("THREATFORGE_EDITION", "community").strip().lower(
 
 # Contatos comerciais p/ o CTA de upgrade Enterprise (bloco "upgrade" no 402).
 THREATFORGE_ENTERPRISE_CONTACT_EMAIL: str = os.environ.get(
-    "THREATFORGE_ENTERPRISE_CONTACT_EMAIL", "sales@threatforge.io")
+    "THREATFORGE_ENTERPRISE_CONTACT_EMAIL", "to.brunoaugusto@yahoo.com.br")
 THREATFORGE_ENTERPRISE_CONTACT_WHATSAPP: str = os.environ.get(
-    "THREATFORGE_ENTERPRISE_CONTACT_WHATSAPP", "")
+    "THREATFORGE_ENTERPRISE_CONTACT_WHATSAPP", "+55 21 964946855")
 THREATFORGE_ENTERPRISE_CONTACT_URL: str = os.environ.get(
-    "THREATFORGE_ENTERPRISE_CONTACT_URL", "https://threatforge.io/enterprise")
+    "THREATFORGE_ENTERPRISE_CONTACT_URL", "https://cbgsecurity.com.br")
 THREATFORGE_ENTERPRISE_CONTACT_MESSAGE: str = os.environ.get(
     "THREATFORGE_ENTERPRISE_CONTACT_MESSAGE",
-    "Contact our team to enable premium ThreatForge features.")
+    "Contact the ThreatForge Enterprise team to enable premium features.")
 
 EVIDENCE_ORIGINS: set[str] = {
     "manual_upload", "authorized_export", "whatsapp_intake", "telegram_public", "email", "other",
