@@ -605,7 +605,8 @@ function navigate(view) {
   document.querySelectorAll("#nav button").forEach(b =>
     b.classList.toggle("active", b.dataset.view === view));
   ({ dashboard: viewDashboard, iocs: viewIocs, brands: viewBrands, watchlist: viewWatchlist,
-     org: viewOrg, users: viewUsers, audit: viewAudit, cases: viewCases }[view] || viewDashboard)();
+     org: viewOrg, users: viewUsers, audit: viewAudit, cases: viewCases,
+     integrations: viewIntegrations }[view] || viewDashboard)();
 }
 
 async function viewDashboard() {
@@ -1003,6 +1004,7 @@ async function caseDetail(id) {
       ${editable ? `<button data-action="caseSave" data-id="${esc(c.id)}">Save</button>` : '<span class="muted">Read-only.</span>'}
       ${lifecycle}
       <button class="ghost" data-action="caseExportMd" data-id="${esc(c.id)}">Export Markdown</button>
+      <button class="ghost" data-action="caseExportStix" data-id="${esc(c.id)}" title="STIX 2.1 bundle">Export STIX</button>
       <button class="ghost" data-action="caseExportPdf" data-id="${esc(c.id)}" title="ThreatForge Enterprise">Export PDF 🔒</button>
     </div>
     <div class="err" id="cd_err"></div></div>
@@ -1175,6 +1177,25 @@ async function exportCaseMarkdown(id) {
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1500);
     toast("Markdown exported");
+  } catch (e) { toast(e.message, true); }
+}
+
+async function exportCaseStix(id) {
+  try {
+    const headers = SUPPORT_TENANT ? { "X-Tenant-Id": String(SUPPORT_TENANT.id) } : {};
+    const res = await fetch(`/cases/${id}/export.stix.json`, { method: "GET", credentials: "same-origin", headers });
+    if (!res.ok) {
+      let msg = `Error ${res.status}`;
+      try { const j = await res.json(); if (j && typeof j.detail === "string") msg = j.detail; } catch {}
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `case-${id}.stix.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    toast("STIX bundle exported");
   } catch (e) { toast(e.message, true); }
 }
 
@@ -1513,7 +1534,9 @@ const ACTIONS = {
   evidenceAdd: (id) => addEvidence(id),
   evidenceDownload: (id, btn) => downloadEvidence(id, btn),
   caseExportMd: (id) => exportCaseMarkdown(id),
+  caseExportStix: (id) => exportCaseStix(id),
   caseExportPdf: (id) => exportCasePdf(id),
+  integrationConfigure: (_id, btn) => configureIntegration(btn.dataset.name),
 };
 document.addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-action]");
@@ -1521,6 +1544,55 @@ document.addEventListener("click", (e) => {
   const fn = ACTIONS[btn.dataset.action];
   if (fn) fn(Number(btn.dataset.id), btn);
 });
+
+// ---------- integrations (premium catalog; configure is Enterprise-gated) ----------
+async function viewIntegrations() {
+  const m = $("#main");
+  m.innerHTML = `<h2 class="title">Integrations</h2>
+    <p class="muted" style="margin-top:-6px">Connect ThreatForge to external threat-intel platforms. Premium connectors require a ThreatForge Enterprise license.</p>
+    <div id="intgList">loading…</div>`;
+  let items = [];
+  try { items = await api("GET", "/integrations"); }
+  catch (e) { $("#intgList").textContent = e.message; return; }
+  if (!items.length) { $("#intgList").innerHTML = '<span class="muted">No integrations available.</span>'; return; }
+  const canConfig = can("admin");
+  $("#intgList").innerHTML = `<div class="cards" style="grid-template-columns:repeat(auto-fill,minmax(260px,1fr))">${
+    items.map(it => {
+      const locked = it.premium && !it.enabled;
+      const badge = locked
+        ? '<span class="muted" title="ThreatForge Enterprise" style="border:1px solid var(--line);border-radius:10px;padding:1px 8px;font-size:12px">Enterprise 🔒</span>'
+        : '<span class="muted" style="border:1px solid var(--line);border-radius:10px;padding:1px 8px;font-size:12px">Available</span>';
+      const caps = (it.capabilities || []).map(c => `<code style="font-size:11px;background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:1px 5px;margin:0 4px 4px 0;display:inline-block">${esc(c)}</code>`).join("");
+      const btn = canConfig
+        ? `<button class="sm ghost" data-action="integrationConfigure" data-name="${esc(it.name)}">${locked ? "Configure (Enterprise)" : "Configure"}</button>`
+        : '<span class="muted" style="font-size:12px">Admin only</span>';
+      return `<div class="panel" style="display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <b>${esc(it.title)}</b>${badge}
+        </div>
+        <div class="muted" style="font-size:13px">${esc(it.description || "")}</div>
+        <div>${caps}</div>
+        <div style="margin-top:auto">${btn}</div>
+      </div>`;
+    }).join("")
+  }</div>`;
+}
+
+async function configureIntegration(name) {
+  try {
+    const headers = SUPPORT_TENANT ? { "X-Tenant-Id": String(SUPPORT_TENANT.id) } : {};
+    const fallback = "This premium integration requires a ThreatForge Enterprise license.";
+    const res = await fetch(`/integrations/${encodeURIComponent(name)}/connections`, {
+      method: "POST", credentials: "same-origin",
+      headers: { ...headers, "Content-Type": "application/json" }, body: "{}",
+    });
+    if (res.ok) { toast("Integration configured"); return; }
+    let data = {};
+    try { data = await res.json(); } catch (_) { data = {}; }
+    // 402 -> mesmo CTA de upgrade do PDF; outros erros -> mensagem simples
+    toast(enterpriseUpgradeMessage(data, fallback), true);
+  } catch (e) { toast(e.message || "Configuration failed", true); }
+}
 
 // ---------- form helpers ----------
 function field(label, control) { return el("div", {}, el("label", {}, label), control); }
