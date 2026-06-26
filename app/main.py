@@ -35,6 +35,7 @@ app = FastAPI(
 
 from fastapi import Request as _Request  # noqa: E402
 from fastapi.responses import JSONResponse as _JSONResponse  # noqa: E402
+from app.routers import integrations_routes
 
 
 @app.exception_handler(features.EnterpriseFeatureRequired)
@@ -81,6 +82,7 @@ app.include_router(reports.router)
 app.include_router(brands.router)
 app.include_router(cases_routes.router)
 app.include_router(cases_routes.finding_router)
+app.include_router(integrations_routes.router)
 
 
 @app.get("/health", tags=["meta"])

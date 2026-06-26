@@ -500,7 +500,55 @@ def run():
     assert any(a.get("action") == "evidence.download" for a in arows)
     _ok("audit logs evidence.add and evidence.download")
 
-    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT: ALL TESTS PASSED ✅')
+    # ============ PREMIUM INTEGRATIONS (catalog + feature gate) ============
+    # viewer vê o catálogo (200) com recursos premium bloqueados + bloco upgrade
+    rcat = cvv.get("/integrations")
+    assert rcat.status_code == 200, rcat.text
+    cat = {i["name"]: i for i in rcat.json()}
+    assert {"misp", "opencti", "generic"} <= set(cat), cat
+    for nm in ("misp", "opencti", "generic"):
+        assert cat[nm]["premium"] is True and cat[nm]["enabled"] is False, cat[nm]
+        assert cat[nm]["capabilities"], cat[nm]
+        up = cat[nm].get("upgrade") or {}
+        assert up.get("email") and up.get("url"), cat[nm]
+    _ok("viewer reads integrations catalog (premium, locked, upgrade block)")
+
+    # descritor individual traz o config_schema (JSON Schema) p/ a UI
+    rdesc = cvv.get("/integrations/misp")
+    assert rdesc.status_code == 200 and "config_schema" in rdesc.json(), rdesc.text
+    assert "properties" in rdesc.json()["config_schema"], rdesc.json()
+    # conector inexistente -> 404
+    assert cvv.get("/integrations/nope").status_code == 404
+    _ok("integration descriptor exposes public config_schema; unknown -> 404")
+
+    # admin tenta configurar sem licença -> 402 com bloco upgrade
+    rconf = ca.post("/integrations/misp/connections", json={"base_url": "https://misp.x"})
+    assert rconf.status_code == 402, rconf.text
+    pj = rconf.json()
+    assert pj.get("feature") == "integration.misp" and (pj.get("upgrade") or {}).get("email"), pj
+    # test/sync também -> 402
+    assert ca.post("/integrations/opencti/sync", json={}).status_code == 402
+    assert ca.post("/integrations/generic/test", json={}).status_code == 402
+    _ok("admin configure/test/sync blocked in Community -> 402 (per-feature)")
+
+    # viewer não pode configurar (require_admin) -> 403
+    assert cvv.post("/integrations/misp/connections", json={}).status_code == 403
+    _ok("viewer cannot configure integrations (403)")
+
+    # support_operator (mesmo com tenant access) NÃO configura conectores/secrets -> 403
+    op.post(f"/operators/{sop_id}/tenant-access", json={"tenant_id": ta, "access_role": "support_operator"})
+    rsup = sc.post("/integrations/misp/connections", headers={"X-Tenant-Id": str(ta)}, json={})
+    assert rsup.status_code == 403, rsup.text
+    op.delete(f"/operators/{sop_id}/tenant-access/{ta}")
+    _ok("support_operator cannot configure connectors even with tenant access (403)")
+
+    # auditoria: *_denied registrados
+    aint = ca.get("/audit").json()
+    assert any(a.get("action") == "integration.config_denied" for a in aint)
+    assert any(a.get("action") == "integration.sync_denied" for a in aint)
+    _ok("audit logs integration.config_denied and integration.sync_denied")
+
+    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS: ALL TESTS PASSED ✅')
 if __name__ == '__main__':
     try:
         run()
