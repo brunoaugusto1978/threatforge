@@ -449,8 +449,8 @@ WIZ_RENDER[1] = async () => {
   const sectorSel = selectEl("wz_sector",
     [["", ""], ["Telecom", "Telecom"], ["Financeiro", "Finance"], ["Varejo", "Retail"], ["Saúde", "Healthcare"], ["Governo", "Government"], ["Indústria", "Industry"], ["Tecnologia", "Technology"], ["Energia", "Energy"], ["Outro", "Other"]]);
   sectorSel.value = org.sector || "";
-  const critSel = selectEl("wz_criticality", [["baixo", "low"], ["medium", "medium"], ["alto", "high"], ["critico", "critical"]]);
-  critSel.value = org.criticality || "medium";
+  const critSel = selectEl("wz_criticality", [["baixo", "low"], ["medio", "medium"], ["alto", "high"], ["critico", "critical"]]);
+  critSel.value = org.criticality || "medio";
   grid.append(field("Sector *", sectorSel), field("Criticality", critSel));
   ORG_WIZ_FIELDS.forEach(([k, label]) => {
     const inp = inputEl("wz_org_" + k, "");
@@ -833,7 +833,7 @@ async function deleteBrand(id) {
 // ---- Investigation Cases ----
 const CASE_STATUSES = ["open", "triage", "investigating", "contained", "closed", "false_positive"];
 const CASE_ACTIVE = ["open", "triage", "investigating", "contained"];
-const SEV_COLOR = { critico: "var(--red)", alto: "var(--orange)", medium: "var(--yellow)", baixo: "var(--gray)" };
+const SEV_COLOR = { critico: "var(--red)", alto: "var(--orange)", medio: "var(--yellow)", baixo: "var(--gray)" };
 
 function selectHtml(id, opts, current, disabled) {
   const o = opts.map(v => `<option value="${esc(v)}" ${v === current ? "selected" : ""}>${esc(v || "(any)")}</option>`).join("");
@@ -859,7 +859,7 @@ async function viewCases() {
     const p = el("div", { class: "panel" });
     const grid = el("div", { class: "srow2" });
     grid.append(field("Title", inputEl("cs_title", "Investigation title")));
-    grid.append(field("Severity", selectEl("cs_sev", ["baixo", "medium", "alto", "critico"])));
+    grid.append(field("Severity", selectEl("cs_sev", [["baixo", "low"], ["medio", "medium"], ["alto", "high"], ["critico", "critical"]])));
     grid.append(field("Brand (optional)", selectKV("cs_brand", brandPairs, "(none)")));
     if (can("admin")) grid.append(field("Assignee (optional)", selectKV("cs_assignee", userPairs, "(unassigned)")));
     p.append(grid);
@@ -871,7 +871,7 @@ async function viewCases() {
   const fp = el("div", { class: "panel" });
   const frow = el("div", { class: "row" });
   frow.append(field("Status", selectEl("cs_fstatus", ["", ...CASE_STATUSES])));
-  frow.append(field("Severity", selectEl("cs_fsev", ["", "baixo", "medium", "alto", "critico"])));
+  frow.append(field("Severity", selectEl("cs_fsev", [["", ""], ["baixo", "low"], ["medio", "medium"], ["alto", "high"], ["critico", "critical"]])));
   frow.append(field("Brand", selectKV("cs_fbrand", brandPairs, "(any brand)")));
   if (can("admin")) frow.append(field("Assignee", selectKV("cs_fassignee", userPairs, "(any assignee)")));
   else frow.append(field("Assignee id", inputEl("cs_fassignee_num", "")));
@@ -986,7 +986,7 @@ async function caseDetail(id) {
     <label>Title</label><input id="cd_title" style="width:100%" ${editable ? "" : "disabled"}>
     <label>Description</label><textarea id="cd_desc" style="width:100%;min-height:70px" ${editable ? "" : "disabled"}></textarea>
     <div class="srow2">
-      <div><label>Severity</label>${selectHtml("cd_sev", ["baixo", "medium", "alto", "critico"], c.severity, !editable)}</div>
+      <div><label>Severity</label>${selectHtml("cd_sev", [["baixo", "low"], ["medio", "medium"], ["alto", "high"], ["critico", "critical"]], c.severity, !editable)}</div>
       <div><label>Status</label>${selectHtml("cd_status", statusOpts, c.status, statusDisabled)}</div>
     </div>
     ${assigneeControl}
@@ -1309,8 +1309,8 @@ async function viewOrg() {
     grid.append(field(label, inp));
   });
   // criticidade como select
-  const crit = selectEl("org_criticality", [["baixo", "low"], ["medium", "medium"], ["alto", "high"], ["critico", "critical"]]);
-  crit.value = org.criticality || "medium";
+  const crit = selectEl("org_criticality", [["baixo", "low"], ["medio", "medium"], ["alto", "high"], ["critico", "critical"]]);
+  crit.value = org.criticality || "medio";
   if (!editable) crit.setAttribute("disabled", "true");
   grid.append(field("Criticality", crit));
   p.append(grid);
