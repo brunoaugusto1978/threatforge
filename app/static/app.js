@@ -10,8 +10,13 @@ async function api(method, path, body) {
   const opts = { method, headers: {}, credentials: "same-origin" };
   if (SUPPORT_TENANT) opts.headers["X-Tenant-Id"] = String(SUPPORT_TENANT.id);
   if (body !== undefined) {
-    opts.headers["Content-Type"] = "application/json";
-    opts.body = JSON.stringify(body);
+    if (typeof FormData !== "undefined" && body instanceof FormData) {
+      // multipart: deixar o browser definir o Content-Type (boundary)
+      opts.body = body;
+    } else {
+      opts.headers["Content-Type"] = "application/json";
+      opts.body = JSON.stringify(body);
+    }
   }
   const res = await fetch(path, opts);
   if (res.status === 204) return null;
@@ -444,8 +449,8 @@ WIZ_RENDER[1] = async () => {
   const sectorSel = selectEl("wz_sector",
     [["", ""], ["Telecom", "Telecom"], ["Financeiro", "Finance"], ["Varejo", "Retail"], ["Saúde", "Healthcare"], ["Governo", "Government"], ["Indústria", "Industry"], ["Tecnologia", "Technology"], ["Energia", "Energy"], ["Outro", "Other"]]);
   sectorSel.value = org.sector || "";
-  const critSel = selectEl("wz_criticality", [["baixo", "low"], ["medio", "medium"], ["alto", "high"], ["critico", "critical"]]);
-  critSel.value = org.criticality || "medio";
+  const critSel = selectEl("wz_criticality", [["baixo", "low"], ["medium", "medium"], ["alto", "high"], ["critico", "critical"]]);
+  critSel.value = org.criticality || "medium";
   grid.append(field("Sector *", sectorSel), field("Criticality", critSel));
   ORG_WIZ_FIELDS.forEach(([k, label]) => {
     const inp = inputEl("wz_org_" + k, "");
@@ -828,7 +833,7 @@ async function deleteBrand(id) {
 // ---- Investigation Cases ----
 const CASE_STATUSES = ["open", "triage", "investigating", "contained", "closed", "false_positive"];
 const CASE_ACTIVE = ["open", "triage", "investigating", "contained"];
-const SEV_COLOR = { critico: "var(--red)", alto: "var(--orange)", medio: "var(--yellow)", baixo: "var(--gray)" };
+const SEV_COLOR = { critico: "var(--red)", alto: "var(--orange)", medium: "var(--yellow)", baixo: "var(--gray)" };
 
 function selectHtml(id, opts, current, disabled) {
   const o = opts.map(v => `<option value="${esc(v)}" ${v === current ? "selected" : ""}>${esc(v || "(any)")}</option>`).join("");
@@ -854,7 +859,7 @@ async function viewCases() {
     const p = el("div", { class: "panel" });
     const grid = el("div", { class: "srow2" });
     grid.append(field("Title", inputEl("cs_title", "Investigation title")));
-    grid.append(field("Severity", selectEl("cs_sev", ["baixo", "medio", "alto", "critico"])));
+    grid.append(field("Severity", selectEl("cs_sev", ["baixo", "medium", "alto", "critico"])));
     grid.append(field("Brand (optional)", selectKV("cs_brand", brandPairs, "(none)")));
     if (can("admin")) grid.append(field("Assignee (optional)", selectKV("cs_assignee", userPairs, "(unassigned)")));
     p.append(grid);
@@ -866,7 +871,7 @@ async function viewCases() {
   const fp = el("div", { class: "panel" });
   const frow = el("div", { class: "row" });
   frow.append(field("Status", selectEl("cs_fstatus", ["", ...CASE_STATUSES])));
-  frow.append(field("Severity", selectEl("cs_fsev", ["", "baixo", "medio", "alto", "critico"])));
+  frow.append(field("Severity", selectEl("cs_fsev", ["", "baixo", "medium", "alto", "critico"])));
   frow.append(field("Brand", selectKV("cs_fbrand", brandPairs, "(any brand)")));
   if (can("admin")) frow.append(field("Assignee", selectKV("cs_fassignee", userPairs, "(any assignee)")));
   else frow.append(field("Assignee id", inputEl("cs_fassignee_num", "")));
@@ -976,12 +981,12 @@ async function caseDetail(id) {
     : "";
 
   $("#caseDetail").innerHTML = `<div class="panel" style="margin-top:14px;border-left:3px solid var(--accent)">
-    <b>Case #${esc(c.id)}</b> <span class="muted">criado ${esc((c.created_at || "").slice(0, 16).replace("T", " "))}${c.closed_at ? " · fechado " + esc(c.closed_at.slice(0, 16).replace("T", " ")) : ""} · status atual: <b>${esc(c.status)}</b></span>
+    <b>Case #${esc(c.id)}</b> <span class="muted">created ${esc((c.created_at || "").slice(0, 16).replace("T", " "))}${c.closed_at ? " · closed " + esc(c.closed_at.slice(0, 16).replace("T", " ")) : ""} · current status: <b>${esc(c.status)}</b></span>
     ${snap}
     <label>Title</label><input id="cd_title" style="width:100%" ${editable ? "" : "disabled"}>
     <label>Description</label><textarea id="cd_desc" style="width:100%;min-height:70px" ${editable ? "" : "disabled"}></textarea>
     <div class="srow2">
-      <div><label>Severity</label>${selectHtml("cd_sev", ["baixo", "medio", "alto", "critico"], c.severity, !editable)}</div>
+      <div><label>Severity</label>${selectHtml("cd_sev", ["baixo", "medium", "alto", "critico"], c.severity, !editable)}</div>
       <div><label>Status</label>${selectHtml("cd_status", statusOpts, c.status, statusDisabled)}</div>
     </div>
     ${assigneeControl}
@@ -990,10 +995,12 @@ async function caseDetail(id) {
       ${lifecycle}
     </div>
     <div class="err" id="cd_err"></div></div>
-    <div id="caseNotes"></div>`;
+    <div id="caseNotes"></div>
+    <div id="caseEvidence"></div>`;
   $("#cd_title").value = c.title || "";
   $("#cd_desc").value = c.description || "";
   loadNotes(c.id);
+  loadEvidence(c.id);
 }
 
 async function saveCaseDetail(id) {
@@ -1044,6 +1051,101 @@ async function addNote(id) {
     toast("Note added");
     await loadNotes(id);
   } catch (e) { const el = $("#note_err"); if (el) el.textContent = e.message; }
+}
+
+// ---------- evidence (chain of custody) ----------
+const EVIDENCE_ORIGINS = [
+  ["manual_upload", "Manual upload"],
+  ["authorized_export", "Authorized export"],
+  ["whatsapp_intake", "WhatsApp intake"],
+  ["telegram_public", "Telegram (public)"],
+  ["email", "E-mail"],
+  ["other", "Other"],
+];
+
+function humanBytes(n) {
+  n = Number(n) || 0;
+  if (n < 1024) return n + " B";
+  const u = ["KB", "MB", "GB"];
+  let i = -1;
+  do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
+  return n.toFixed(n < 10 ? 1 : 0) + " " + u[i];
+}
+
+async function loadEvidence(id) {
+  const box = $("#caseEvidence");
+  if (!box) return;
+  let rows = [];
+  try { rows = await api("GET", `/cases/${id}/evidence`); }
+  catch (e) { box.innerHTML = `<div class="panel" style="margin-top:14px"><span class="muted">Evidence unavailable: ${esc(e.message)}</span></div>`; return; }
+  const items = rows.length ? rows.map(ev => {
+    const when = (ev.created_at || "").slice(0, 16).replace("T", " ");
+    const dl = ev.stored
+      ? `<button class="sm ghost" data-action="evidenceDownload" data-id="${esc(ev.id)}" data-cid="${esc(id)}" data-fn="${esc(ev.filename)}">Download</button>`
+      : `<span class="muted" title="metadata-only (binary not retained)">metadata-only</span>`;
+    return `<div style="background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:8px 10px">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap">
+        <b>${esc(ev.filename)}</b> ${dl}
+      </div>
+      <div class="muted" style="font-size:12px">${esc(ev.mime_type)} · ${esc(humanBytes(ev.size_bytes))} · origin: ${esc(ev.origin)} · user #${esc(ev.uploaded_by_user_id ?? "—")} · ${esc(when)}</div>
+      ${ev.description ? `<div style="white-space:pre-wrap;margin-top:4px">${esc(ev.description)}</div>` : ""}
+      <div class="muted" style="font-size:11px;font-family:monospace;margin-top:4px;word-break:break-all">sha256: ${esc(ev.sha256)}</div>
+    </div>`;
+  }).join("") : '<span class="muted">No evidence attached yet.</span>';
+  const originOpts = EVIDENCE_ORIGINS.map(o => `<option value="${o[0]}">${esc(o[1])}</option>`).join("");
+  const adder = can("analyst") ? `
+    <div style="margin-top:10px;border-top:1px solid var(--line);padding-top:10px">
+      <input type="file" id="ev_file" style="width:100%">
+      <div class="srow2" style="margin-top:8px">
+        <div><label>Origin</label><select id="ev_origin" style="width:100%">${originOpts}</select></div>
+        <div><label>Description (optional)</label><input id="ev_desc" style="width:100%" placeholder="context/label"></div>
+      </div>
+      <div style="margin-top:8px"><button data-action="evidenceAdd" data-id="${esc(id)}">Attach evidence</button></div>
+      <div class="err" id="ev_err"></div>
+    </div>` : "";
+  box.innerHTML = `<div class="panel" style="margin-top:14px"><b>Evidence</b>
+    <div class="muted" style="font-size:12px">Append-only · SHA-256 computed server-side · chain of custody</div>
+    <div style="margin-top:8px;display:flex;flex-direction:column;gap:8px">${items}</div>${adder}</div>`;
+}
+
+async function addEvidence(id) {
+  const errEl = $("#ev_err");
+  if (errEl) errEl.textContent = "";
+  const fileEl = $("#ev_file");
+  const f = fileEl && fileEl.files && fileEl.files[0];
+  if (!f) { if (errEl) errEl.textContent = "Select a file."; return; }
+  const fd = new FormData();
+  fd.append("file", f);
+  fd.append("origin", $("#ev_origin").value);
+  const desc = $("#ev_desc").value.trim();
+  if (desc) fd.append("description", desc);
+  try {
+    await api("POST", `/cases/${id}/evidence`, fd);
+    toast("Evidence attached");
+    await loadEvidence(id);
+  } catch (e) { if (errEl) errEl.textContent = e.message; else toast(e.message, true); }
+}
+
+async function downloadEvidence(evId, btn) {
+  const caseId = Number(btn.dataset.cid);
+  const filename = btn.dataset.fn || "evidence.bin";
+  try {
+    const headers = SUPPORT_TENANT ? { "X-Tenant-Id": String(SUPPORT_TENANT.id) } : {};
+    const res = await fetch(`/cases/${caseId}/evidence/${evId}/download`,
+      { method: "GET", credentials: "same-origin", headers });
+    if (!res.ok) {
+      let msg = `Error ${res.status}`;
+      try { const j = await res.json(); if (j && j.detail) msg = typeof j.detail === "string" ? j.detail : msg; } catch {}
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  } catch (e) { toast(e.message, true); }
 }
 
 async function setCaseStatus(id, status) {
@@ -1207,8 +1309,8 @@ async function viewOrg() {
     grid.append(field(label, inp));
   });
   // criticidade como select
-  const crit = selectEl("org_criticality", [["baixo", "low"], ["medio", "medium"], ["alto", "high"], ["critico", "critical"]]);
-  crit.value = org.criticality || "medio";
+  const crit = selectEl("org_criticality", [["baixo", "low"], ["medium", "medium"], ["alto", "high"], ["critico", "critical"]]);
+  crit.value = org.criticality || "medium";
   if (!editable) crit.setAttribute("disabled", "true");
   grid.append(field("Criticality", crit));
   p.append(grid);
@@ -1314,6 +1416,8 @@ const ACTIONS = {
   opOff: (id) => toggleOperator(id, false),
   opGrant: (id, btn) => grantAccess(id, Number(btn.dataset.tid)),
   opRevoke: (id, btn) => revokeAccess(id, Number(btn.dataset.tid)),
+  evidenceAdd: (id) => addEvidence(id),
+  evidenceDownload: (id, btn) => downloadEvidence(id, btn),
 };
 document.addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-action]");
