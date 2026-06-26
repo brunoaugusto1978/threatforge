@@ -1183,7 +1183,7 @@ async function exportCasePdf(id) {
       return;
     }
     // bloqueado no Community (402/403): mensagem clara de upgrade
-    let msg = "Premium PDF export requires a ThreatForge Enterprise license.";
+    let msg = "Premium PDF export requires a ThreatForge Enterprise license.\nContact: to.brunoaugusto@yahoo.com.br\nWhatsApp: +55 21 964946855\nMore information: https://cbgsecurity.com.br";
     try { const j = await res.json(); if (j && typeof j.detail === "string") msg = j.detail; } catch {}
     if (res.status === 402 || res.status === 403) {
       toast(msg + " Contact your administrator to upgrade.", true);
