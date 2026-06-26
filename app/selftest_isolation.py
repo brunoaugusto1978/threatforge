@@ -450,6 +450,24 @@ def run():
     assert cb.get(f"/cases/{mcid}/export.md").status_code == 404
     _ok("cross-tenant markdown export -> 404")
 
+    # export STIX 2.1 local (Community, gratuito) — mcid tem evidências com sha256
+    rstix = cvv.get(f"/cases/{mcid}/export.stix.json")
+    assert rstix.status_code == 200, rstix.text
+    bundle = rstix.json()
+    assert bundle.get("type") == "bundle" and bundle.get("objects"), bundle
+    _types = [o["type"] for o in bundle["objects"]]
+    assert "identity" in _types and "report" in _types, _types
+    assert any(o["type"] == "indicator" for o in bundle["objects"]), "expected evidence indicators"
+    assert all(o.get("spec_version") == "2.1" for o in bundle["objects"]), bundle
+    _sb = rstix.text
+    assert "storage_key" not in _sb and "/data/evidence" not in _sb and ".bin" not in _sb
+    assert "application/stix+json" in rstix.headers.get("content-type", "")
+    assert 'filename="case-' in rstix.headers.get("content-disposition", "")
+    _ok("viewer exports STIX 2.1 bundle (indicators; no secrets/paths)")
+
+    assert cb.get(f"/cases/{mcid}/export.stix.json").status_code == 404
+    _ok("cross-tenant STIX export -> 404")
+
     # PDF premium bloqueado no Community -> 402 com mensagem Enterprise
     rpdf = caa.get(f"/cases/{mcid}/export.pdf")
     assert rpdf.status_code == 402, rpdf.text

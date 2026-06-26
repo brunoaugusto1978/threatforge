@@ -4,6 +4,7 @@ RBAC: viewer lê; analyst cria/edita campos e move entre estados ATIVOS;
 assign/close/reopen são admin-only. Cross-tenant -> 404.
 O case sobrevive a archive/delete/clear de brand/finding (FK SET NULL + snapshot).
 """
+import json
 import os
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
@@ -360,6 +361,29 @@ def export_case_markdown(case_id: int, request: Request,
            {"format": "markdown", "notes": len(notes), "evidence": len(evidence)})
     return Response(content=md, media_type="text/markdown; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="case-{case.id}.md"'})
+
+
+@router.get("/{case_id}/export.stix.json", dependencies=[Depends(require_viewer)])
+def export_case_stix(case_id: int, request: Request,
+                     db: Session = Depends(get_db),
+                     principal: Principal = Depends(require_viewer),
+                     tid: int = Depends(current_tenant_id)):
+    """Export STIX 2.1 (partial) LOCAL do case. Community, gratuito.
+
+    Indicadores do domínio do finding + hashes SHA-256 das evidências, mais um
+    report do case. Interop offline (importar no MISP/OpenCTI do cliente). Sem
+    rede, sem secrets, sem storage_key/paths. Push automático é Enterprise.
+    """
+    case = _owned_case(db, case_id, tid)  # tenant-scoped; cross-tenant -> 404
+    evidence = list(db.scalars(select(CaseEvidence).where(
+        CaseEvidence.tenant_id == tid, CaseEvidence.case_id == case_id)
+        .order_by(CaseEvidence.created_at.asc(), CaseEvidence.id.asc())))
+    bundle = exporters.render_case_stix_bundle(case, evidence)
+    _audit(db, principal, tid, request, "case.export", case.id,
+           {"format": "stix", "indicators": len(bundle["objects"]) - 2})
+    return Response(content=json.dumps(bundle, ensure_ascii=False),
+                    media_type="application/stix+json;version=2.1",
+                    headers={"Content-Disposition": f'attachment; filename="case-{case.id}.stix.json"'})
 
 
 @router.get("/{case_id}/export.pdf", dependencies=[Depends(require_viewer)])
