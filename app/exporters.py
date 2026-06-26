@@ -13,11 +13,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-
-class EnterpriseFeatureRequired(Exception):
-    """Raised by Community adapters for features gated to Enterprise."""
-
-    feature = "pdf_export"
+from app.features import EnterpriseFeatureRequired, Feature
 
 
 # Characters that could alter document structure or inject markup when the .md
@@ -136,4 +132,4 @@ def render_case_pdf(case, **kwargs) -> bytes:
     The Enterprise package overrides this function with a real renderer. Here it
     only exposes the seam and refuses, leaking nothing about the Enterprise module.
     """
-    raise EnterpriseFeatureRequired()
+    raise EnterpriseFeatureRequired(Feature.EXPORT_PDF)

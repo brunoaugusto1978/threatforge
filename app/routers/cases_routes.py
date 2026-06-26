@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import audit, config, evidence_store, exporters
+from app import audit, config, evidence_store, exporters, features
 from app.auth import Principal, current_tenant_id, require_analyst, require_viewer
 from app.database import get_db
 from app.models import Brand, BrandFinding, CaseEvidence, CaseNote, InvestigationCase, User, utcnow
@@ -376,11 +376,10 @@ def export_case_pdf(case_id: int, request: Request,
     case = _owned_case(db, case_id, tid)  # tenant-scoped; cross-tenant -> 404
     try:
         pdf_bytes = exporters.render_case_pdf(case, edition=config.EDITION)
-    except exporters.EnterpriseFeatureRequired:
+    except features.EnterpriseFeatureRequired as exc:
         _audit(db, principal, tid, request, "case.export_pdf_denied", case.id,
                {"edition": config.EDITION})
-        raise HTTPException(status_code=402,
-                            detail=config.enterprise_license_message())
+        raise exc
     # Caminho Enterprise (não presente no Community).
     return Response(content=pdf_bytes, media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="case-{case.id}.pdf"'})

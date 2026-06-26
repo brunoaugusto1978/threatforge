@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import config
+from app import config, features
 from app.auth import current_tenant_id, require_viewer
 from app.bootstrap import ensure_operator
 from app.database import Base, engine, get_db
@@ -31,6 +31,16 @@ app = FastAPI(
     description="Open Source Cyber Threat Intelligence Platform",
     version="0.6.0",
 )
+
+
+from fastapi import Request as _Request  # noqa: E402
+from fastapi.responses import JSONResponse as _JSONResponse  # noqa: E402
+
+
+@app.exception_handler(features.EnterpriseFeatureRequired)
+async def _enterprise_feature_required(request: _Request, exc: features.EnterpriseFeatureRequired):
+    # Recurso pago/licenciado sem licença ativa -> 402 com bloco de upgrade.
+    return _JSONResponse(status_code=402, content=features.payment_required_detail(exc.feature))
 
 Base.metadata.create_all(bind=engine)
 ensure_operator()

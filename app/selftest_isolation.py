@@ -455,6 +455,12 @@ def run():
     assert rpdf.status_code == 402, rpdf.text
     assert "Enterprise license" in (rpdf.json().get("detail") or ""), rpdf.text
     _ok("PDF export blocked in Community -> 402 (Enterprise license required)")
+    pj = rpdf.json()
+    assert pj.get("feature") == "export.pdf", pj
+    assert pj.get("edition") == "community", pj
+    _up = pj.get("upgrade") or {}
+    assert _up.get("email") and _up.get("url"), pj
+    _ok("402 carries standardized upgrade block (feature/edition/contacts)")
 
     # cross-tenant PDF também -> 404 (não vaza nem o bloqueio)
     assert cb.get(f"/cases/{mcid}/export.pdf").status_code == 404
