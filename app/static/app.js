@@ -834,10 +834,19 @@ async function deleteBrand(id) {
 const CASE_STATUSES = ["open", "triage", "investigating", "contained", "closed", "false_positive"];
 const CASE_ACTIVE = ["open", "triage", "investigating", "contained"];
 const SEV_COLOR = { critico: "var(--red)", alto: "var(--orange)", medio: "var(--yellow)", baixo: "var(--gray)" };
+const SEV_LABEL = { critico: "critical", alto: "high", medio: "medium", baixo: "low" };
+
+function severityLabel(value) {
+  return SEV_LABEL[value] || value || "";
+}
 
 function selectHtml(id, opts, current, disabled) {
-  const o = opts.map(v => `<option value="${esc(v)}" ${v === current ? "selected" : ""}>${esc(v || "(any)")}</option>`).join("");
-  return `<select id="${id}" style="width:100%" ${disabled ? "disabled" : ""}>${o}</select>`;
+  const o = opts.map((opt) => {
+    const value = Array.isArray(opt) ? opt[0] : opt;
+    const label = Array.isArray(opt) ? opt[1] : (opt || "(any)");
+    return `<option value="${esc(value)}" ${String(value) === String(current || "") ? "selected" : ""}>${esc(label)}</option>`;
+  }).join("");
+  return `<select id="${esc(id)}" style="width:100%" ${disabled ? "disabled" : ""}>${o}</select>`;
 }
 function selectKV(id, pairs, anyLabel) {
   const sel = el("select", { id });
@@ -901,7 +910,7 @@ async function loadCases() {
       <tr>
         <td>#${esc(c.id)}</td>
         <td><b>${esc(c.title)}</b></td>
-        <td><span style="color:${SEV_COLOR[c.severity] || "var(--muted)"}">${esc(c.severity)}</span></td>
+        <td><span style="color:${SEV_COLOR[c.severity] || "var(--muted)"}">${esc(severityLabel(c.severity))}</span></td>
         <td class="muted">${esc(c.status)}</td>
         <td class="muted">${c.brand_id ?? "—"}</td>
         <td class="muted">${c.assignee_user_id ?? "—"}</td>
