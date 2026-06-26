@@ -11,6 +11,7 @@ paths, no tokens, and no evidence binaries (metadata only).
 """
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
 
 from app.features import EnterpriseFeatureRequired, Feature
@@ -133,3 +134,116 @@ def render_case_pdf(case, **kwargs) -> bytes:
     only exposes the seam and refuses, leaking nothing about the Enterprise module.
     """
     raise EnterpriseFeatureRequired(Feature.EXPORT_PDF)
+
+
+# ---------------------------------------------------------------------------
+# STIX 2.1 (partial) — export LOCAL de um case. Community, gratuito.
+# Sem chamadas de rede, sem secrets, sem storage_key/paths: apenas indicadores
+# (domínio do finding + hashes SHA-256 das evidências) + report do case.
+# ---------------------------------------------------------------------------
+
+_VERDICT_INDICATOR_TYPE = {
+    "malicious": "malicious-activity",
+    "suspicious": "anomalous-activity",
+    "low": "benign",
+    "no_known_threat": "benign",
+    "info": "unknown",
+}
+
+
+def _stix_ts(value=None) -> str:
+    """Timestamp STIX (UTC, milissegundos, sufixo Z)."""
+    if value is None:
+        dt = datetime.now(timezone.utc)
+    elif isinstance(value, datetime):
+        dt = value
+    else:  # string ISO já formatada — normaliza o "T"/sufixo de forma simples
+        txt = str(value).replace(" ", "T")
+        if not txt.endswith("Z") and "+" not in txt:
+            txt = txt.split(".")[0] + ".000Z"
+        return txt
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def _stix_str(value) -> str:
+    """Escapa valor para dentro de um padrão STIX (aspas simples)."""
+    return str(value or "").replace("\\", "\\\\").replace("'", "\\'")
+
+
+def _verdict_indicator_type(verdict) -> str:
+    return _VERDICT_INDICATOR_TYPE.get(str(verdict or "").lower(), "unknown")
+
+
+def _new_id(kind: str) -> str:
+    return f"{kind}--{uuid.uuid4()}"
+
+
+def render_case_stix_bundle(case, evidence, producer_name: str = "ThreatForge") -> dict:
+    """Monta um STIX 2.1 bundle (partial) a partir do case.
+
+    Objetos: identity (produtor), report (case), indicators (domínio do finding
+    e hashes SHA-256 das evidências). Nada de secrets, caminhos ou rede.
+    """
+    now = _stix_ts()
+    identity_id = _new_id("identity")
+    identity = {
+        "type": "identity", "spec_version": "2.1", "id": identity_id,
+        "created": now, "modified": now,
+        "name": producer_name or "ThreatForge", "identity_class": "system",
+    }
+
+    indicators: list[dict] = []
+    refs: list[str] = []
+
+    snap = getattr(case, "finding_snapshot", None) or {}
+    domain = snap.get("domain")
+    if domain:
+        ind = {
+            "type": "indicator", "spec_version": "2.1", "id": _new_id("indicator"),
+            "created": now, "modified": now, "created_by_ref": identity_id,
+            "name": f"Suspicious domain {domain}",
+            "pattern": "[domain-name:value = '%s']" % _stix_str(domain),
+            "pattern_type": "stix",
+            "valid_from": _stix_ts(getattr(case, "created_at", None)),
+            "indicator_types": [_verdict_indicator_type(snap.get("verdict"))],
+        }
+        score = snap.get("score")
+        try:
+            if score is not None:
+                ind["confidence"] = max(0, min(100, int(score)))
+        except (TypeError, ValueError):
+            pass
+        indicators.append(ind)
+        refs.append(ind["id"])
+
+    for e in evidence:
+        if not getattr(e, "sha256", None):
+            continue
+        ind = {
+            "type": "indicator", "spec_version": "2.1", "id": _new_id("indicator"),
+            "created": now, "modified": now, "created_by_ref": identity_id,
+            "name": f"Evidence file {e.filename}",
+            "pattern": "[file:hashes.'SHA-256' = '%s']" % _stix_str(e.sha256),
+            "pattern_type": "stix",
+            "valid_from": _stix_ts(getattr(e, "created_at", None)),
+            "indicator_types": ["unknown"],
+        }
+        indicators.append(ind)
+        refs.append(ind["id"])
+
+    report = {
+        "type": "report", "spec_version": "2.1", "id": _new_id("report"),
+        "created": now, "modified": now, "created_by_ref": identity_id,
+        "name": case.title or f"Case #{case.id}",
+        "published": _stix_ts(getattr(case, "created_at", None)),
+        "report_types": ["threat-report"],
+        # object_refs não pode ser vazio: referencia a identity quando não há indicadores
+        "object_refs": refs or [identity_id],
+    }
+    if getattr(case, "description", None):
+        report["description"] = str(case.description)
+
+    objects = [identity, report] + indicators
+    return {"type": "bundle", "id": _new_id("bundle"), "objects": objects}
