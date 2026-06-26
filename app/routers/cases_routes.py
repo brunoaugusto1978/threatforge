@@ -380,7 +380,7 @@ def export_case_pdf(case_id: int, request: Request,
         _audit(db, principal, tid, request, "case.export_pdf_denied", case.id,
                {"edition": config.EDITION})
         raise HTTPException(status_code=402,
-                            detail="Premium PDF export requires a ThreatForge Enterprise license.")
+                            detail=config.enterprise_license_message())
     # Caminho Enterprise (não presente no Community).
     return Response(content=pdf_bytes, media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="case-{case.id}.pdf"'})
