@@ -17,7 +17,7 @@ from fastapi import (APIRouter, Depends, File, Form, HTTPException, Query,
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import audit, config, exposure_ingest as ing
+from app import audit, config, exposure_ingest as ing, risk
 from app.auth import (Principal, current_tenant_id, require_admin,
                       require_analyst, require_viewer)
 from app.database import get_db
@@ -83,6 +83,18 @@ def _owned_ingest(db, ingest_id, tid) -> ExposureIngestBatch:
     if b is None or b.tenant_id != tid:
         raise HTTPException(status_code=404, detail="Ingest batch not found.")
     return b
+
+
+def _apply_risk(db, tid, f) -> None:
+    """Recalcula risk_score + detail.risk_breakdown (determinístico)."""
+    asset = None
+    if f.asset_id:
+        a = db.get(MonitoredAsset, f.asset_id)
+        if a and a.tenant_id == tid:
+            asset = a
+    bd = risk.compute(f, asset)
+    f.risk_score = bd["score"]
+    f.detail = {**(f.detail or {}), "risk_breakdown": bd}
 
 
 # ==================== monitored assets ====================
@@ -183,6 +195,18 @@ def get_finding(finding_id: int, db: Session = Depends(get_db),
     return _finding_out(_owned_finding(db, finding_id, tid), principal)
 
 
+@router.get("/findings/{finding_id}/risk", dependencies=[Depends(require_viewer)])
+def get_finding_risk(finding_id: int, db: Session = Depends(get_db),
+                     tid: int = Depends(current_tenant_id)):
+    """Breakdown explicável do risk score (para a UI)."""
+    f = _owned_finding(db, finding_id, tid)
+    bd = (f.detail or {}).get("risk_breakdown")
+    if not bd:
+        asset = db.get(MonitoredAsset, f.asset_id) if f.asset_id else None
+        bd = risk.compute(f, asset)
+    return bd
+
+
 # ==================== intake / import (Issue 2) ====================
 def _reliability_for(source, rel, cred):
     d_rel, d_cred = _SOURCE_DEFAULTS.get((source or "").lower(), ("F", "6"))
@@ -200,6 +224,7 @@ def _persist_record(db, tid, rec, *, source, principal, ingest=None):
         existing.last_seen = utcnow()
         existing.detail = {**(existing.detail or {}),
                            "sightings": int((existing.detail or {}).get("sightings", 1)) + 1}
+        _apply_risk(db, tid, existing)  # recomputa na deduplicação
         db.add(existing)
         return "deduped", existing
     rel = rec.get("source_reliability")
@@ -212,10 +237,12 @@ def _persist_record(db, tid, rec, *, source, principal, ingest=None):
         severity=rec.get("severity") or "medium", status="new",
         observed_at=rec.get("observed_at"),
         dedup_key=dkey, detail=detail, redacted=True,
+        first_seen=utcnow(), last_seen=utcnow(),
         ingest_id=(ingest.id if ingest else None),
         record_number=rec.get("_line"),
         parser_version=(ingest.parser_version if ingest else None),
         created_by_user_id=principal.user_id)
+    _apply_risk(db, tid, f)  # recomputa na ingestão
     db.add(f)
     return "created", f
 
@@ -337,6 +364,7 @@ def triage_finding(finding_id: int, payload: FindingTriage, request: Request,
             setattr(f, field, val)
             changes[field] = val
     if changes:
+        _apply_risk(db, tid, f)  # recomputa na triagem
         db.commit()
         _audit(db, principal, tid, request, "exposure.finding_triage", f.id, {"changes": list(changes)})
     return _finding_out(f, principal)
