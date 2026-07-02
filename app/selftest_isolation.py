@@ -566,7 +566,81 @@ def run():
     assert any(a.get("action") == "integration.sync_denied" for a in aint)
     _ok("audit logs integration.config_denied and integration.sync_denied")
 
-    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS: ALL TESTS PASSED ✅')
+    # ============ EXPOSURE MONITORING (DRP) — Issue 1 ============
+    from app.database import SessionLocal as _SL
+    from app.models import ExposureFinding, MonitoredAsset
+
+    # admin A cria um monitored asset (VIP/identidade) com consentimento
+    ra_as = ca.post("/exposure/assets", json={
+        "asset_type": "identity", "label": "CEO – Fulano", "value": "ceo@a-corp.com.br",
+        "criticality": "critical", "consent_ref": "DPA-2026-001"})
+    assert ra_as.status_code == 201, ra_as.text
+    a_asset = ra_as.json()
+    assert a_asset["value_hash"] and a_asset["consent_ref"] == "DPA-2026-001"
+    assert a_asset["value_hash"] != a_asset["value"], "value_hash deve ser hash, não o valor"
+    _ok("admin creates monitored asset (VIP) with consent_ref + server-side value_hash")
+
+    # viewer lê, mas NÃO cria (require_admin -> 403)
+    assert cvv.get("/exposure/assets").status_code == 200
+    assert cvv.post("/exposure/assets", json={
+        "asset_type": "email", "label": "x", "value": "x@a.com"}).status_code == 403
+    _ok("viewer reads assets but cannot create (403)")
+
+    # tenant B NÃO enxerga asset de A (cross-tenant -> 404) e lista isolada
+    assert cb.get(f"/exposure/assets/{a_asset['id']}").status_code == 404
+    assert cb.get("/exposure/assets").json() == []
+    _ok("monitored assets isolated per tenant (cross-tenant 404; B sees none)")
+
+    # cria findings direto no banco (intake real = Issue 2), 1 por tenant, com reliability
+    _es = _SL()
+    ef_a = ExposureFinding(
+        tenant_id=ta, exposure_type="credential_exposure", asset_id=a_asset["id"],
+        title="Credential leak ceo@a-corp", source="stealer",
+        source_reliability="B", info_credibility="2", severity="high", status="new",
+        dedup_key="a-cred-1",
+        detail={"email": "ceo@a-corp.com.br", "domain": "a-corp.com.br",
+                "password_hash": "e3b0c44298fc1c149afbf4c8996fb924", "password_masked": "S3****!x",
+                "stealer_family": "redline"})
+    ef_b = ExposureFinding(
+        tenant_id=tb, exposure_type="identity_exposure", title="Impersonation of B exec",
+        source="osint", source_reliability="D", info_credibility="4", severity="medium",
+        status="new", dedup_key="b-id-1", detail={"person_label": "B exec"})
+    _es.add(ef_a); _es.add(ef_b); _es.commit()
+    a_fid = ef_a.id
+    _es.close()
+
+    # isolamento de findings
+    a_finds = ca.get("/exposure/findings").json()
+    b_finds = cb.get("/exposure/findings").json()
+    assert [f["id"] for f in a_finds] == [a_fid], a_finds
+    assert all(f["tenant_id"] == tb for f in b_finds) and a_fid not in [f["id"] for f in b_finds]
+    _ok("exposure findings isolated per tenant")
+
+    # cross-tenant get -> 404
+    assert cb.get(f"/exposure/findings/{a_fid}").status_code == 404
+    _ok("cross-tenant exposure finding -> 404")
+
+    # Source Reliability (Admiralty) presente e sem senha em claro
+    fa = ca.get(f"/exposure/findings/{a_fid}").json()
+    assert fa["source_reliability"] == "B" and fa["info_credibility"] == "2", fa
+    _cols = set(ExposureFinding.__table__.columns.keys())
+    assert not ({"password", "secret", "token", "api_key"} & _cols), "modelo não pode ter coluna de segredo em claro"
+    _blob = str(fa["detail"])
+    assert "password_hash" in _blob and "S3****!x" in _blob, fa
+    _ok("Admiralty reliability/credibility present; NO plaintext secret (hash+mask only)")
+
+    # catálogo de tipos: MVP = identity + credential
+    types = {t["type"]: t["mvp"] for t in ca.get("/exposure/types").json()}
+    assert types.get("identity_exposure") and types.get("credential_exposure"), types
+    assert types.get("secret_exposure") is False, "secret_exposure previsto no enum mas não-MVP"
+    _ok("exposure types catalog: MVP = identity + credential; future types reserved")
+
+    # audit do CRUD de asset
+    aexp = ca.get("/audit").json()
+    assert any(a.get("action") == "exposure.asset_create" for a in aexp)
+    _ok("audit logs exposure.asset_create")
+
+    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS + EXPOSURE: ALL TESTS PASSED ✅')
 if __name__ == '__main__':
     try:
         run()
