@@ -1547,6 +1547,8 @@ const ACTIONS = {
   expRisk: (id) => toggleRiskBreakdown(id),
   expTimeline: (id) => toggleFindingTimeline(id),
   expCorrelate: (id) => toggleCorrelate(id),
+  corList: (id) => renderCorList(id),
+  corGraph: (id) => renderCorGraph(id),
   tlFilter: (_id, btn) => tlSourceFilter(btn.dataset.name),
 };
 document.addEventListener("click", (e) => {
@@ -2102,6 +2104,20 @@ function _corGroup(kind, nodes) {
     <div class="muted" style="font-size:12px;margin-bottom:4px">${meta[0]} ${esc(meta[1])} (${nodes.length})</div>${items}</div>`;
 }
 
+const COR_CACHE = {};
+const COR_EXPAND = {};
+const _COR_COLOR = {
+  exposure_finding: "#c0392b", monitored_asset: "#2f6fb0", observable: "#2e7d32",
+  brand: "#8e44ad", brand_finding: "#b8860b", case: "#16a085", identifier: "#888",
+};
+const _COR_CAP = 3;  // agrupa quando um tipo tem mais que isso
+
+function _viaColor(via) {
+  const p = String(via || "").split(":")[0];
+  return { email: "#2f6fb0", domain: "#2e7d32", hash: "#8e44ad",
+    "case-of-finding": "#d4a017", case: "#d4a017" }[p] || "#5a6b80";
+}
+
 async function toggleCorrelate(id) {
   const box = $("#cor_" + id);
   if (!box) return;
@@ -2111,6 +2127,21 @@ async function toggleCorrelate(id) {
   let g;
   try { g = await api("GET", `/correlation?entity=finding:${id}`); }
   catch (e) { box.innerHTML = `<span class="muted">${esc(e.message)}</span>`; return; }
+  COR_CACHE[id] = g; COR_EXPAND[id] = new Set();
+  if ((g.nodes || []).length) renderCorGraph(id); else renderCorList(id);
+}
+
+function _corHeader(id, title, otherBtn) {
+  return `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+    <b>${esc(title)}</b>
+    <span style="display:flex;gap:6px">${otherBtn}
+      ${can("analyst") ? `<button class="sm" data-action="expOpenCase" data-id="${esc(id)}">Open investigation</button>` : ""}
+    </span></div>`;
+}
+
+function renderCorList(id) {
+  const box = $("#cor_" + id); const g = COR_CACHE[id];
+  if (!box || !g) return;
   const viaOf = {}; (g.edges || []).forEach(e => { viaOf[e.target] = e.via; });
   const nodes = (g.nodes || []).map(n => ({ ...n, _via: viaOf[n.id] }));
   if (!nodes.length) { box.innerHTML = '<div class="panel" style="margin-top:6px"><span class="muted">No related entities found.</span></div>'; return; }
@@ -2121,13 +2152,99 @@ async function toggleCorrelate(id) {
   const idents = g.identifiers ? Object.entries(g.identifiers).map(([k, vs]) =>
     `<span class="muted" style="font-size:11px;margin-right:8px"><b>${esc(k)}</b>: ${esc(vs.join(", "))}</span>`).join("") : "";
   box.innerHTML = `<div class="panel" style="margin-top:6px;border-left:3px solid var(--accent)">
-    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-      <b>Correlated entities (${nodes.length})</b>
-      ${can("analyst") ? `<button class="sm" data-action="expOpenCase" data-id="${esc(id)}">Open investigation</button>` : ""}
-    </div>
+    ${_corHeader(id, `Correlated entities (${nodes.length})`, `<button class="sm ghost" data-action="corGraph" data-id="${esc(id)}">Graph view</button>`)}
     <div style="margin-top:4px">${idents}</div>
     <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:8px">${cols}</div>
   </div>`;
+}
+
+function _corLegend(kinds) {
+  return `<div style="display:flex;gap:12px;flex-wrap:wrap;margin:6px 0">` + kinds.map(k => {
+    const meta = _COR_META[k] || ["\u2022", k];
+    return `<span class="muted" style="font-size:11px;display:inline-flex;align-items:center;gap:4px">
+      <span style="width:10px;height:10px;border-radius:50%;background:${_COR_COLOR[k] || "#555"};display:inline-block"></span>${esc(meta[1])}</span>`;
+  }).join("") + `</div>`;
+}
+
+function renderCorGraph(id) {
+  const box = $("#cor_" + id); const g = COR_CACHE[id];
+  if (!box || !g) return;
+  const nodes = g.nodes || [];
+  if (!nodes.length) return renderCorList(id);
+  const viaOf = {}; (g.edges || []).forEach(e => { viaOf[e.target] = e.via; });
+  const meta = (k) => _COR_META[k] || ["\u2022", k];
+  const trunc = (t, n) => { t = String(t || ""); return t.length > n ? esc(t.slice(0, n - 1)) + "\u2026" : esc(t); };
+  const expanded = COR_EXPAND[id] || new Set();
+
+  // agrupa por tipo; tipos volumosos viram um nó agregado "+N"
+  const byKind = {};
+  nodes.forEach(n => { (byKind[n.kind] = byKind[n.kind] || []).push(n); });
+  const kindsPresent = Object.keys(byKind);
+  const items = [];
+  kindsPresent.forEach(k => {
+    const arr = byKind[k];
+    if (arr.length > _COR_CAP && !expanded.has(k)) {
+      items.push({ agg: true, kind: k, count: arr.length, via: viaOf[arr[0].id] });
+    } else {
+      arr.forEach(n => items.push({ agg: false, node: n, via: viaOf[n.id] }));
+    }
+  });
+
+  const W = 760, H = 540, cx = W / 2, cy = H / 2;
+  const R = Math.min(230, Math.max(175, 130 + items.length * 8));
+  let edges = "", gnodes = "";
+  items.forEach((it, i) => {
+    const ang = (i / items.length) * 2 * Math.PI - Math.PI / 2;
+    const x = cx + R * Math.cos(ang), y = cy + R * Math.sin(ang);
+    const via = it.via || "";
+    const mx = cx + (x - cx) * 0.55, my = cy + (y - cy) * 0.55;
+    edges += `<line x1="${cx}" y1="${cy}" x2="${x.toFixed(0)}" y2="${y.toFixed(0)}" stroke="${_viaColor(via)}" stroke-width="2"/>`;
+    if (via) edges += `<text x="${mx.toFixed(0)}" y="${my.toFixed(0)}" font-size="10" fill="${_viaColor(via)}" text-anchor="middle">${esc(via)}</text>`;
+    if (it.agg) {
+      gnodes += `<g data-agg="1" data-kind="${esc(it.kind)}" style="cursor:pointer">
+        <title>Click to expand ${esc(it.count)} ${esc(meta(it.kind)[1])}</title>
+        <circle cx="${x.toFixed(0)}" cy="${y.toFixed(0)}" r="30" fill="${_COR_COLOR[it.kind] || "#555"}" stroke="#fff" stroke-width="1.5" stroke-dasharray="4 3"/>
+        <text x="${x.toFixed(0)}" y="${(y + 6).toFixed(0)}" font-size="17" text-anchor="middle" fill="#fff" font-weight="700">+${esc(it.count)}</text>
+        <text x="${x.toFixed(0)}" y="${(y + 48).toFixed(0)}" font-size="11" text-anchor="middle" fill="currentColor">${esc(meta(it.kind)[1])}s</text>
+      </g>`;
+    } else {
+      const n = it.node;
+      const risk = (n.risk != null ? ` \u00b7 risk ${n.risk}` : "");
+      gnodes += `<g data-node="1" data-kind="${esc(n.kind)}" data-refid="${esc(n.ref && n.ref.id)}" style="cursor:pointer">
+        <title>${esc(meta(n.kind)[1])}: ${esc(n.label)}${via ? " \u00b7 via " + esc(via) : ""}${esc(risk)}</title>
+        <circle cx="${x.toFixed(0)}" cy="${y.toFixed(0)}" r="30" fill="${_COR_COLOR[n.kind] || "#555"}"/>
+        <text x="${x.toFixed(0)}" y="${(y + 6).toFixed(0)}" font-size="18" text-anchor="middle">${meta(n.kind)[0]}</text>
+        <text x="${x.toFixed(0)}" y="${(y + 48).toFixed(0)}" font-size="11" text-anchor="middle" fill="currentColor">${trunc(n.label, 24)}</text>
+      </g>`;
+    }
+  });
+  const seed = `<g><title>${esc(g.seed.label)}</title>
+    <circle cx="${cx}" cy="${cy}" r="38" fill="#c0392b" stroke="#fff" stroke-width="2"/>
+    <text x="${cx}" y="${cy + 6}" font-size="20" text-anchor="middle">\ud83d\udd11</text>
+    <text x="${cx}" y="${cy + 58}" font-size="12" text-anchor="middle" fill="currentColor" font-weight="700">${trunc(g.seed.label, 28)}</text></g>`;
+  const svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px;color:var(--txt)">${edges}${seed}${gnodes}</svg>`;
+  box.innerHTML = `<div class="panel" style="margin-top:6px;border-left:3px solid var(--accent)">
+    ${_corHeader(id, `Correlation graph (${nodes.length})`, `<button class="sm ghost" data-action="corList" data-id="${esc(id)}">List view</button>`)}
+    ${_corLegend(kindsPresent)}
+    <div style="overflow-x:auto">${svg}</div>
+    <div class="muted" style="font-size:11px">Hover a node for details \u00b7 click to open the module \u00b7 click "+N" to expand.</div>
+  </div>`;
+  const svgEl = box.querySelector("svg");
+  if (svgEl) svgEl.addEventListener("click", (e) => {
+    const ag = e.target.closest("[data-agg]");
+    if (ag) { (COR_EXPAND[id] = COR_EXPAND[id] || new Set()).add(ag.dataset.kind); renderCorGraph(id); return; }
+    const gg = e.target.closest("[data-node]");
+    if (gg) corNodeClick(gg.dataset.kind, gg.dataset.refid);
+  });
+}
+
+function corNodeClick(kind, refid) {
+  if (kind === "observable") navigate("iocs");
+  else if (kind === "brand" || kind === "brand_finding") navigate("brands");
+  else if (kind === "case") navigate("cases");
+  else if (kind === "monitored_asset") { EXPOSURE_TAB = "assets"; navigate("exposure"); }
+  else if (kind === "exposure_finding") { EXPOSURE_TAB = "findings"; navigate("exposure"); }
+  else toast(`${kind}: ${refid}`);
 }
 
 // ---------- form helpers ----------
