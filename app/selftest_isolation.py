@@ -769,9 +769,54 @@ def run():
     assert ca.get("/timeline?scope=finding:abc").status_code == 422
     _ok("timeline cross-tenant -> 404; invalid scope -> 422")
 
+    # ============ RISK SCORE EXPLICÁVEL ============
+    # alto: credential + asset critical (a_asset) + Admiralty B2 + fresco
+    rhi = caa.post("/exposure/findings/intake", json={
+        "exposure_type": "credential_exposure", "source": "stealer",
+        "asset_id": a_asset["id"], "source_reliability": "B", "info_credibility": "2",
+        "detail": {"email": "riskhi@a-corp.com.br", "password": "Zzz9!", "domain": "a-corp.com.br"}})
+    assert rhi.status_code == 201, rhi.text
+    hi = rhi.json(); hi_id = hi["id"]
+    assert hi["risk_score"] >= 70 and hi["detail"]["risk_breakdown"]["band"] in ("high", "critical"), hi
+    assert hi["detail"]["risk_breakdown"]["score"] == hi["risk_score"]
+    _ok(f"high-risk finding scored {hi['risk_score']} ({hi['detail']['risk_breakdown']['band']})")
+
+    # baixo: identity + OSINT (D4) + sem asset
+    rlo = caa.post("/exposure/findings/intake", json={
+        "exposure_type": "identity_exposure", "source": "osint",
+        "source_reliability": "D", "info_credibility": "4",
+        "detail": {"person_label": "Random mention", "url": "http://x.example"}})
+    assert rlo.status_code == 201, rlo.text
+    lo = rlo.json(); lo_id = lo["id"]; lo_score = lo["risk_score"]
+    assert lo_score < hi["risk_score"], (lo_score, hi["risk_score"])
+    _ok(f"lower-risk finding scored {lo_score} (< high)")
+
+    # breakdown endpoint (para a UI) com fatores explicáveis
+    bd = caa.get(f"/exposure/findings/{hi_id}/risk").json()
+    assert bd["score"] == hi["risk_score"] and isinstance(bd["factors"], list), bd
+    _labels = {f["label"] for f in bd["factors"]}
+    assert {"Asset criticality", "Exposure type", "Source reliability", "Verification"} <= _labels, _labels
+    _ok("risk breakdown endpoint returns explainable factors")
+
+    # determinismo
+    bd2 = caa.get(f"/exposure/findings/{hi_id}/risk").json()
+    assert bd2["score"] == bd["score"], (bd, bd2)
+    _ok("risk score is deterministic (same inputs -> same score)")
+
+    # recompute na triagem: new -> confirmed aumenta o score
+    rt = caa.patch(f"/exposure/findings/{lo_id}", json={"status": "confirmed"})
+    assert rt.status_code == 200 and rt.json()["risk_score"] > lo_score, rt.text
+    _ok("risk recomputed on triage (confirmed raises score)")
+
+    # false_positive zera o score
+    rfp = caa.patch(f"/exposure/findings/{lo_id}", json={"status": "false_positive"})
+    assert rfp.status_code == 200 and rfp.json()["risk_score"] == 0, rfp.text
+    _ok("false_positive drives risk_score to 0")
 
 
-    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS + EXPOSURE + TIMELINE: ALL TESTS PASSED ✅')
+
+
+    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS + EXPOSURE + TIMELINE + RISK: ALL TESTS PASSED ✅')
 if __name__ == '__main__':
     try:
         run()

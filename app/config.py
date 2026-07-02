@@ -1,4 +1,5 @@
 """Central configuration. Everything comes from environment variables — nothing hardcoded."""
+import json
 import os
 
 from dotenv import load_dotenv
@@ -91,6 +92,23 @@ EXPOSURE_PII_MASKING: str = os.environ.get("EXPOSURE_PII_MASKING", "off").strip(
 EXPOSURE_IMPORT_MAX_BYTES: int = int(
     os.environ.get("EXPOSURE_IMPORT_MAX_BYTES", str(5 * 1024 * 1024)) or str(5 * 1024 * 1024))
 EXPOSURE_IMPORT_ALLOWED_MIME: set[str] = {"text/plain", "text/csv", "application/json"}
+
+# Risk Score — pesos (contribuição máxima de cada fator). Ajustáveis aqui ou via
+# env RISK_WEIGHTS_JSON (JSON parcial que sobrescreve chaves). Soma dos máximos ~ 102.
+RISK_WEIGHTS: dict = {
+    "asset_criticality": 25,
+    "exposure_type": 25,
+    "admiralty": 18,
+    "freshness": 12,
+    "verification": 10,
+    "sensitivity": 12,
+}
+_rw = os.environ.get("RISK_WEIGHTS_JSON")
+if _rw:
+    try:
+        RISK_WEIGHTS = {**RISK_WEIGHTS, **json.loads(_rw)}
+    except Exception:
+        pass
 
 # Contatos comerciais p/ o CTA de upgrade Enterprise (bloco "upgrade" no 402).
 THREATFORGE_ENTERPRISE_CONTACT_EMAIL: str = os.environ.get(
