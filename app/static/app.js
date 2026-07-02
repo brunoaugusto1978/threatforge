@@ -1605,7 +1605,7 @@ async function configureIntegration(name) {
 }
 
 // ---------- exposure monitoring (DRP) ----------
-let EXPOSURE_TAB = "findings";
+let EXPOSURE_TAB = "dashboard";
 const EXPF = { type: "", status: "" };
 let LAST_IMPORT = null;
 const ASSET_TYPES_UI = ["identity", "email", "domain", "keyword", "secret_pattern", "repo", "ip_range"];
@@ -1614,18 +1614,104 @@ const EXP_TYPES_UI = [["identity_exposure", "Identity"], ["credential_exposure",
 const EXP_STATUS_UI = ["new", "triaging", "confirmed", "mitigated", "closed", "false_positive", "duplicate"];
 const PARSERS_UI = [["combolist", "Combolist (email:password)"], ["csv_generic", "Generic CSV"], ["json_findings", "JSON findings"]];
 
+function _svgBars(rows) {
+  const w = 280, h = 24, gap = 9, labelW = 66;
+  const barW = w - labelW - 44;
+  const max = Math.max(1, ...rows.map(r => r[1]));
+  const height = rows.length * (h + gap);
+  const bars = rows.map((r, i) => {
+    const y = i * (h + gap);
+    const bw = Math.round(barW * r[1] / max);
+    return `<text x="0" y="${y + h / 2 + 4}" font-size="12" fill="#888">${esc(r[0])}</text>`
+      + `<rect x="${labelW}" y="${y}" width="${bw}" height="${h}" rx="4" fill="${r[2]}"></rect>`
+      + `<text x="${labelW + bw + 6}" y="${y + h / 2 + 4}" font-size="12" fill="currentColor">${esc(r[1])}</text>`;
+  }).join("");
+  return `<svg viewBox="0 0 ${w} ${height}" width="100%" style="margin-top:8px;max-width:${w}px">${bars}</svg>`;
+}
+
+function _riskBandOf(f) {
+  const b = f.detail && f.detail.risk_breakdown && f.detail.risk_breakdown.band;
+  if (b) return b;
+  const s = f.risk_score || 0;
+  return s >= 90 ? "critical" : s >= 70 ? "high" : s >= 40 ? "medium" : "low";
+}
+
+async function loadExposureDashboard() {
+  const box = $("#expBody");
+  if (!box) return;
+  box.innerHTML = '<span class="muted">loading…</span>';
+  let findings = [], assets = [], cases = [];
+  try {
+    [findings, assets, cases] = await Promise.all([
+      api("GET", "/exposure/findings"),
+      api("GET", "/exposure/assets"),
+      api("GET", "/cases").catch(() => []),
+    ]);
+  } catch (e) { box.innerHTML = `<span class="muted">${esc(e.message)}</span>`; return; }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const total = findings.length;
+  const highRisk = findings.filter(f => ["high", "critical"].includes(_riskBandOf(f))).length;
+  const creds = findings.filter(f => f.exposure_type === "credential_exposure").length;
+  const newToday = findings.filter(f => (f.created_at || "").slice(0, 10) === today).length;
+  const openCases = cases.filter(c => !["closed", "false_positive"].includes(c.status)).length;
+
+  const byAsset = {};
+  findings.forEach(f => {
+    if (!f.asset_id) return;
+    const a = byAsset[f.asset_id] || { count: 0, max: 0 };
+    a.count++; a.max = Math.max(a.max, f.risk_score || 0);
+    byAsset[f.asset_id] = a;
+  });
+  const label = {}; assets.forEach(a => { label[a.id] = a.label; });
+  const topAssets = Object.entries(byAsset)
+    .map(([id, v]) => ({ id, label: label[id] || ("asset #" + id), count: v.count, max: v.max }))
+    .sort((a, b) => b.count - a.count || b.max - a.max).slice(0, 5);
+
+  const bands = { low: 0, medium: 0, high: 0, critical: 0 };
+  findings.forEach(f => { bands[_riskBandOf(f)]++; });
+
+  const card = (n, lbl, color) => `<div class="panel" style="text-align:center;min-width:130px;flex:1">
+    <div style="font-size:30px;font-weight:800;color:${color || "var(--txt)"}">${esc(n)}</div>
+    <div class="muted" style="font-size:12px">${esc(lbl)}</div></div>`;
+  const bars = _svgBars([
+    ["low", bands.low, "#2e7d32"], ["medium", bands.medium, "#b8860b"],
+    ["high", bands.high, "#d9772e"], ["critical", bands.critical, "#c0392b"],
+  ]);
+  const topHtml = topAssets.length ? topAssets.map(a =>
+    `<div style="display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid var(--line)">
+      <span>${esc(a.label)}</span>
+      <span class="muted" style="font-size:12px">${esc(a.count)} findings · max risk ${esc(a.max)}</span></div>`).join("")
+    : '<span class="muted">No asset-linked findings yet.</span>';
+
+  box.innerHTML = `
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+      ${card(total, "Total Findings")}
+      ${card(highRisk, "Critical / High Risk", "#c0392b")}
+      ${card(creds, "Credential Leaks", "#d9772e")}
+      ${card(newToday, "New Today", "#2f6fb0")}
+      ${card(openCases, "Open Cases", "#b8860b")}
+    </div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap">
+      <div class="panel" style="flex:1;min-width:280px"><b>Findings by risk band</b>${bars}</div>
+      <div class="panel" style="flex:1;min-width:280px"><b>Top Exposed Assets</b>
+        <div style="margin-top:8px">${topHtml}</div></div>
+    </div>`;
+}
+
 function viewExposure() {
   const m = $("#main");
   const tab = (t, label) => `<button class="sm ${EXPOSURE_TAB === t ? "" : "ghost"}" data-action="expTab" data-name="${t}">${esc(label)}</button>`;
   m.innerHTML = `<h2 class="title">Exposure Monitoring</h2>
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
-      ${tab("findings", "Findings")}${tab("assets", "Monitored Assets")}${tab("imports", "Imports")}${tab("timeline", "Timeline")}
+      ${tab("dashboard", "Dashboard")}${tab("findings", "Findings")}${tab("assets", "Monitored Assets")}${tab("imports", "Imports")}${tab("timeline", "Timeline")}
     </div>
     <div id="expBody">loading…</div>`;
   renderExposureTab();
 }
 
 function renderExposureTab() {
+  if (EXPOSURE_TAB === "dashboard") return loadExposureDashboard();
   if (EXPOSURE_TAB === "assets") return loadExposureAssets();
   if (EXPOSURE_TAB === "imports") return loadExposureImports();
   if (EXPOSURE_TAB === "timeline") return loadTenantTimeline();
