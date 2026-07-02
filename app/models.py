@@ -509,6 +509,7 @@ class ExposureFinding(Base):
         Index("ix_exposure_asset", "asset_id"),
         Index("ix_exposure_dedup", "dedup_key"),
         Index("ix_exposure_created", "created_at"),
+        Index("ix_exposure_ingest", "ingest_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -530,6 +531,44 @@ class ExposureFinding(Base):
     detail: Mapped[dict] = mapped_column(JSON, default=dict)  # metadados; nunca senha/segredo em claro
     redacted: Mapped[bool] = mapped_column(Boolean, default=False)
     risk_score: Mapped[int] = mapped_column(Integer, default=0)
+    # proveniência de ingestão (custódia / rollback / reprocessamento)
+    ingest_id: Mapped[int | None] = mapped_column(
+        ForeignKey("exposure_ingest_batch.id", ondelete="SET NULL"), nullable=True)
+    record_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    parser_version: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True)
+
+
+class ExposureIngestBatch(Base):
+    """Lote de ingestão (proveniência): fingerprint do arquivo, parser, contagens.
+    Permite rollback de um import (hard delete dos findings do lote)."""
+    __tablename__ = "exposure_ingest_batch"
+    __table_args__ = (
+        CheckConstraint(
+            "source IN ('manual_intake','authorized_upload','file_import')",
+            name="ck_ingest_source"),
+        CheckConstraint(
+            "status IN ('processing','completed','rolled_back')", name="ck_ingest_status"),
+        Index("ix_ingest_tenant", "tenant_id"),
+        Index("ix_ingest_created", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
+    source: Mapped[str] = mapped_column(String(40))
+    original_filename: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    source_file_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    parser: Mapped[str] = mapped_column(String(60))
+    parser_version: Mapped[str] = mapped_column(String(20))
+    record_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_count: Mapped[int] = mapped_column(Integer, default=0)
+    deduped_count: Mapped[int] = mapped_column(Integer, default=0)
+    error_count: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(20), default="completed")
     created_by_user_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

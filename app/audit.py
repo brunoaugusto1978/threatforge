@@ -15,7 +15,8 @@ logger = logging.getLogger(__name__)
 
 # chaves que jamais devem ser persistidas no detalhe do log
 _REDACT = {"password", "current_password", "new_password", "temporary_password",
-           "token", "api_key", "secret", "hashed_password"}
+           "token", "api_key", "secret", "hashed_password",
+           "private_key", "password_sha256", "password_hash", "auth_key", "client_secret"}
 
 
 def _client_ip(request: Request | None) -> str | None:

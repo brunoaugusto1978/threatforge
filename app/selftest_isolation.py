@@ -640,6 +640,106 @@ def run():
     assert any(a.get("action") == "exposure.asset_create" for a in aexp)
     _ok("audit logs exposure.asset_create")
 
+    # ============ EXPOSURE — Issue 2 (intake/import/dedup/redação/masking) ============
+    import app.config as _cfg
+
+    # intake estruturado com credencial -> redigido (sem senha em claro)
+    _pl = {"exposure_type": "credential_exposure", "source": "manual_intake",
+           "detail": {"email": "vip1@a-corp.com.br", "password": "S3nha!Secreta",
+                      "domain": "a-corp.com.br"}}
+    r1 = caa.post("/exposure/findings/intake", json=_pl)
+    assert r1.status_code == 201, r1.text
+    d1 = r1.json()
+    assert "password" not in d1["detail"], d1
+    assert d1["detail"].get("password_sha256") and d1["detail"].get("password_masked"), d1
+    assert "S3nha!Secreta" not in r1.text, "plaintext password leaked in response!"
+    assert d1["redacted"] is True
+    intake_id = d1["id"]
+    _ok("intake redacts credential (hash+mask; no plaintext in response)")
+
+    # dedup: intake idêntico não duplica (mesmo id)
+    r2 = caa.post("/exposure/findings/intake", json=_pl)
+    assert r2.status_code == 201 and r2.json()["id"] == intake_id, "dedup should return same finding"
+    _ok("identical intake deduped (idempotent; same finding id)")
+
+    # viewer não faz intake (403)
+    assert cvv.post("/exposure/findings/intake", json=_pl).status_code == 403
+    _ok("viewer cannot intake (403)")
+
+    # import de combolist (email:senha) -> credential findings, sem senha em claro
+    _combo = b"attack1@a-corp.com.br:P@ssw0rd1\nattack2@a-corp.com.br:hunter2\n"
+    ri = caa.post("/exposure/import",
+                  files={"file": ("leak.txt", _combo, "text/plain")},
+                  data={"parser": "combolist"})
+    assert ri.status_code == 201, ri.text
+    batch = ri.json()
+    bid = batch["id"]
+    assert batch["created_count"] == 2 and batch["source_file_hash"], batch
+    assert batch["parser"] == "combolist" and batch["parser_version"], batch
+    # findings do lote: proveniência + sem senha em claro
+    body = caa.get(f"/exposure/findings?ingest_id={bid}").text
+    assert "P@ssw0rd1" not in body and "hunter2" not in body, "plaintext leaked from import!"
+    finds = caa.get(f"/exposure/findings?ingest_id={bid}").json()
+    assert len(finds) == 2 and all(f["ingest_id"] == bid and f["parser_version"] for f in finds), finds
+    assert all(f["record_number"] for f in finds), finds
+    _ok("import combolist: 2 credential findings, provenance stored, no plaintext")
+
+    # re-import idêntico -> idempotente (deduped, 0 created)
+    ri2 = caa.post("/exposure/import",
+                   files={"file": ("leak.txt", _combo, "text/plain")},
+                   data={"parser": "combolist"})
+    assert ri2.status_code == 201 and ri2.json()["deduped_count"] == 2 and ri2.json()["created_count"] == 0, ri2.text
+    _ok("re-import same file is idempotent (deduped=2, created=0)")
+
+    # MIME inválido -> 415 ; parser desconhecido -> 422
+    assert caa.post("/exposure/import", files={"file": ("x.html", b"<html>", "text/html")},
+                    data={"parser": "combolist"}).status_code == 415
+    assert caa.post("/exposure/import", files={"file": ("x.txt", b"a", "text/plain")},
+                    data={"parser": "nope"}).status_code == 422
+    _ok("import rejects bad MIME (415) and unknown parser (422)")
+
+    # rollback (admin, hard delete) ; analyst não pode (403)
+    assert caa.delete(f"/exposure/ingests/{bid}").status_code == 403
+    rb = ca.delete(f"/exposure/ingests/{bid}")
+    assert rb.status_code == 200 and rb.json()["removed"] == 2, rb.text
+    assert caa.get(f"/exposure/findings?ingest_id={bid}").json() == []
+    assert ca.get(f"/exposure/ingests/{bid}").json()["status"] == "rolled_back"
+    _ok("import rollback: admin hard-deletes batch findings; status rolled_back; analyst 403")
+
+    # cross-tenant: B não vê intake/ingests de A
+    assert cb.get(f"/exposure/findings/{intake_id}").status_code == 404
+    assert cb.get(f"/exposure/ingests/{bid}").status_code == 404
+    _ok("cross-tenant intake/ingest -> 404")
+
+    # masking por role: off (default) mostra e-mail; by_role mascara p/ não-admin
+    off_val = ca.get(f"/exposure/assets/{a_asset['id']}").json()["value"]
+    assert off_val == "ceo@a-corp.com.br", off_val
+    _cfg.EXPOSURE_PII_MASKING = "by_role"
+    try:
+        v_viewer = cvv.get(f"/exposure/assets/{a_asset['id']}").json()["value"]
+        v_admin = ca.get(f"/exposure/assets/{a_asset['id']}").json()["value"]
+        assert "***" in v_viewer and v_viewer != "ceo@a-corp.com.br", v_viewer
+        assert v_admin == "ceo@a-corp.com.br", v_admin
+    finally:
+        _cfg.EXPOSURE_PII_MASKING = "off"
+    _ok("PII masking by_role: viewer sees masked email, admin sees full (off = full)")
+
+    # abrir case a partir de finding de exposure (snapshot + severity mapeada)
+    rc = caa.post(f"/exposure/findings/{intake_id}/case")
+    assert rc.status_code == 201, rc.text
+    _cid = rc.json()["case_id"]
+    _case = caa.get(f"/cases/{_cid}").json()
+    assert _case["finding_snapshot"]["exposure_finding_id"] == intake_id, _case
+    assert "S3nha!Secreta" not in caa.get(f"/cases/{_cid}").text, "plaintext leaked into case!"
+    _ok("open Investigation Case from exposure finding (redacted snapshot)")
+
+    # auditoria da Issue 2
+    a2 = ca.get("/audit").json()
+    for _act in ("exposure.intake", "exposure.import", "exposure.import_rollback"):
+        assert any(a.get("action") == _act for a in a2), _act
+    _ok("audit logs exposure.intake / import / import_rollback")
+
+
     print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS + EXPOSURE: ALL TESTS PASSED ✅')
 if __name__ == '__main__':
     try:
