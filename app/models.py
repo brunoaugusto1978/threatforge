@@ -431,3 +431,106 @@ class CaseEvidence(Base):
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, index=True)
+
+
+# ---------------------------------------------------------------------------
+# Exposure Monitoring (DRP) — modelo único e extensível.
+# MVP: identity_exposure + credential_exposure. Demais tipos previstos no enum,
+# implementados em versões futuras. NENHUMA senha/segredo em claro no modelo.
+# ---------------------------------------------------------------------------
+EXPOSURE_TYPES = (
+    "identity_exposure", "credential_exposure",   # MVP (Community)
+    "brand_exposure", "infrastructure_exposure",  # previstos (futuro)
+    "secret_exposure", "source_code_exposure",
+)
+EXPOSURE_MVP_TYPES = ("identity_exposure", "credential_exposure")
+ASSET_TYPES = ("identity", "email", "domain", "keyword", "secret_pattern", "repo", "ip_range")
+CRITICALITY = ("low", "medium", "high", "critical")
+EXPOSURE_STATUS = ("new", "triaging", "confirmed", "mitigated", "closed", "false_positive", "duplicate")
+EXPOSURE_TERMINAL = ("closed", "false_positive", "duplicate")
+SOURCE_RELIABILITY = ("A", "B", "C", "D", "E", "F")   # Admiralty — fonte
+INFO_CREDIBILITY = ("1", "2", "3", "4", "5", "6")     # Admiralty — informação
+
+
+class MonitoredAsset(Base):
+    """Alvo de monitoramento de exposição (VIP/identidade, domínio, keyword…)."""
+    __tablename__ = "monitored_asset"
+    __table_args__ = (
+        CheckConstraint(
+            "asset_type IN ('identity','email','domain','keyword','secret_pattern','repo','ip_range')",
+            name="ck_monitored_asset_type"),
+        CheckConstraint(
+            "criticality IN ('low','medium','high','critical')", name="ck_monitored_asset_crit"),
+        Index("ix_monitored_asset_tenant", "tenant_id"),
+        Index("ix_monitored_asset_hash", "value_hash"),
+        Index("ix_monitored_asset_type", "asset_type"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
+    asset_type: Mapped[str] = mapped_column(String(30))
+    label: Mapped[str] = mapped_column(String(200))
+    value: Mapped[str] = mapped_column(String(512))
+    value_hash: Mapped[str] = mapped_column(String(64), index=True)  # sha256 normalizado (match/dedup)
+    criticality: Mapped[str] = mapped_column(String(10), default="medium")
+    # consentimento p/ monitorar identidade de pessoa física (LGPD/GDPR)
+    consent_ref: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class ExposureFinding(Base):
+    """Achado de exposição (tabela única p/ todos os tipos). Sem segredo em claro:
+    dados sensíveis (senha/token) vivem no JSON `detail` apenas como hash+máscara."""
+    __tablename__ = "exposure_finding"
+    __table_args__ = (
+        CheckConstraint(
+            "exposure_type IN ('identity_exposure','credential_exposure','brand_exposure',"
+            "'infrastructure_exposure','secret_exposure','source_code_exposure')",
+            name="ck_exposure_type"),
+        CheckConstraint(
+            "source_reliability IN ('A','B','C','D','E','F')", name="ck_exposure_reliability"),
+        CheckConstraint(
+            "info_credibility IN ('1','2','3','4','5','6')", name="ck_exposure_credibility"),
+        CheckConstraint(
+            "severity IN ('low','medium','high','critical')", name="ck_exposure_severity"),
+        CheckConstraint(
+            "status IN ('new','triaging','confirmed','mitigated','closed','false_positive','duplicate')",
+            name="ck_exposure_status"),
+        UniqueConstraint("tenant_id", "dedup_key", name="uq_exposure_dedup"),
+        Index("ix_exposure_tenant", "tenant_id"),
+        Index("ix_exposure_type", "exposure_type"),
+        Index("ix_exposure_asset", "asset_id"),
+        Index("ix_exposure_dedup", "dedup_key"),
+        Index("ix_exposure_created", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
+    exposure_type: Mapped[str] = mapped_column(String(40))
+    asset_id: Mapped[int | None] = mapped_column(
+        ForeignKey("monitored_asset.id", ondelete="SET NULL"), nullable=True)
+    title: Mapped[str] = mapped_column(String(300))
+    source: Mapped[str] = mapped_column(String(60))
+    source_reliability: Mapped[str] = mapped_column(String(1), default="F")
+    info_credibility: Mapped[str] = mapped_column(String(1), default="6")
+    severity: Mapped[str] = mapped_column(String(10), default="medium")
+    status: Mapped[str] = mapped_column(String(20), default="new")
+    observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    dedup_key: Mapped[str] = mapped_column(String(64), index=True)
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)  # metadados; nunca senha/segredo em claro
+    redacted: Mapped[bool] = mapped_column(Boolean, default=False)
+    risk_score: Mapped[int] = mapped_column(Integer, default=0)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True)

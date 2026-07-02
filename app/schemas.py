@@ -721,3 +721,71 @@ class EvidenceOut(BaseModel):
     stored: bool
     uploaded_by_user_id: int | None
     created_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Exposure Monitoring (DRP)
+# ---------------------------------------------------------------------------
+class MonitoredAssetCreate(BaseModel):
+    asset_type: Literal["identity", "email", "domain", "keyword", "secret_pattern", "repo", "ip_range"]
+    label: str
+    value: str
+    criticality: Literal["low", "medium", "high", "critical"] = "medium"
+    consent_ref: str | None = None
+    active: bool = True
+
+    @field_validator("label", "value")
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not v:
+            raise ValueError("must not be blank")
+        return v
+
+
+class MonitoredAssetUpdate(BaseModel):
+    label: str | None = None
+    criticality: Literal["low", "medium", "high", "critical"] | None = None
+    consent_ref: str | None = None
+    active: bool | None = None
+
+
+class MonitoredAssetOut(BaseModel):
+    id: int
+    tenant_id: int
+    asset_type: str
+    label: str
+    value: str
+    value_hash: str
+    criticality: str
+    consent_ref: str | None
+    active: bool
+    created_by_user_id: int | None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ExposureFindingOut(BaseModel):
+    id: int
+    tenant_id: int
+    exposure_type: str
+    asset_id: int | None
+    title: str
+    source: str
+    source_reliability: str
+    info_credibility: str
+    severity: str
+    status: str
+    observed_at: datetime | None
+    first_seen: datetime
+    last_seen: datetime
+    dedup_key: str
+    detail: dict
+    redacted: bool
+    risk_score: int
+    created_by_user_id: int | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
