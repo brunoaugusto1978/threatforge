@@ -847,7 +847,57 @@ def run():
 
 
 
-    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS + EXPOSURE + TIMELINE + RISK + CORRELATION: ALL TESTS PASSED ✅')
+    # ============ ATTACK SURFACE DISCOVERY (import manual) ============
+    # analyst importa ativos de superfície (subdomain/ip/certificate)
+    rimp = caa.post("/surface/import", json={"assets": [
+        {"asset_type": "subdomain", "value": "vpn.a-corp.com.br"},
+        {"asset_type": "ip", "value": "203.0.113.10"},
+        {"asset_type": "certificate", "value": "sha256:abc", "detail": {"issuer": "Lets Encrypt"}}]})
+    assert rimp.status_code == 201, rimp.text
+    assert rimp.json()["created"] == 3, rimp.json()
+    sa_ids = rimp.json()["asset_ids"]
+    _ok("analyst imports surface assets (subdomain/ip/certificate)")
+
+    # idempotência: reimportar o mesmo subdomínio -> deduped
+    rdup = caa.post("/surface/import", json={"assets": [
+        {"asset_type": "subdomain", "value": "VPN.a-corp.com.br"}]})  # case-insensitive
+    assert rdup.status_code == 201 and rdup.json()["deduped"] == 1 and rdup.json()["created"] == 0, rdup.text
+    _ok("surface import idempotent per (tenant, type, value) — case-insensitive")
+
+    # viewer lê, mas não importa (403)
+    assert cvv.get("/surface/assets").status_code == 200
+    assert cvv.post("/surface/import", json={"assets": [
+        {"asset_type": "ip", "value": "198.51.100.1"}]}).status_code == 403
+    _ok("viewer reads surface assets but cannot import (403)")
+
+    # tipo fora do MVP -> 422
+    assert caa.post("/surface/import", json={"assets": [
+        {"asset_type": "port", "value": "443/tcp"}]}).status_code == 422
+    _ok("non-MVP surface type rejected (422)")
+
+    # triagem (analyst) confirm
+    rt = caa.patch(f"/surface/assets/{sa_ids[0]}", json={"status": "confirmed"})
+    assert rt.status_code == 200 and rt.json()["status"] == "confirmed", rt.text
+    _ok("analyst triages surface asset (confirmed)")
+
+    # isolamento por tenant + cross-tenant 404
+    assert cb.get("/surface/assets").json() == []
+    assert cb.get(f"/surface/assets/{sa_ids[0]}").status_code == 404
+    assert cb.patch(f"/surface/assets/{sa_ids[0]}", json={"status": "ignored"}).status_code == 404
+    _ok("surface assets isolated per tenant; cross-tenant -> 404")
+
+    # catálogo de tipos: MVP = subdomain/ip/certificate
+    st = {t["type"]: t["mvp"] for t in ca.get("/surface/types").json()}
+    assert st.get("subdomain") and st.get("ip") and st.get("certificate"), st
+    assert st.get("port") is False and st.get("service") is False, st
+    _ok("surface types catalog: MVP = subdomain/ip/certificate; port/service reserved")
+
+    # audit
+    asurf = ca.get("/audit").json()
+    assert any(a.get("action") == "surface.import" for a in asurf)
+    _ok("audit logs surface.import")
+
+    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS + EXPOSURE + TIMELINE + RISK + CORRELATION + SURFACE: ALL TESTS PASSED ✅')
 if __name__ == '__main__':
     try:
         run()

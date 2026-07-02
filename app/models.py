@@ -573,3 +573,58 @@ class ExposureIngestBatch(Base):
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, index=True)
+
+
+# ---------------------------------------------------------------------------
+# Attack Surface Discovery (ASD) — ativos externos descobertos a partir de Brands.
+# MVP: subdomain + ip + certificate. netblock/port/service previstos (Enterprise).
+# ---------------------------------------------------------------------------
+SURFACE_ASSET_TYPES = ("subdomain", "ip", "certificate", "netblock", "port", "service")
+SURFACE_MVP_TYPES = ("subdomain", "ip", "certificate")
+SURFACE_STATUS = ("new", "confirmed", "ignored", "resolved")
+SURFACE_SOURCES = ("ct_log", "dns", "rdap", "tls", "manual_import", "active_scan")
+
+
+class SurfaceAsset(Base):
+    """Ativo de superfície de ataque (tenant-scoped). Descoberta passiva/import no
+    Community; varredura ativa é Enterprise. Alimenta infrastructure_exposure."""
+    __tablename__ = "surface_asset"
+    __table_args__ = (
+        CheckConstraint(
+            "asset_type IN ('subdomain','ip','certificate','netblock','port','service')",
+            name="ck_surface_type"),
+        CheckConstraint(
+            "status IN ('new','confirmed','ignored','resolved')", name="ck_surface_status"),
+        CheckConstraint(
+            "source IN ('ct_log','dns','rdap','tls','manual_import','active_scan')",
+            name="ck_surface_source"),
+        UniqueConstraint("tenant_id", "dedup_key", name="uq_surface_dedup"),
+        Index("ix_surface_tenant", "tenant_id"),
+        Index("ix_surface_brand", "brand_id"),
+        Index("ix_surface_type", "asset_type"),
+        Index("ix_surface_hash", "value_hash"),
+        Index("ix_surface_parent", "parent_id"),
+        Index("ix_surface_created", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
+    brand_id: Mapped[int | None] = mapped_column(
+        ForeignKey("brands.id", ondelete="SET NULL"), nullable=True)
+    asset_type: Mapped[str] = mapped_column(String(20))
+    value: Mapped[str] = mapped_column(String(512))
+    value_hash: Mapped[str] = mapped_column(String(64), index=True)
+    parent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("surface_asset.id", ondelete="SET NULL"), nullable=True)
+    source: Mapped[str] = mapped_column(String(40), default="manual_import")
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(20), default="new")
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    dedup_key: Mapped[str] = mapped_column(String(64), index=True)
+    risk_score: Mapped[int] = mapped_column(Integer, default=0)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True)
