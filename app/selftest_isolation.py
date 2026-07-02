@@ -813,10 +813,41 @@ def run():
     assert rfp.status_code == 200 and rfp.json()["risk_score"] == 0, rfp.text
     _ok("false_positive drives risk_score to 0")
 
+    # ============ CORRELATION ENGINE ============
+    # finding que compartilha e-mail com a_asset (ceo@a-corp) e domínio com BrandA
+    cf = caa.post("/exposure/findings/intake", json={
+        "exposure_type": "credential_exposure", "source": "stealer",
+        "detail": {"email": "ceo@a-corp.com.br", "password": "corrPw", "domain": "a-corp.com.br"}}).json()
+    cf_id = cf["id"]
+    ca.post("/observables", json={"type": "domain", "value": "a-corp.com.br"})
+    # BrandA original foi removido no teste de archive/delete; cria um brand p/ o domínio
+    assert ca.post("/brands", json={"name": "CorrBrand", "official_domains": ["a-corp.com.br"]}).status_code == 201
+
+    g = ca.get(f"/correlation?entity=finding:{cf_id}").json()
+    kinds = {n["kind"] for n in g["nodes"]}
+    assert g["seed"]["kind"] == "exposure_finding", g["seed"]
+    assert "monitored_asset" in kinds, kinds   # mesmo e-mail (a_asset)
+    assert "brand" in kinds, kinds             # domínio a-corp.com.br (BrandA)
+    assert "observable" in kinds, kinds        # IOC de domínio
+    assert all("via" in e for e in g["edges"]), g["edges"]
+    _ok("correlate finding -> related asset + brand + IOC via shared email/domain")
+
+    # correlação por identificador cru
+    g2 = ca.get("/correlation?entity=domain:a-corp.com.br").json()
+    assert g2["seed"]["kind"] == "identifier"
+    assert any(n["kind"] == "exposure_finding" for n in g2["nodes"]), g2
+    _ok("correlate by raw domain identifier -> exposure findings")
+
+    # cross-tenant e seletor inválido
+    assert cb.get(f"/correlation?entity=finding:{cf_id}").status_code == 404
+    assert ca.get("/correlation?entity=bogus:1").status_code == 422
+    _ok("correlation cross-tenant -> 404; invalid entity -> 422")
 
 
 
-    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS + EXPOSURE + TIMELINE + RISK: ALL TESTS PASSED ✅')
+
+
+    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS + EXPOSURE + TIMELINE + RISK + CORRELATION: ALL TESTS PASSED ✅')
 if __name__ == '__main__':
     try:
         run()

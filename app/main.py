@@ -14,6 +14,7 @@ from app.database import Base, engine, get_db
 from app.models import Brand, BrandFinding, Observable, User
 from app.routers import (
     cases_routes,
+    correlation_routes,
     timeline_routes,
     exposure_routes,
     auth_routes,
@@ -87,6 +88,7 @@ app.include_router(cases_routes.finding_router)
 app.include_router(integrations_routes.router)
 app.include_router(exposure_routes.router)
 app.include_router(timeline_routes.router)
+app.include_router(correlation_routes.router)
 
 
 @app.get("/health", tags=["meta"])
