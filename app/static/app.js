@@ -1546,6 +1546,7 @@ const ACTIONS = {
   expRollback: (id) => rollbackIngest(id),
   expRisk: (id) => toggleRiskBreakdown(id),
   expTimeline: (id) => toggleFindingTimeline(id),
+  expCorrelate: (id) => toggleCorrelate(id),
   tlFilter: (_id, btn) => tlSourceFilter(btn.dataset.name),
 };
 document.addEventListener("click", (e) => {
@@ -1914,8 +1915,12 @@ async function loadExposureFindings() {
       <div id="riskbd_${esc(f.id)}" style="display:none">${riskBreakdownHtml(bd)}</div>
       <div style="margin-top:6px">${prettyDetail(f.detail)}</div>
       <div class="muted" style="font-size:11px;margin-top:4px">source: ${esc(f.source)} · ${esc((f.created_at || "").slice(0, 16).replace("T", " "))}${f.ingest_id ? " · ingest #" + esc(f.ingest_id) : ""}</div>
-      <div style="margin-top:6px"><button class="sm ghost" data-action="expTimeline" data-id="${esc(f.id)}">Timeline</button></div>
+      <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">
+        <button class="sm ghost" data-action="expTimeline" data-id="${esc(f.id)}">Timeline</button>
+        <button class="sm ghost" data-action="expCorrelate" data-id="${esc(f.id)}">Correlate</button>
+      </div>
       <div id="tl_${esc(f.id)}" style="display:none"></div>
+      <div id="cor_${esc(f.id)}" style="display:none"></div>
       ${triage}
     </div>`;
   }).join("") : '<span class="muted">No exposure findings.</span>';
@@ -2073,6 +2078,56 @@ async function rollbackIngest(id) {
     toast(`Rolled back: ${r.removed} findings removed`);
     loadExposureImports();
   } catch (e) { toast(e.message, true); }
+}
+
+// ----- correlation engine -----
+const _COR_META = {
+  exposure_finding: ["\ud83d\udd11", "Exposure finding"],
+  monitored_asset: ["\ud83c\udfaf", "Monitored asset"],
+  observable: ["\ud83e\uddec", "IOC"],
+  brand: ["\ud83d\udee1\ufe0f", "Brand"],
+  brand_finding: ["\ud83c\udf10", "Brand finding"],
+  case: ["\ud83d\udcc1", "Case"],
+  identifier: ["\ud83d\udd17", "Identifier"],
+};
+
+function _corGroup(kind, nodes) {
+  const meta = _COR_META[kind] || ["\u2022", kind];
+  const items = nodes.map(n => {
+    const via = (n._via ? ` <span class="muted" style="font-size:11px">via ${esc(n._via)}</span>` : "");
+    const risk = (n.risk != null ? ` <span class="muted" style="font-size:11px">risk ${esc(n.risk)}</span>` : "");
+    return `<div style="padding:3px 0;border-bottom:1px solid var(--line)">${esc(n.label)}${risk}${via}</div>`;
+  }).join("");
+  return `<div style="min-width:220px;flex:1">
+    <div class="muted" style="font-size:12px;margin-bottom:4px">${meta[0]} ${esc(meta[1])} (${nodes.length})</div>${items}</div>`;
+}
+
+async function toggleCorrelate(id) {
+  const box = $("#cor_" + id);
+  if (!box) return;
+  if (box.style.display === "block") { box.style.display = "none"; return; }
+  box.style.display = "block";
+  box.innerHTML = '<span class="muted">correlating…</span>';
+  let g;
+  try { g = await api("GET", `/correlation?entity=finding:${id}`); }
+  catch (e) { box.innerHTML = `<span class="muted">${esc(e.message)}</span>`; return; }
+  const viaOf = {}; (g.edges || []).forEach(e => { viaOf[e.target] = e.via; });
+  const nodes = (g.nodes || []).map(n => ({ ...n, _via: viaOf[n.id] }));
+  if (!nodes.length) { box.innerHTML = '<div class="panel" style="margin-top:6px"><span class="muted">No related entities found.</span></div>'; return; }
+  const groups = {};
+  nodes.forEach(n => { (groups[n.kind] = groups[n.kind] || []).push(n); });
+  const order = ["monitored_asset", "brand", "brand_finding", "observable", "exposure_finding", "case", "identifier"];
+  const cols = order.filter(k => groups[k]).map(k => _corGroup(k, groups[k])).join("");
+  const idents = g.identifiers ? Object.entries(g.identifiers).map(([k, vs]) =>
+    `<span class="muted" style="font-size:11px;margin-right:8px"><b>${esc(k)}</b>: ${esc(vs.join(", "))}</span>`).join("") : "";
+  box.innerHTML = `<div class="panel" style="margin-top:6px;border-left:3px solid var(--accent)">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <b>Correlated entities (${nodes.length})</b>
+      ${can("analyst") ? `<button class="sm" data-action="expOpenCase" data-id="${esc(id)}">Open investigation</button>` : ""}
+    </div>
+    <div style="margin-top:4px">${idents}</div>
+    <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:8px">${cols}</div>
+  </div>`;
 }
 
 // ---------- form helpers ----------
