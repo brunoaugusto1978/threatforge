@@ -1544,6 +1544,9 @@ const ACTIONS = {
   expAssetAdd: () => addExposureAsset(),
   expImport: () => importExposure(),
   expRollback: (id) => rollbackIngest(id),
+  expRisk: (id) => toggleRiskBreakdown(id),
+  expTimeline: (id) => toggleFindingTimeline(id),
+  tlFilter: (_id, btn) => tlSourceFilter(btn.dataset.name),
 };
 document.addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-action]");
@@ -1616,7 +1619,7 @@ function viewExposure() {
   const tab = (t, label) => `<button class="sm ${EXPOSURE_TAB === t ? "" : "ghost"}" data-action="expTab" data-name="${t}">${esc(label)}</button>`;
   m.innerHTML = `<h2 class="title">Exposure Monitoring</h2>
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
-      ${tab("findings", "Findings")}${tab("assets", "Monitored Assets")}${tab("imports", "Imports")}
+      ${tab("findings", "Findings")}${tab("assets", "Monitored Assets")}${tab("imports", "Imports")}${tab("timeline", "Timeline")}
     </div>
     <div id="expBody">loading…</div>`;
   renderExposureTab();
@@ -1625,6 +1628,7 @@ function viewExposure() {
 function renderExposureTab() {
   if (EXPOSURE_TAB === "assets") return loadExposureAssets();
   if (EXPOSURE_TAB === "imports") return loadExposureImports();
+  if (EXPOSURE_TAB === "timeline") return loadTenantTimeline();
   return loadExposureFindings();
 }
 
@@ -1642,6 +1646,103 @@ const _STATUS_COLOR = {
 
 function sevBadge(sev) { return _pill(sev, _SEV_COLOR[sev] || "#555", "#fff", "Severity"); }
 function statusBadge(st) { return _pill(st, _STATUS_COLOR[st] || "#555", "#fff", "Status"); }
+
+// ----- risk score (explainable) -----
+const _RISK_COLOR = { low: "#2e7d32", medium: "#b8860b", high: "#d9772e", critical: "#c0392b" };
+
+function _hasBreakdown(f) {
+  return !!(f.detail && f.detail.risk_breakdown && f.detail.risk_breakdown.factors);
+}
+
+function riskBadgeMarkup(id, score, band) {
+  const c = _RISK_COLOR[band] || "#555";
+  return `<button id="riskbadge_${esc(id)}" data-action="expRisk" data-id="${esc(id)}" title="Risk score — click for breakdown"
+      style="border:none;cursor:pointer;background:${c};color:#fff;border-radius:8px;padding:5px 12px;text-align:center;min-width:66px">
+      <div style="font-size:22px;font-weight:800;line-height:1">${esc(score)}</div>
+      <div style="font-size:10px;letter-spacing:.5px">${esc((band || "").toUpperCase())}</div></button>`;
+}
+
+function riskBadge(f) {
+  if (_hasBreakdown(f)) {
+    const bd = f.detail.risk_breakdown;
+    return riskBadgeMarkup(f.id, bd.score != null ? bd.score : f.risk_score, bd.band || "");
+  }
+  // sem breakdown embutido (finding antigo): placeholder; hidratado via /risk
+  return riskBadgeMarkup(f.id, "\u2026", "");
+}
+
+async function hydrateRisk(id) {
+  try {
+    const bd = await api("GET", `/exposure/findings/${id}/risk`);
+    const badge = $("#riskbadge_" + id);
+    if (badge) {
+      badge.style.background = _RISK_COLOR[bd.band] || "#555";
+      badge.innerHTML = `<div style="font-size:22px;font-weight:800;line-height:1">${esc(bd.score)}</div>`
+        + `<div style="font-size:10px;letter-spacing:.5px">${esc((bd.band || "").toUpperCase())}</div>`;
+    }
+    const el = $("#riskbd_" + id);
+    if (el) el.innerHTML = riskBreakdownHtml(bd);
+  } catch (_) { /* silencioso */ }
+}
+
+function riskBreakdownHtml(bd) {
+  if (!bd || !bd.factors) return '<span class="muted">No breakdown.</span>';
+  const rows = bd.factors.map(x => `<div style="display:flex;justify-content:space-between;gap:12px;font-size:13px">
+      <span><b>+${esc(x.points)}</b> ${esc(x.value || x.label)}${x.reason ? ` <span class="muted">(${esc(x.reason)})</span>` : ""}</span>
+      <span class="muted" style="font-size:11px">${esc(x.label)}</span></div>`).join("");
+  return `<div style="margin-top:8px;border-top:1px solid var(--line);padding-top:6px">
+    <b>Risk breakdown</b><div style="margin-top:4px;display:flex;flex-direction:column;gap:2px">${rows}</div>
+    <div style="border-top:1px solid var(--line);margin-top:6px;padding-top:4px;text-align:right;font-size:15px"><b>${esc(bd.score)}</b> <span class="muted" style="font-size:12px">${esc((bd.band || "").toUpperCase())}</span></div></div>`;
+}
+
+function toggleRiskBreakdown(id) {
+  const el = $("#riskbd_" + id);
+  if (el) el.style.display = el.style.display === "none" ? "block" : "none";
+}
+
+// ----- timeline -----
+const _TL_ICON = { exposure: "\ud83d\udd11", case: "\ud83d\udcc1", brand: "\ud83d\udee1\ufe0f", integration: "\ud83d\udd0c", audit: "\u2022" };
+let TL_SOURCE = "";
+
+function renderTimeline(evs) {
+  if (!evs || !evs.length) return '<span class="muted">No events.</span>';
+  return `<div style="display:flex;flex-direction:column;gap:5px;margin-top:6px">` + evs.map(e => {
+    const ts = e.ts || "";
+    const when = ts.slice(0, 10) + " " + ts.slice(11, 16);
+    const sev = e.severity ? " " + sevBadge(e.severity) : "";
+    return `<div style="display:flex;gap:8px;align-items:baseline">
+      <span class="muted" style="font-size:11px;min-width:104px">${esc(when)}</span>
+      <span>${_TL_ICON[e.source] || "\u2022"}</span>
+      <span style="font-size:13px">${esc(e.title)}</span>${sev}
+      <span class="muted" style="font-size:11px">${esc(e.actor)}</span></div>`;
+  }).join("") + `</div>`;
+}
+
+async function toggleFindingTimeline(id) {
+  const box = $("#tl_" + id);
+  if (!box) return;
+  if (box.style.display === "block") { box.style.display = "none"; return; }
+  box.style.display = "block";
+  box.innerHTML = '<span class="muted">loading…</span>';
+  try { box.innerHTML = renderTimeline(await api("GET", `/timeline?scope=finding:${id}`)); }
+  catch (e) { box.innerHTML = `<span class="muted">${esc(e.message)}</span>`; }
+}
+
+async function loadTenantTimeline() {
+  const box = $("#expBody");
+  if (!box) return;
+  let evs = [], srcs = [];
+  try { evs = await api("GET", "/timeline?scope=tenant&limit=200"); }
+  catch (e) { box.innerHTML = `<span class="muted">${esc(e.message)}</span>`; return; }
+  try { srcs = await api("GET", "/timeline/sources"); } catch (_) { srcs = []; }
+  const chips = [""].concat(srcs).map(sn =>
+    `<button class="sm ${TL_SOURCE === sn ? "" : "ghost"}" data-action="tlFilter" data-name="${esc(sn)}">${sn ? esc(sn) : "all"}</button>`).join(" ");
+  const filtered = TL_SOURCE ? evs.filter(e => e.source === TL_SOURCE) : evs;
+  box.innerHTML = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">${chips}</div>
+    <div class="panel">${renderTimeline(filtered)}</div>`;
+}
+
+function tlSourceFilter(name) { TL_SOURCE = name; loadTenantTimeline(); }
 
 function admiraltyBadge(f) {
   const relRank = "ABCDEF".indexOf(f.source_reliability) + 1 || 6;
@@ -1706,6 +1807,7 @@ async function loadExposureFindings() {
     <button class="sm" data-action="expApplyFilters">Apply</button>
   </div>`;
   const canTri = can("analyst");
+  rows.sort((a, b) => (b.risk_score || 0) - (a.risk_score || 0));
   const cards = rows.length ? rows.map(f => {
     const triage = canTri && !["closed", "false_positive", "duplicate"].includes(f.status) ? `
       <div style="display:flex;gap:6px;align-items:end;flex-wrap:wrap;margin-top:8px">
@@ -1714,17 +1816,25 @@ async function loadExposureFindings() {
         <button class="sm" data-action="expTriage" data-id="${esc(f.id)}">Save</button>
         <button class="sm ghost" data-action="expOpenCase" data-id="${esc(f.id)}">Open case</button>
       </div>` : (canTri ? `<div style="margin-top:8px"><button class="sm ghost" data-action="expOpenCase" data-id="${esc(f.id)}">Open case</button></div>` : "");
+    const bd = (f.detail && f.detail.risk_breakdown) || null;
     return `<div class="panel" style="margin-bottom:8px">
-      <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap">
-        <b>${esc(f.title)}</b>
-        <span style="display:flex;gap:6px;align-items:center">${admiraltyBadge(f)} ${sevBadge(f.severity)} ${statusBadge(f.status)} <span class="muted" style="font-size:12px">${esc(f.exposure_type)}</span></span>
+      <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap">
+        <div style="flex:1;min-width:200px">
+          <b>${esc(f.title)}</b>
+          <div style="display:flex;gap:6px;align-items:center;margin-top:4px;flex-wrap:wrap">${admiraltyBadge(f)} ${sevBadge(f.severity)} ${statusBadge(f.status)} <span class="muted" style="font-size:12px">${esc(f.exposure_type)}</span></div>
+        </div>
+        ${riskBadge(f)}
       </div>
+      <div id="riskbd_${esc(f.id)}" style="display:none">${riskBreakdownHtml(bd)}</div>
       <div style="margin-top:6px">${prettyDetail(f.detail)}</div>
       <div class="muted" style="font-size:11px;margin-top:4px">source: ${esc(f.source)} · ${esc((f.created_at || "").slice(0, 16).replace("T", " "))}${f.ingest_id ? " · ingest #" + esc(f.ingest_id) : ""}</div>
+      <div style="margin-top:6px"><button class="sm ghost" data-action="expTimeline" data-id="${esc(f.id)}">Timeline</button></div>
+      <div id="tl_${esc(f.id)}" style="display:none"></div>
       ${triage}
     </div>`;
   }).join("") : '<span class="muted">No exposure findings.</span>';
   box.innerHTML = filters + cards;
+  rows.forEach(f => { if (!_hasBreakdown(f)) hydrateRisk(f.id); });
 }
 
 function applyExposureFilters() {
