@@ -739,8 +739,39 @@ def run():
         assert any(a.get("action") == _act for a in a2), _act
     _ok("audit logs exposure.intake / import / import_rollback")
 
+    # ============ TIMELINE (agregação read-only, event sources) ============
+    srcs = ca.get("/timeline/sources").json()
+    assert {"exposure", "case", "audit"} <= set(srcs), srcs
+    _ok("timeline sources registered (exposure, case, audit)")
 
-    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS + EXPOSURE: ALL TESTS PASSED ✅')
+    tl_t = ca.get("/timeline?scope=tenant").json()
+    assert isinstance(tl_t, list) and len(tl_t) > 0, tl_t
+    assert all({"ts", "source", "type", "ref"} <= set(e) for e in tl_t), tl_t[0]
+    # ordenado desc por ts
+    _ts = [e["ts"] for e in tl_t if e["ts"]]
+    assert _ts == sorted(_ts, reverse=True), "timeline not sorted desc"
+    _ok("tenant timeline aggregates events, sorted desc")
+
+    tl_f = ca.get(f"/timeline?scope=finding:{intake_id}").json()
+    assert any(e["source"] == "exposure" and e["type"] == "exposure.finding_created"
+               and e["ref"]["id"] == intake_id for e in tl_f), tl_f
+    assert any(e["source"] == "audit" for e in tl_f), "expected audit events for finding"
+    _ok("finding-scoped timeline (exposure + audit events)")
+
+    tl_c = ca.get(f"/timeline?scope=case:{_cid}").json()
+    assert any(e["source"] == "case" and e["type"] == "case.created" for e in tl_c), tl_c
+    _ok("case-scoped timeline (case.created)")
+
+    # cross-tenant e escopo inválido
+    assert cb.get(f"/timeline?scope=finding:{intake_id}").status_code == 404
+    assert cb.get(f"/timeline?scope=case:{_cid}").status_code == 404
+    assert ca.get("/timeline?scope=bogus:1").status_code == 422
+    assert ca.get("/timeline?scope=finding:abc").status_code == 422
+    _ok("timeline cross-tenant -> 404; invalid scope -> 422")
+
+
+
+    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS + EXPOSURE + TIMELINE: ALL TESTS PASSED ✅')
 if __name__ == '__main__':
     try:
         run()
