@@ -606,7 +606,7 @@ function navigate(view) {
     b.classList.toggle("active", b.dataset.view === view));
   ({ dashboard: viewDashboard, iocs: viewIocs, brands: viewBrands, watchlist: viewWatchlist,
      org: viewOrg, users: viewUsers, audit: viewAudit, cases: viewCases,
-     integrations: viewIntegrations }[view] || viewDashboard)();
+     integrations: viewIntegrations, exposure: viewExposure }[view] || viewDashboard)();
 }
 
 async function viewDashboard() {
@@ -1537,6 +1537,13 @@ const ACTIONS = {
   caseExportStix: (id) => exportCaseStix(id),
   caseExportPdf: (id) => exportCasePdf(id),
   integrationConfigure: (_id, btn) => configureIntegration(btn.dataset.name),
+  expTab: (_id, btn) => exposureTab(btn.dataset.name),
+  expApplyFilters: () => applyExposureFilters(),
+  expTriage: (id) => triageExposure(id),
+  expOpenCase: (id) => openCaseFromExposure(id),
+  expAssetAdd: () => addExposureAsset(),
+  expImport: () => importExposure(),
+  expRollback: (id) => rollbackIngest(id),
 };
 document.addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-action]");
@@ -1592,6 +1599,284 @@ async function configureIntegration(name) {
     // 402 -> mesmo CTA de upgrade do PDF; outros erros -> mensagem simples
     toast(enterpriseUpgradeMessage(data, fallback), true);
   } catch (e) { toast(e.message || "Configuration failed", true); }
+}
+
+// ---------- exposure monitoring (DRP) ----------
+let EXPOSURE_TAB = "findings";
+const EXPF = { type: "", status: "" };
+let LAST_IMPORT = null;
+const ASSET_TYPES_UI = ["identity", "email", "domain", "keyword", "secret_pattern", "repo", "ip_range"];
+const CRIT_UI = ["low", "medium", "high", "critical"];
+const EXP_TYPES_UI = [["identity_exposure", "Identity"], ["credential_exposure", "Credential"]];
+const EXP_STATUS_UI = ["new", "triaging", "confirmed", "mitigated", "closed", "false_positive", "duplicate"];
+const PARSERS_UI = [["combolist", "Combolist (email:password)"], ["csv_generic", "Generic CSV"], ["json_findings", "JSON findings"]];
+
+function viewExposure() {
+  const m = $("#main");
+  const tab = (t, label) => `<button class="sm ${EXPOSURE_TAB === t ? "" : "ghost"}" data-action="expTab" data-name="${t}">${esc(label)}</button>`;
+  m.innerHTML = `<h2 class="title">Exposure Monitoring</h2>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
+      ${tab("findings", "Findings")}${tab("assets", "Monitored Assets")}${tab("imports", "Imports")}
+    </div>
+    <div id="expBody">loading…</div>`;
+  renderExposureTab();
+}
+
+function renderExposureTab() {
+  if (EXPOSURE_TAB === "assets") return loadExposureAssets();
+  if (EXPOSURE_TAB === "imports") return loadExposureImports();
+  return loadExposureFindings();
+}
+
+function exposureTab(name) { EXPOSURE_TAB = name; viewExposure(); }
+
+function _pill(text, bg, fg, title) {
+  return `<span${title ? ` title="${esc(title)}"` : ""} style="display:inline-block;background:${bg};color:${fg};border-radius:10px;padding:1px 8px;font-size:12px;font-weight:600;line-height:1.5">${esc(text)}</span>`;
+}
+
+const _SEV_COLOR = { low: "#2e7d32", medium: "#b8860b", high: "#d9772e", critical: "#c0392b" };
+const _STATUS_COLOR = {
+  new: "#2f6fb0", triaging: "#b8860b", confirmed: "#c0392b", mitigated: "#2e7d32",
+  closed: "#555", false_positive: "#555", duplicate: "#555",
+};
+
+function sevBadge(sev) { return _pill(sev, _SEV_COLOR[sev] || "#555", "#fff", "Severity"); }
+function statusBadge(st) { return _pill(st, _STATUS_COLOR[st] || "#555", "#fff", "Status"); }
+
+function admiraltyBadge(f) {
+  const relRank = "ABCDEF".indexOf(f.source_reliability) + 1 || 6;
+  const credRank = Number(f.info_credibility) || 6;
+  let bg = "#8a4b4b";  // weak (E/F, 5/6)
+  if (relRank <= 2 && credRank <= 2) bg = "#2e7d32";        // strong
+  else if (relRank <= 4 && credRank <= 4) bg = "#b8860b";   // medium
+  return _pill(`${f.source_reliability}${f.info_credibility}`, bg, "#fff",
+    "Admiralty Code — source reliability (A–F) / info credibility (1–6)");
+}
+
+// rótulos amigáveis + ícones para os campos do detail
+const _FIELD_META = {
+  email: ["\u2709\ufe0f", "Email"], domain: ["\ud83c\udf10", "Domain"],
+  url: ["\ud83d\udd17", "URL"], url_defanged: ["\ud83d\udd17", "URL"],
+  person_label: ["\ud83d\udc64", "Person"], platform: ["\ud83d\udccd", "Platform"],
+  exposure_kind: ["\ud83c\udff7\ufe0f", "Kind"],
+  password_masked: ["\ud83d\udd11", "Password (masked)"],
+  password_sha256: ["#\ufe0f\u20e3", "Password hash"],
+  secret_masked: ["\ud83d\udd11", "Secret (masked)"],
+  fingerprint: ["#\ufe0f\u20e3", "Secret fingerprint"],
+  stealer_family: ["\ud83e\udda0", "Stealer"], breach_name: ["\ud83d\udca5", "Breach"],
+  line_source: ["\ud83d\udcc4", "Source line"], sightings: ["\ud83d\udc41\ufe0f", "Sightings"],
+};
+const _FIELD_ORDER = ["person_label", "email", "domain", "url", "url_defanged", "platform",
+  "exposure_kind", "password_masked", "password_sha256", "secret_masked", "fingerprint",
+  "stealer_family", "breach_name", "line_source", "sightings"];
+
+function prettyDetail(detail) {
+  const d = detail || {};
+  const keys = Object.keys(d);
+  const ordered = _FIELD_ORDER.filter(k => k in d).concat(keys.filter(k => !_FIELD_ORDER.includes(k)));
+  if (!ordered.length) return '<span class="muted">no detail</span>';
+  const items = ordered.map(k => {
+    const meta = _FIELD_META[k] || ["\u2022", k];
+    const mono = (k.includes("hash") || k.includes("sha") || k === "fingerprint")
+      ? "font-family:monospace;font-size:11px" : "";
+    return `<div style="display:flex;gap:6px;align-items:baseline;min-width:210px">
+      <span>${meta[0]}</span>
+      <span class="muted" style="font-size:12px">${esc(meta[1])}</span>
+      <span style="${mono}">${esc(String(d[k]))}</span></div>`;
+  }).join("");
+  return `<div style="display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:4px">${items}</div>`;
+}
+
+async function loadExposureFindings() {
+  const box = $("#expBody");
+  if (!box) return;
+  const qs = [];
+  if (EXPF.type) qs.push(`exposure_type=${encodeURIComponent(EXPF.type)}`);
+  if (EXPF.status) qs.push(`status=${encodeURIComponent(EXPF.status)}`);
+  let rows = [];
+  try { rows = await api("GET", `/exposure/findings${qs.length ? "?" + qs.join("&") : ""}`); }
+  catch (e) { box.innerHTML = `<span class="muted">${esc(e.message)}</span>`; return; }
+  const typeOpts = ['<option value="">all types</option>']
+    .concat(EXP_TYPES_UI.map(t => `<option value="${t[0]}" ${EXPF.type === t[0] ? "selected" : ""}>${esc(t[1])}</option>`)).join("");
+  const statusOpts = ['<option value="">all status</option>']
+    .concat(EXP_STATUS_UI.map(st => `<option value="${st}" ${EXPF.status === st ? "selected" : ""}>${esc(st)}</option>`)).join("");
+  const filters = `<div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin-bottom:10px">
+    <div><label>Type</label><select id="expf_type" style="min-width:150px">${typeOpts}</select></div>
+    <div><label>Status</label><select id="expf_status" style="min-width:140px">${statusOpts}</select></div>
+    <button class="sm" data-action="expApplyFilters">Apply</button>
+  </div>`;
+  const canTri = can("analyst");
+  const cards = rows.length ? rows.map(f => {
+    const triage = canTri && !["closed", "false_positive", "duplicate"].includes(f.status) ? `
+      <div style="display:flex;gap:6px;align-items:end;flex-wrap:wrap;margin-top:8px">
+        <div><label>Status</label>${selectHtml("tri_status_" + f.id, EXP_STATUS_UI, f.status, false)}</div>
+        <div><label>Severity</label>${selectHtml("tri_sev_" + f.id, CRIT_UI, f.severity, false)}</div>
+        <button class="sm" data-action="expTriage" data-id="${esc(f.id)}">Save</button>
+        <button class="sm ghost" data-action="expOpenCase" data-id="${esc(f.id)}">Open case</button>
+      </div>` : (canTri ? `<div style="margin-top:8px"><button class="sm ghost" data-action="expOpenCase" data-id="${esc(f.id)}">Open case</button></div>` : "");
+    return `<div class="panel" style="margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap">
+        <b>${esc(f.title)}</b>
+        <span style="display:flex;gap:6px;align-items:center">${admiraltyBadge(f)} ${sevBadge(f.severity)} ${statusBadge(f.status)} <span class="muted" style="font-size:12px">${esc(f.exposure_type)}</span></span>
+      </div>
+      <div style="margin-top:6px">${prettyDetail(f.detail)}</div>
+      <div class="muted" style="font-size:11px;margin-top:4px">source: ${esc(f.source)} · ${esc((f.created_at || "").slice(0, 16).replace("T", " "))}${f.ingest_id ? " · ingest #" + esc(f.ingest_id) : ""}</div>
+      ${triage}
+    </div>`;
+  }).join("") : '<span class="muted">No exposure findings.</span>';
+  box.innerHTML = filters + cards;
+}
+
+function applyExposureFilters() {
+  const t = $("#expf_type"); const st = $("#expf_status");
+  EXPF.type = t ? t.value : ""; EXPF.status = st ? st.value : "";
+  loadExposureFindings();
+}
+
+async function triageExposure(id) {
+  const st = $("#tri_status_" + id); const sv = $("#tri_sev_" + id);
+  const body = {};
+  if (st) body.status = st.value;
+  if (sv) body.severity = sv.value;
+  try { await api("PATCH", `/exposure/findings/${id}`, body); toast("Finding updated"); loadExposureFindings(); }
+  catch (e) { toast(e.message, true); }
+}
+
+async function openCaseFromExposure(id) {
+  try {
+    const r = await api("POST", `/exposure/findings/${id}/case`);
+    toast(`Case #${r.case_id} opened`);
+    navigate("cases");
+  } catch (e) { toast(e.message, true); }
+}
+
+async function loadExposureAssets() {
+  const box = $("#expBody");
+  if (!box) return;
+  let rows = [];
+  try { rows = await api("GET", "/exposure/assets"); }
+  catch (e) { box.innerHTML = `<span class="muted">${esc(e.message)}</span>`; return; }
+  const cards = rows.length ? rows.map(a => `<div class="panel" style="margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap">
+        <b>${esc(a.label)}</b>
+        <span class="muted" style="font-size:12px">${esc(a.asset_type)} · ${esc(a.criticality)}${a.active ? "" : " · inactive"}</span>
+      </div>
+      <div style="margin-top:4px">${esc(a.value)} <span class="muted" style="font-size:11px">(hash ${esc((a.value_hash || "").slice(0, 12))}…)</span></div>
+      ${a.consent_ref ? `<div class="muted" style="font-size:11px;margin-top:2px">consent: ${esc(a.consent_ref)}</div>` : ""}
+    </div>`).join("") : '<span class="muted">No monitored assets yet.</span>';
+  const form = can("admin") ? `<div class="panel" style="margin-bottom:12px">
+      <b>Add monitored asset</b>
+      <div class="srow2" style="margin-top:8px">
+        <div><label>Type</label>${selectHtml("ma_type", ASSET_TYPES_UI, "identity", false)}</div>
+        <div><label>Criticality</label>${selectHtml("ma_crit", CRIT_UI, "medium", false)}</div>
+      </div>
+      <label>Label</label><input id="ma_label" style="width:100%" placeholder="e.g. CEO – Jane Doe">
+      <label>Value</label><input id="ma_value" style="width:100%" placeholder="email / domain / handle">
+      <label>Consent reference (LGPD/GDPR, for identities)</label><input id="ma_consent" style="width:100%" placeholder="e.g. DPA-2026-001">
+      <div style="margin-top:8px"><button data-action="expAssetAdd">Add asset</button></div>
+      <div class="err" id="ma_err"></div>
+    </div>` : "";
+  box.innerHTML = form + cards;
+}
+
+async function addExposureAsset() {
+  const errEl = $("#ma_err");
+  if (errEl) errEl.textContent = "";
+  const body = {
+    asset_type: $("#ma_type").value, criticality: $("#ma_crit").value,
+    label: $("#ma_label").value.trim(), value: $("#ma_value").value.trim(),
+    consent_ref: ($("#ma_consent").value.trim() || null),
+  };
+  if (!body.label || !body.value) { if (errEl) errEl.textContent = "Label and value are required."; return; }
+  try { await api("POST", "/exposure/assets", body); toast("Asset added"); loadExposureAssets(); }
+  catch (e) { if (errEl) errEl.textContent = e.message; }
+}
+
+function importSummaryPanel() {
+  const b = LAST_IMPORT;
+  if (!b) return "";
+  const stat = (n, label, color) => `<div style="text-align:center;min-width:74px">
+    <div style="font-size:22px;font-weight:700;color:${color}">${esc(n)}</div>
+    <div class="muted" style="font-size:11px">${esc(label)}</div></div>`;
+  return `<div class="panel" style="margin-bottom:12px;border-left:3px solid var(--accent)">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <b>Last import — batch #${esc(b.id)} (${esc(b.parser)} v${esc(b.parser_version)})</b>
+      <span class="muted" style="font-size:11px">sha256 ${esc((b.source_file_hash || "").slice(0, 16))}…</span>
+    </div>
+    <div style="display:flex;gap:18px;margin-top:8px;flex-wrap:wrap">
+      ${stat(b.created_count, "created", "#2e7d32")}
+      ${stat(b.deduped_count, "deduped", "#b8860b")}
+      ${stat(b.error_count, "errors", b.error_count ? "#c0392b" : "#888")}
+      ${stat(b.record_count, "records", "#888")}
+    </div></div>`;
+}
+
+async function loadExposureImports() {
+  const box = $("#expBody");
+  if (!box) return;
+  let rows = [];
+  try { rows = await api("GET", "/exposure/ingests"); }
+  catch (e) { box.innerHTML = `<span class="muted">${esc(e.message)}</span>`; return; }
+  const isAdmin = can("admin");
+  const th = (t) => `<th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);font-size:12px;color:var(--muted)">${t}</th>`;
+  const td = (v, extra) => `<td style="padding:6px 10px;border-bottom:1px solid var(--line);${extra || ""}">${v}</td>`;
+  const statusChip = (st) => _pill(st, st === "rolled_back" ? "#8a4b4b" : "#2e7d32", "#fff");
+  const body = rows.length ? rows.map(b => {
+    const rb = (isAdmin && b.status !== "rolled_back")
+      ? `<button class="sm ghost" data-action="expRollback" data-id="${esc(b.id)}">Rollback</button>`
+      : (b.status === "rolled_back" ? '<span class="muted" style="font-size:11px">—</span>' : "");
+    return `<tr>
+      ${td("#" + esc(b.id))}
+      ${td(esc(b.original_filename || b.source))}
+      ${td(esc(b.parser) + " <span class='muted' style='font-size:11px'>v" + esc(b.parser_version) + "</span>")}
+      ${td("<b style='color:#2e7d32'>" + esc(b.created_count) + "</b>")}
+      ${td("<span style='color:#b8860b'>" + esc(b.deduped_count) + "</span>")}
+      ${td((b.error_count ? "<span style='color:#c0392b'>" : "<span class='muted'>") + esc(b.error_count) + "</span>")}
+      ${td(statusChip(b.status))}
+      ${td("<span class='muted' style='font-size:11px'>" + esc((b.created_at || "").slice(0, 16).replace("T", " ")) + "</span>")}
+      ${td(rb)}
+    </tr>`;
+  }).join("") : `<tr><td colspan="9" class="muted" style="padding:10px">No imports yet.</td></tr>`;
+  const table = `<div class="panel" style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse">
+      <thead><tr>${["#", "File", "Parser", "Created", "Deduped", "Errors", "Status", "Date", ""].map(th).join("")}</tr></thead>
+      <tbody>${body}</tbody>
+    </table></div>`;
+  const parserOpts = PARSERS_UI.map(p2 => `<option value="${p2[0]}">${esc(p2[1])}</option>`).join("");
+  const form = can("analyst") ? `<div class="panel" style="margin-bottom:12px">
+      <b>Import file</b> <span class="muted" style="font-size:12px">authorized/manual intake only · secrets redacted server-side</span>
+      <input type="file" id="imp_file" style="width:100%;margin-top:8px">
+      <div style="margin-top:8px"><label>Parser</label><select id="imp_parser" style="min-width:220px">${parserOpts}</select></div>
+      <div style="margin-top:8px"><button data-action="expImport">Import</button></div>
+      <div class="err" id="imp_err"></div>
+    </div>` : "";
+  box.innerHTML = form + importSummaryPanel() + table;
+}
+
+async function importExposure() {
+  const errEl = $("#imp_err");
+  if (errEl) errEl.textContent = "";
+  const fileEl = $("#imp_file");
+  const f = fileEl && fileEl.files && fileEl.files[0];
+  if (!f) { if (errEl) errEl.textContent = "Select a file."; return; }
+  const fd = new FormData();
+  fd.append("file", f);
+  fd.append("parser", $("#imp_parser").value);
+  try {
+    const r = await api("POST", "/exposure/import", fd);
+    LAST_IMPORT = r;
+    toast(`Imported: ${r.created_count} created, ${r.deduped_count} deduped, ${r.error_count} errors`);
+    loadExposureImports();
+  } catch (e) { if (errEl) errEl.textContent = e.message; else toast(e.message, true); }
+}
+
+async function rollbackIngest(id) {
+  if (!window.confirm(`Rollback import #${id}? This permanently deletes its findings.`)) return;
+  try {
+    const r = await api("DELETE", `/exposure/ingests/${id}`);
+    toast(`Rolled back: ${r.removed} findings removed`);
+    loadExposureImports();
+  } catch (e) { toast(e.message, true); }
 }
 
 // ---------- form helpers ----------
