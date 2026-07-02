@@ -785,6 +785,50 @@ class ExposureFindingOut(BaseModel):
     detail: dict
     redacted: bool
     risk_score: int
+    ingest_id: int | None
+    record_number: int | None
+    parser_version: str | None
+    created_by_user_id: int | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ExposureIntake(BaseModel):
+    """Intake estruturado de 1 finding. Segredos em `detail` são redigidos no
+    servidor (nunca armazenados/retornados em claro)."""
+    exposure_type: Literal["identity_exposure", "credential_exposure"]
+    title: str | None = None
+    source: str = "manual_intake"
+    asset_id: int | None = None
+    source_reliability: Literal["A", "B", "C", "D", "E", "F"] | None = None
+    info_credibility: Literal["1", "2", "3", "4", "5", "6"] | None = None
+    severity: Literal["low", "medium", "high", "critical"] | None = None
+    observed_at: datetime | None = None
+    detail: dict = {}
+
+
+class FindingTriage(BaseModel):
+    status: Literal["new", "triaging", "confirmed", "mitigated", "closed",
+                    "false_positive", "duplicate"] | None = None
+    severity: Literal["low", "medium", "high", "critical"] | None = None
+    source_reliability: Literal["A", "B", "C", "D", "E", "F"] | None = None
+    info_credibility: Literal["1", "2", "3", "4", "5", "6"] | None = None
+
+
+class ExposureIngestOut(BaseModel):
+    id: int
+    tenant_id: int
+    source: str
+    original_filename: str | None
+    source_file_hash: str | None
+    parser: str
+    parser_version: str
+    record_count: int
+    created_count: int
+    deduped_count: int
+    error_count: int
+    status: str
     created_by_user_id: int | None
     created_at: datetime
 

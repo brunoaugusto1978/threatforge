@@ -84,6 +84,14 @@ EVIDENCE_ALLOWED_MIME: set[str] = {
 # A geração real de PDF premium vive no pacote threatforge-enterprise.
 EDITION: str = os.environ.get("THREATFORGE_EDITION", "community").strip().lower() or "community"
 
+# --- Exposure Monitoring (Issue 2) ---
+# Masking de PII por role: "off" (padrão, comportamento Community) | "by_role"
+EXPOSURE_PII_MASKING: str = os.environ.get("EXPOSURE_PII_MASKING", "off").strip().lower() or "off"
+# Limite e MIME do import de arquivo (intake autorizado)
+EXPOSURE_IMPORT_MAX_BYTES: int = int(
+    os.environ.get("EXPOSURE_IMPORT_MAX_BYTES", str(5 * 1024 * 1024)) or str(5 * 1024 * 1024))
+EXPOSURE_IMPORT_ALLOWED_MIME: set[str] = {"text/plain", "text/csv", "application/json"}
+
 # Contatos comerciais p/ o CTA de upgrade Enterprise (bloco "upgrade" no 402).
 THREATFORGE_ENTERPRISE_CONTACT_EMAIL: str = os.environ.get(
     "THREATFORGE_ENTERPRISE_CONTACT_EMAIL", "to.brunoaugusto@yahoo.com.br")
