@@ -833,3 +833,52 @@ class ExposureIngestOut(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# ---------------------------------------------------------------------------
+# Attack Surface Discovery (ASD)
+# ---------------------------------------------------------------------------
+class SurfaceAssetIn(BaseModel):
+    asset_type: Literal["subdomain", "ip", "certificate"]
+    value: str
+    brand_id: int | None = None
+    source: Literal["manual_import"] = "manual_import"
+    detail: dict = {}
+
+    @field_validator("value")
+    @classmethod
+    def _v_ok(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not v:
+            raise ValueError("value must not be blank")
+        return v
+
+
+class SurfaceImport(BaseModel):
+    brand_id: int | None = None
+    assets: list[SurfaceAssetIn]
+
+
+class SurfaceTriage(BaseModel):
+    status: Literal["new", "confirmed", "ignored", "resolved"]
+
+
+class SurfaceAssetOut(BaseModel):
+    id: int
+    tenant_id: int
+    brand_id: int | None
+    asset_type: str
+    value: str
+    value_hash: str
+    parent_id: int | None
+    source: str
+    detail: dict
+    status: str
+    first_seen: datetime
+    last_seen: datetime
+    dedup_key: str
+    risk_score: int
+    created_by_user_id: int | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
