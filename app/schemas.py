@@ -882,3 +882,28 @@ class SurfaceAssetOut(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# ---------------------------------------------------------------------------
+# Credential Intelligence — dossiê por identidade
+# ---------------------------------------------------------------------------
+class CredentialIdentityTriage(BaseModel):
+    status: Literal["new", "reviewing", "mitigated", "closed"]
+
+
+class CredentialIdentityOut(BaseModel):
+    id: int
+    tenant_id: int
+    identity_hash: str
+    email: str
+    domain: str | None
+    leak_count: int
+    unique_passwords: int
+    sources: list
+    stealer_families: list
+    first_seen: datetime
+    last_seen: datetime
+    vip_asset_id: int | None
+    max_risk: int
+    status: str
+    created_at: datetime

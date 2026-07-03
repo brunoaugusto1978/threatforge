@@ -17,7 +17,7 @@ from fastapi import (APIRouter, Depends, File, Form, HTTPException, Query,
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import audit, config, exposure_ingest as ing, risk
+from app import audit, config, credential_intel, exposure_ingest as ing, risk
 from app.auth import (Principal, current_tenant_id, require_admin,
                       require_analyst, require_viewer)
 from app.database import get_db
@@ -226,6 +226,8 @@ def _persist_record(db, tid, rec, *, source, principal, ingest=None):
                            "sightings": int((existing.detail or {}).get("sightings", 1)) + 1}
         _apply_risk(db, tid, existing)  # recomputa na deduplicação
         db.add(existing)
+        if etype == "credential_exposure":
+            credential_intel.update_identity(db, tid, existing, "deduped")
         return "deduped", existing
     rel = rec.get("source_reliability")
     cred = rec.get("info_credibility")
@@ -244,6 +246,8 @@ def _persist_record(db, tid, rec, *, source, principal, ingest=None):
         created_by_user_id=principal.user_id)
     _apply_risk(db, tid, f)  # recomputa na ingestão
     db.add(f)
+    if etype == "credential_exposure":
+        credential_intel.update_identity(db, tid, f, "created")
     return "created", f
 
 
