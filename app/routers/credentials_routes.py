@@ -27,7 +27,11 @@ def _audit(db, principal, tid, request, action, target_id, detail):
                  request=request, detail=detail)
 
 
-def _identity_out(ci: CredentialIdentity, principal: Principal) -> dict:
+def _reuse_risk(reuse_count: int) -> int:
+    return min(25, int(reuse_count) * 8)
+
+
+def _identity_out(ci: CredentialIdentity, principal: Principal, reuse_count: int = 0) -> dict:
     out = CredentialIdentityOut.model_validate({
         "id": ci.id, "tenant_id": ci.tenant_id, "identity_hash": ci.identity_hash,
         "email": ci.email, "domain": ci.domain, "leak_count": ci.leak_count,
@@ -35,11 +39,30 @@ def _identity_out(ci: CredentialIdentity, principal: Principal) -> dict:
         "sources": ci.sources or [], "stealer_families": ci.stealer_families or [],
         "first_seen": ci.first_seen, "last_seen": ci.last_seen,
         "vip_asset_id": ci.vip_asset_id, "max_risk": ci.max_risk, "status": ci.status,
-        "created_at": ci.created_at,
+        "created_at": ci.created_at, "reuse_count": reuse_count,
+        "reuse_risk": _reuse_risk(reuse_count),
     }).model_dump()
     out["email"] = ing.mask_value(out["email"], ing.PII, principal.effective_role(),
                                   config.EXPOSURE_PII_MASKING)
     return out
+
+
+def _reuse_index(db, tid):
+    """Constrói mapa password_hash -> {identity_id} e id -> CredentialIdentity."""
+    hash_to_ids, by_id = {}, {}
+    for ci in db.scalars(select(CredentialIdentity).where(CredentialIdentity.tenant_id == tid)):
+        by_id[ci.id] = ci
+        for h in (ci.password_hashes or []):
+            hash_to_ids.setdefault(h, set()).add(ci.id)
+    return hash_to_ids, by_id
+
+
+def _reuse_count_for(ci, hash_to_ids) -> int:
+    partners = set()
+    for h in (ci.password_hashes or []):
+        partners |= hash_to_ids.get(h, set())
+    partners.discard(ci.id)
+    return len(partners)
 
 
 def _owned(db, ihash, tid) -> CredentialIdentity:
@@ -63,17 +86,20 @@ def list_identities(db: Session = Depends(get_db),
         stmt = stmt.where(CredentialIdentity.status == status)
     if vip is True:
         stmt = stmt.where(CredentialIdentity.vip_asset_id.is_not(None))
-    rows = db.scalars(stmt.order_by(CredentialIdentity.max_risk.desc(),
-                                    CredentialIdentity.leak_count.desc(),
-                                    CredentialIdentity.id.desc()))
-    return [_identity_out(ci, principal) for ci in rows]
+    rows = list(db.scalars(stmt.order_by(CredentialIdentity.max_risk.desc(),
+                                         CredentialIdentity.leak_count.desc(),
+                                         CredentialIdentity.id.desc())))
+    hash_to_ids, _ = _reuse_index(db, tid)
+    return [_identity_out(ci, principal, _reuse_count_for(ci, hash_to_ids)) for ci in rows]
 
 
 @router.get("/identities/{identity_hash}", dependencies=[Depends(require_viewer)])
 def get_identity(identity_hash: str, db: Session = Depends(get_db),
                  principal: Principal = Depends(require_viewer),
                  tid: int = Depends(current_tenant_id)):
-    return _identity_out(_owned(db, identity_hash, tid), principal)
+    ci = _owned(db, identity_hash, tid)
+    hash_to_ids, _ = _reuse_index(db, tid)
+    return _identity_out(ci, principal, _reuse_count_for(ci, hash_to_ids))
 
 
 @router.get("/identities/{identity_hash}/findings", dependencies=[Depends(require_viewer)])
@@ -93,6 +119,49 @@ def identity_findings(identity_hash: str, db: Session = Depends(get_db),
                         "risk_score": f.risk_score, "status": f.status,
                         "created_at": f.created_at.isoformat() if f.created_at else None})
     return out
+
+
+@router.get("/reuse", dependencies=[Depends(require_viewer)])
+def password_reuse(db: Session = Depends(get_db),
+                   principal: Principal = Depends(require_viewer),
+                   tid: int = Depends(current_tenant_id)):
+    """Grupos de identidades que compartilham a MESMA senha (por password_sha256).
+
+    Nunca expõe o hash completo nem plaintext: o group id é um prefixo do hash.
+    """
+    hash_to_ids, by_id = _reuse_index(db, tid)
+    groups = []
+    for h, ids in hash_to_ids.items():
+        if len(ids) < 2:
+            continue
+        members = [by_id[i] for i in ids]
+        groups.append({
+            "group": h[:12],  # prefixo — identifica o grupo sem revelar o hash inteiro
+            "identity_count": len(ids),
+            "identities": [{
+                "identity_hash": m.identity_hash,
+                "email": ing.mask_value(m.email, ing.PII, principal.effective_role(), config.EXPOSURE_PII_MASKING),
+                "domain": m.domain, "leak_count": m.leak_count, "max_risk": m.max_risk,
+                "vip_asset_id": m.vip_asset_id,
+            } for m in sorted(members, key=lambda x: x.id)],
+        })
+    groups.sort(key=lambda g: g["identity_count"], reverse=True)
+    return groups
+
+
+@router.get("/identities/{identity_hash}/related", dependencies=[Depends(require_viewer)])
+def related_identities(identity_hash: str, db: Session = Depends(get_db),
+                       principal: Principal = Depends(require_viewer),
+                       tid: int = Depends(current_tenant_id)):
+    """Identidades relacionadas por reuso de senha (compartilham password_sha256)."""
+    ci = _owned(db, identity_hash, tid)
+    hash_to_ids, by_id = _reuse_index(db, tid)
+    partners = set()
+    for h in (ci.password_hashes or []):
+        partners |= hash_to_ids.get(h, set())
+    partners.discard(ci.id)
+    return [_identity_out(by_id[i], principal, _reuse_count_for(by_id[i], hash_to_ids))
+            for i in sorted(partners)]
 
 
 @router.patch("/identities/{identity_hash}", dependencies=[Depends(require_analyst)])
