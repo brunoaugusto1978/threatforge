@@ -1270,7 +1270,52 @@ def run():
     assert ca.get("/timeline?scope=identity:deadbeef").status_code == 404
     _ok("credential timeline cross-tenant/unknown identity -> 404")
 
-    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS + EXPOSURE + TIMELINE + RISK + CORRELATION + SURFACE + PROMOTE + CREDINTEL + CREDID + REUSE + VIPALERT + CREDTL: ALL TESTS PASSED ✅')
+    # ============ CREDENTIAL INTELLIGENCE PR7 (credential reports) ============
+    import app.credential_intel as _cintel6
+    import app.config as _cfg6
+    _RUSER = "repuser@rep-corp.com.br"
+    assert caa.post("/exposure/findings/intake", json={
+        "exposure_type": "credential_exposure", "source": "manual_intake",
+        "detail": {"email": _RUSER, "password": "RepSecret1", "domain": "rep-corp.com.br"}}).status_code == 201
+    rh = _cintel6.identity_hash(ta, _RUSER)
+
+    # Markdown
+    rmd = ca.get(f"/credentials/identities/{rh}/export.md")
+    assert rmd.status_code == 200, rmd.text
+    assert "# Credential dossier" in rmd.text and "RepSecret1" not in rmd.text, "md leak!"
+    assert 'attachment; filename="credential-' in rmd.headers.get("content-disposition", "")
+    _ok("credential dossier export.md (no plaintext)")
+
+    # JSON
+    rjson = ca.get(f"/credentials/identities/{rh}/export.json")
+    assert rjson.status_code == 200 and "RepSecret1" not in rjson.text, "json leak!"
+    _pj = rjson.json()
+    assert "identity" in _pj and "leaks" in _pj and _pj["identity"]["email"] == _RUSER, _pj
+    _ok("credential dossier export.json (structured, no plaintext)")
+
+    # PDF bloqueado no Community -> 402 com bloco upgrade
+    rpdf = ca.get(f"/credentials/identities/{rh}/export.pdf")
+    assert rpdf.status_code == 402, rpdf.text
+    _pd = rpdf.json()
+    assert _pd.get("feature") == "export.pdf" and (_pd.get("upgrade") or {}).get("email"), _pd
+    assert any(a.get("action") == "credential.export_pdf_denied" for a in ca.get("/audit").json())
+    _ok("credential PDF blocked in Community -> 402 (Enterprise) + audit")
+
+    # masking by_role no export
+    _cfg6.EXPOSURE_PII_MASKING = "by_role"
+    try:
+        mv = cvv.get(f"/credentials/identities/{rh}/export.md").text
+        assert _RUSER not in mv, "email not masked in export (full email present)"
+    finally:
+        _cfg6.EXPOSURE_PII_MASKING = "off"
+    _ok("credential export masked for viewer (by_role)")
+
+    # cross-tenant + audit credential.export
+    assert cb.get(f"/credentials/identities/{rh}/export.md").status_code == 404
+    assert any(a.get("action") == "credential.export" for a in ca.get("/audit").json())
+    _ok("cross-tenant credential export -> 404; audit credential.export")
+
+    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS + EXPOSURE + TIMELINE + RISK + CORRELATION + SURFACE + PROMOTE + CREDINTEL + CREDID + REUSE + VIPALERT + CREDTL + CREDREPORT: ALL TESTS PASSED ✅')
 if __name__ == '__main__':
     try:
         run()

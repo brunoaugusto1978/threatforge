@@ -4,11 +4,14 @@ Aggregation of credential_exposure leaks per email: leak_count, unique passwords
 sources, stealer families, VIP link, max risk. E-mail masked by role (reuses the
 exposure masking policy). NEVER exposes plaintext or password hashes.
 """
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import alerts, audit, config, exposure_ingest as ing
+from app import alerts, audit, config, exporters, exposure_ingest as ing, features, timeline
 from app.auth import (Principal, current_tenant_id, require_analyst,
                       require_viewer)
 from app.database import get_db
@@ -71,6 +74,38 @@ def _owned(db, ihash, tid) -> CredentialIdentity:
     if ci is None:
         raise HTTPException(status_code=404, detail="Credential identity not found.")
     return ci
+
+
+def _findings_for(db, tid, principal, ci) -> list:
+    rows = db.scalars(select(ExposureFinding).where(
+        ExposureFinding.tenant_id == tid,
+        ExposureFinding.exposure_type == "credential_exposure")
+        .order_by(ExposureFinding.created_at.desc()))
+    out = []
+    for f in rows:
+        if (f.detail or {}).get("email", "").strip().lower() == ci.email:
+            det = ing.mask_detail(f.detail or {}, principal.effective_role(), config.EXPOSURE_PII_MASKING)
+            out.append({"id": f.id, "source": f.source, "risk_score": f.risk_score,
+                        "status": f.status, "detail": det,
+                        "created_at": f.created_at.isoformat() if f.created_at else None})
+    return out
+
+
+def _dossier(db, tid, principal, ci) -> tuple:
+    hash_to_ids, by_id = _reuse_index(db, tid)
+    ident = _identity_out(ci, principal, _reuse_count_for(ci, hash_to_ids))
+    findings = _findings_for(db, tid, principal, ci)
+    partners = set()
+    for h in (ci.password_hashes or []):
+        partners |= hash_to_ids.get(h, set())
+    partners.discard(ci.id)
+    related = [_identity_out(by_id[i], principal, _reuse_count_for(by_id[i], hash_to_ids))
+               for i in sorted(partners)]
+    events = []
+    for e in timeline.collect(db, tid, ("identity", ci.id), 200):
+        ts = e.get("ts")
+        events.append({**e, "ts": ts.isoformat() if hasattr(ts, "isoformat") else ts})
+    return ident, findings, related, events
 
 
 @router.get("/identities", dependencies=[Depends(require_viewer)])
@@ -175,6 +210,47 @@ def triage_identity(identity_hash: str, payload: CredentialIdentityTriage, reque
         db.commit()
         _audit(db, principal, tid, request, "credential.identity_triage", ci.id, {"status": ci.status})
     return _identity_out(ci, principal)
+
+
+@router.get("/identities/{identity_hash}/export.md", dependencies=[Depends(require_viewer)])
+def export_identity_md(identity_hash: str, request: Request, db: Session = Depends(get_db),
+                       principal: Principal = Depends(require_viewer),
+                       tid: int = Depends(current_tenant_id)):
+    ci = _owned(db, identity_hash, tid)
+    ident, findings, related, events = _dossier(db, tid, principal, ci)
+    md = exporters.render_credential_markdown(ident, findings, related, events, edition=config.EDITION)
+    _audit(db, principal, tid, request, "credential.export", ci.id, {"format": "markdown"})
+    return Response(content=md, media_type="text/markdown; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="credential-{ci.id}.md"'})
+
+
+@router.get("/identities/{identity_hash}/export.json", dependencies=[Depends(require_viewer)])
+def export_identity_json(identity_hash: str, request: Request, db: Session = Depends(get_db),
+                         principal: Principal = Depends(require_viewer),
+                         tid: int = Depends(current_tenant_id)):
+    ci = _owned(db, identity_hash, tid)
+    ident, findings, related, events = _dossier(db, tid, principal, ci)
+    payload = {"identity": ident, "leaks": findings, "related": related, "timeline": events}
+    _audit(db, principal, tid, request, "credential.export", ci.id, {"format": "json"})
+    return Response(content=json.dumps(payload, ensure_ascii=False, default=str),
+                    media_type="application/json",
+                    headers={"Content-Disposition": f'attachment; filename="credential-{ci.id}.json"'})
+
+
+@router.get("/identities/{identity_hash}/export.pdf", dependencies=[Depends(require_viewer)])
+def export_identity_pdf(identity_hash: str, request: Request, db: Session = Depends(get_db),
+                        principal: Principal = Depends(require_viewer),
+                        tid: int = Depends(current_tenant_id)):
+    """PDF premium do dossiê — bloqueado no Community (402)."""
+    ci = _owned(db, identity_hash, tid)
+    try:
+        pdf_bytes = exporters.render_credential_pdf(ci, edition=config.EDITION)
+    except features.EnterpriseFeatureRequired as exc:
+        _audit(db, principal, tid, request, "credential.export_pdf_denied", ci.id,
+               {"edition": config.EDITION})
+        raise exc
+    return Response(content=pdf_bytes, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="credential-{ci.id}.pdf"'})
 
 
 @router.post("/identities/{identity_hash}/alert", dependencies=[Depends(require_analyst)])
