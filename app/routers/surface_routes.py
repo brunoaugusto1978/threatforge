@@ -12,9 +12,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import audit
-from app.auth import (Principal, current_tenant_id, require_analyst,
-                      require_viewer)
+from app import audit, surface_discovery
+from app.auth import (Principal, current_tenant_id, require_admin,
+                      require_analyst, require_viewer)
 from app.database import get_db
 from app.models import (SURFACE_ASSET_TYPES, SURFACE_MVP_TYPES, Brand,
                         SurfaceAsset, utcnow)
@@ -133,6 +133,25 @@ def triage_surface(asset_id: int, payload: SurfaceTriage, request: Request,
         db.commit()
         _audit(db, principal, tid, request, "surface.triage", a.id, {"status": a.status})
     return _out(a)
+
+
+@router.post("/discover", status_code=201, dependencies=[Depends(require_admin)])
+def discover(request: Request, brand_id: int = Query(...),
+             db: Session = Depends(get_db),
+             principal: Principal = Depends(require_admin),
+             tid: int = Depends(current_tenant_id)):
+    """Descoberta PASSIVA a partir das official_domains da brand (CT/DNS/RDAP/TLS).
+
+    Materializa surface_assets (subdomain->ip->certificate). Sem varredura ativa
+    (Enterprise). Idempotente por (tenant, type, value).
+    """
+    b = db.get(Brand, brand_id)
+    if b is None or b.tenant_id != tid:
+        raise HTTPException(status_code=404, detail="Brand not found.")
+    result = surface_discovery.discover_brand(db, tid, b)
+    _audit(db, principal, tid, request, "surface.discover", brand_id,
+           {"created": result["created"], "deduped": result["deduped"], "counts": result["counts"]})
+    return result
 
 
 @router.get("/types", dependencies=[Depends(require_viewer)])
