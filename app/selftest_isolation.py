@@ -1227,7 +1227,50 @@ def run():
     assert cb.post(f"/credentials/identities/{ah}/alert").status_code == 404
     _ok("cross-tenant VIP alert -> 404")
 
-    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS + EXPOSURE + TIMELINE + RISK + CORRELATION + SURFACE + PROMOTE + CREDINTEL + CREDID + REUSE + VIPALERT: ALL TESTS PASSED ✅')
+    # ============ CREDENTIAL INTELLIGENCE PR5 (credential timeline) ============
+    import app.credential_intel as _cintel5
+    _TLV = "tlvip@tl-corp.com.br"
+    _TLO = "tlother@tl-corp.com.br"
+    # VIP + leak do VIP (stealer) -> leak_ingested + vip_hit
+    assert ca.post("/exposure/assets", json={
+        "asset_type": "identity", "label": "TL VIP", "value": _TLV,
+        "criticality": "critical", "consent_ref": "DPA-TL-1"}).status_code == 201
+    _SLT = "\n".join(["Build: RedLine", "MachineID: HOST-TL", "Date: 2026-05-04", "",
+                       "URL: https://mail.tl", f"Login: {_TLV}", "Password: TL-Shared"]).encode()
+    assert caa.post("/exposure/import", files={"file": ("t.txt", _SLT, "text/plain")},
+                    data={"parser": "stealer_log"}).status_code == 201
+    # outra identidade com a MESMA senha -> reuse (reused_password)
+    assert caa.post("/exposure/findings/intake", json={
+        "exposure_type": "credential_exposure", "source": "manual_intake",
+        "detail": {"email": _TLO, "password": "TL-Shared"}}).status_code == 201
+
+    tlh = _cintel5.identity_hash(ta, _TLV)
+
+    # /timeline/sources inclui "credential"
+    assert "credential" in ca.get("/timeline/sources").json(), ca.get("/timeline/sources").json()
+    _ok("timeline source 'credential' registered")
+
+    # timeline por identidade traz os 3 tipos de evento
+    tl = ca.get(f"/timeline?scope=identity:{tlh}").json()
+    types = {e["type"] for e in tl if e["source"] == "credential"}
+    assert "credential.leak_ingested" in types, types
+    assert "credential.vip_hit" in types, types
+    assert "credential.reused_password" in types, types
+    # nenhum plaintext/senha no timeline
+    assert "TL-Shared" not in ca.get(f"/timeline?scope=identity:{tlh}").text, "leak!"
+    _ok("credential identity timeline: leak_ingested + vip_hit + reused_password (no plaintext)")
+
+    # tenant timeline também emite eventos de credential
+    tt = ca.get("/timeline?scope=tenant&limit=200").json()
+    assert any(e["source"] == "credential" for e in tt), "no credential events in tenant timeline"
+    _ok("tenant timeline includes credential events")
+
+    # cross-tenant e hash inválido
+    assert cb.get(f"/timeline?scope=identity:{tlh}").status_code == 404
+    assert ca.get("/timeline?scope=identity:deadbeef").status_code == 404
+    _ok("credential timeline cross-tenant/unknown identity -> 404")
+
+    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS + EXPOSURE + TIMELINE + RISK + CORRELATION + SURFACE + PROMOTE + CREDINTEL + CREDID + REUSE + VIPALERT + CREDTL: ALL TESTS PASSED ✅')
 if __name__ == '__main__':
     try:
         run()

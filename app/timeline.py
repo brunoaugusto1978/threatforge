@@ -11,7 +11,8 @@ from typing import Iterable, Protocol, runtime_checkable
 
 from sqlalchemy import select
 
-from app.models import (AuditLog, ExposureFinding, ExposureIngestBatch,
+from app import credential_intel
+from app.models import (AuditLog, CredentialIdentity, ExposureFinding, ExposureIngestBatch,
                         InvestigationCase)
 
 # scope = (kind, id): ("tenant", None) | ("case", <id>) | ("finding", <id>)
@@ -24,6 +25,10 @@ def _ev(ts, source, type_, title, actor, severity, icon, ref_kind, ref_id) -> di
 
 
 _ACTION_LABEL = {
+    "credential.vip_hit": "VIP credential leak",
+    "credential.vip_alert_resent": "VIP alert re-sent",
+    "credential.identity_triage": "Credential identity triaged",
+    "credential.case_opened": "Case opened from credential identity",
     "exposure.intake": "Exposure intake", "exposure.import": "Exposure import",
     "exposure.import_rollback": "Import rolled back",
     "exposure.finding_triage": "Finding triaged", "exposure.case_opened": "Case opened from finding",
@@ -152,6 +157,58 @@ def collect(db, tid: int, scope, limit: int = 100) -> list[dict]:
 
 
 # built-in Community sources
+class CredentialTimelineSource:
+    name = "credential"
+
+    def events(self, db, tid, scope):
+        kind, sid = scope
+        out = []
+        if kind == "identity":
+            ci = db.get(CredentialIdentity, sid)
+            if not ci or ci.tenant_id != tid:
+                return out
+            # leaks daquele e-mail (sem PII no título)
+            for f in db.scalars(select(ExposureFinding).where(
+                    ExposureFinding.tenant_id == tid,
+                    ExposureFinding.exposure_type == "credential_exposure")
+                    .order_by(ExposureFinding.created_at.desc()).limit(500)):
+                if (f.detail or {}).get("email", "").strip().lower() == ci.email:
+                    src = (f.detail or {}).get("source_kind") or f.source
+                    out.append(_ev(f.created_at, self.name, "credential.leak_ingested",
+                                   f"Credential leak ingested ({src})", "system",
+                                   None, "key", "exposure_finding", f.id))
+            if ci.vip_asset_id:
+                ts = ci.last_seen
+                a = db.scalar(select(AuditLog).where(
+                    AuditLog.tenant_id == tid, AuditLog.action == "credential.vip_hit",
+                    AuditLog.target_id == str(ci.id)).order_by(AuditLog.ts.asc()))
+                if a:
+                    ts = a.ts
+                out.append(_ev(ts, self.name, "credential.vip_hit",
+                               "VIP identity appeared in a credential leak", "system",
+                               "critical", "shield", "credential_identity", ci.id))
+            rc = credential_intel.reuse_partner_count(db, tid, ci)
+            if rc > 0:
+                out.append(_ev(ci.last_seen, self.name, "credential.reused_password",
+                               f"Password reused across {rc} other identit" +
+                               ("y" if rc == 1 else "ies"), "system",
+                               "high", "list", "credential_identity", ci.id))
+        elif kind == "tenant":
+            for ci in db.scalars(select(CredentialIdentity).where(
+                    CredentialIdentity.tenant_id == tid)
+                    .order_by(CredentialIdentity.last_seen.desc()).limit(50)):
+                label = ci.domain or "credential"
+                out.append(_ev(ci.last_seen, self.name, "credential.leak_ingested",
+                               f"Credential identity ({label}) — {ci.leak_count} leaks",
+                               "system", None, "key", "credential_identity", ci.id))
+                if ci.vip_asset_id:
+                    out.append(_ev(ci.last_seen, self.name, "credential.vip_hit",
+                                   "VIP credential leak", "system", "critical",
+                                   "shield", "credential_identity", ci.id))
+        return out
+
+
 register_source(ExposureTimelineSource())
 register_source(CaseTimelineSource())
 register_source(AuditTimelineSource())
+register_source(CredentialTimelineSource())

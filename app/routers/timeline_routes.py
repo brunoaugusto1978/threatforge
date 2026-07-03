@@ -5,12 +5,13 @@ GET /timeline/sources                              -> registered source names
 Cross-tenant referenced resource -> 404. Secrets never appear (upstream redaction).
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import timeline
 from app.auth import current_tenant_id, require_viewer
 from app.database import get_db
-from app.models import ExposureFinding, InvestigationCase
+from app.models import CredentialIdentity, ExposureFinding, InvestigationCase
 
 router = APIRouter(prefix="/timeline", tags=["timeline"],
                    dependencies=[Depends(require_viewer)])
@@ -22,6 +23,13 @@ def _parse_scope(scope: str, db: Session, tid: int):
     kind, sep, sid_raw = scope.partition(":")
     if not sep:
         raise HTTPException(status_code=422, detail="invalid scope.")
+    if kind == "identity":
+        ci = db.scalar(select(CredentialIdentity).where(
+            CredentialIdentity.tenant_id == tid,
+            CredentialIdentity.identity_hash == sid_raw))
+        if ci is None:
+            raise HTTPException(status_code=404, detail="Credential identity not found.")
+        return ("identity", ci.id)
     try:
         sid = int(sid_raw)
     except ValueError:
