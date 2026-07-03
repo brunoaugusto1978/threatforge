@@ -227,7 +227,7 @@ def _persist_record(db, tid, rec, *, source, principal, ingest=None):
         _apply_risk(db, tid, existing)  # recomputa na deduplicação
         db.add(existing)
         if etype == "credential_exposure":
-            credential_intel.update_identity(db, tid, existing, "deduped")
+            credential_intel.update_identity(db, tid, existing, "deduped", principal)
         return "deduped", existing
     rel = rec.get("source_reliability")
     cred = rec.get("info_credibility")
@@ -247,7 +247,7 @@ def _persist_record(db, tid, rec, *, source, principal, ingest=None):
     _apply_risk(db, tid, f)  # recomputa na ingestão
     db.add(f)
     if etype == "credential_exposure":
-        credential_intel.update_identity(db, tid, f, "created")
+        credential_intel.update_identity(db, tid, f, "created", principal)
     return "created", f
 
 

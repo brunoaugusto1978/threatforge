@@ -12,7 +12,7 @@ from email.message import EmailMessage
 import httpx
 
 from app import config
-from app.models import Brand, BrandFinding
+from app.models import Brand, BrandFinding, CredentialIdentity, MonitoredAsset
 
 logger = logging.getLogger(__name__)
 
@@ -134,3 +134,45 @@ def dispatch_new_findings(brand: Brand, findings: list[BrandFinding], db) -> int
     if sent:
         db.commit()
     return sent
+
+
+def send_vip_credential_alert(asset: MonitoredAsset, identity: CredentialIdentity) -> dict:
+    """Alerta prioritário: uma identidade VIP monitorada apareceu em leak de credencial.
+
+    Best-effort nos canais configurados. NUNCA inclui senha/plaintext — só o e-mail
+    do VIP (destino é o canal da própria org), contagem de leaks, fontes e risco.
+    """
+    s = {
+        "type": "vip_credential_leak",
+        "vip": asset.label,
+        "criticality": asset.criticality,
+        "email": identity.email,
+        "domain": identity.domain,
+        "leak_count": identity.leak_count,
+        "sources": list(identity.sources or []),
+        "stealer_families": list(identity.stealer_families or []),
+        "max_risk": identity.max_risk,
+        "identity_hash": identity.identity_hash,
+        "asset_id": asset.id,
+    }
+    text = (
+        "🔴 <b>ThreatForge — VIP credential leak</b>\n"
+        f"VIP: <b>{asset.label}</b> ({asset.criticality})\n"
+        f"E-mail: <code>{identity.email}</code>\n"
+        f"Leaks: <b>{identity.leak_count}</b> · risco {identity.max_risk}/100\n"
+        f"Fontes: {', '.join(s['sources']) or 'n/d'}"
+    )
+    subject = f"[ThreatForge] VIP credential leak — {asset.label} ({identity.email})"
+    body = (
+        "A monitored VIP identity appeared in a credential leak.\n\n"
+        f"VIP: {asset.label} ({asset.criticality})\n"
+        f"E-mail: {identity.email}\n"
+        f"Leaks: {identity.leak_count} | Max risk: {identity.max_risk}/100\n"
+        f"Sources: {', '.join(s['sources'])}\n"
+        f"Stealer families: {', '.join(s['stealer_families'])}\n\n"
+        "No password is included by design. Review it in the dashboard/API."
+    )
+    _telegram(text)
+    _webhook(s)
+    _email(subject, body)
+    return s

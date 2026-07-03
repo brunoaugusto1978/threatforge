@@ -31,7 +31,7 @@ def _add(lst, val):
     return lst
 
 
-def update_identity(db, tid: int, finding, outcome: str) -> None:
+def update_identity(db, tid: int, finding, outcome: str, principal=None) -> bool:
     """Atualiza (ou cria) o dossiê da identidade a partir de um credential finding."""
     detail = finding.detail or {}
     email = _norm(detail.get("email"))
@@ -60,6 +60,7 @@ def update_identity(db, tid: int, finding, outcome: str) -> None:
     ci.max_risk = max(int(ci.max_risk or 0), int(finding.risk_score or 0))
 
     # VIP hit: e-mail bate com um monitored_asset (identity/email)
+    new_vip_hit = False
     if ci.vip_asset_id is None:
         vip = db.scalar(select(MonitoredAsset).where(
             MonitoredAsset.tenant_id == tid,
@@ -67,4 +68,29 @@ def update_identity(db, tid: int, finding, outcome: str) -> None:
             MonitoredAsset.asset_type.in_(("identity", "email"))))
         if vip is not None:
             ci.vip_asset_id = vip.id
+            new_vip_hit = True
     db.add(ci)
+    db.flush()
+
+    if new_vip_hit:
+        _fire_vip_alert(db, tid, ci, principal)
+    return new_vip_hit
+
+
+def _fire_vip_alert(db, tid, ci, principal) -> None:
+    """Dispara o alerta prioritário de VIP credential leak (best-effort) + audit."""
+    from app import alerts, audit  # import local p/ evitar ciclos
+    asset = db.get(MonitoredAsset, ci.vip_asset_id)
+    if asset is None or asset.tenant_id != tid:
+        return
+    try:
+        alerts.send_vip_credential_alert(asset, ci)
+    except Exception:
+        pass  # canais são best-effort; nunca quebram a ingestão
+    audit.record(
+        db, actor=(principal.subject if principal else "system"),
+        actor_role=(principal.role if principal else None), tenant_id=tid,
+        operator_user_id=(principal.user_id if principal else None),
+        action="credential.vip_hit", target_type="credential_identity",
+        target_id=ci.id, request=None, commit=False,
+        detail={"asset_id": asset.id, "domain": ci.domain, "leak_count": ci.leak_count})

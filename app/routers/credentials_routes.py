@@ -8,12 +8,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import audit, config, exposure_ingest as ing
+from app import alerts, audit, config, exposure_ingest as ing
 from app.auth import (Principal, current_tenant_id, require_analyst,
                       require_viewer)
 from app.database import get_db
 from app.models import (CredentialIdentity, ExposureFinding, InvestigationCase,
-                        utcnow)
+                        MonitoredAsset, utcnow)
 from app.schemas import CredentialIdentityOut, CredentialIdentityTriage
 
 router = APIRouter(prefix="/credentials", tags=["credentials"],
@@ -175,6 +175,28 @@ def triage_identity(identity_hash: str, payload: CredentialIdentityTriage, reque
         db.commit()
         _audit(db, principal, tid, request, "credential.identity_triage", ci.id, {"status": ci.status})
     return _identity_out(ci, principal)
+
+
+@router.post("/identities/{identity_hash}/alert", dependencies=[Depends(require_analyst)])
+def resend_vip_alert(identity_hash: str, request: Request, db: Session = Depends(get_db),
+                     principal: Principal = Depends(require_analyst),
+                     tid: int = Depends(current_tenant_id)):
+    """Reenvia o alerta prioritário de VIP credential leak (analyst+).
+
+    409 se a identidade não estiver ligada a um VIP. Sem senha/plaintext; e-mail
+    mascarado por role na resposta.
+    """
+    ci = _owned(db, identity_hash, tid)
+    if not ci.vip_asset_id:
+        raise HTTPException(status_code=409, detail="Identity is not linked to a VIP asset.")
+    asset = db.get(MonitoredAsset, ci.vip_asset_id)
+    if asset is None or asset.tenant_id != tid:
+        raise HTTPException(status_code=404, detail="VIP asset not found.")
+    summary = alerts.send_vip_credential_alert(asset, ci)
+    _audit(db, principal, tid, request, "credential.vip_alert_resent", ci.id, {"asset_id": asset.id})
+    summary = {**summary, "email": ing.mask_value(
+        summary["email"], ing.PII, principal.effective_role(), config.EXPOSURE_PII_MASKING)}
+    return summary
 
 
 @router.post("/identities/{identity_hash}/case", status_code=201, dependencies=[Depends(require_analyst)])
