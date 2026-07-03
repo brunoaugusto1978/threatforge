@@ -907,3 +907,5 @@ class CredentialIdentityOut(BaseModel):
     max_risk: int
     status: str
     created_at: datetime
+    reuse_count: int = 0
+    reuse_risk: int = 0

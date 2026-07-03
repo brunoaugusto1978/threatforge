@@ -1127,7 +1127,59 @@ def run():
     assert rcc.status_code == 201 and rcc.json()["severity"] == "critico", rcc.text
     _ok("open Investigation Case from credential identity (VIP -> critico)")
 
-    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS + EXPOSURE + TIMELINE + RISK + CORRELATION + SURFACE + PROMOTE + CREDINTEL + CREDID: ALL TESTS PASSED ✅')
+    # ============ CREDENTIAL INTELLIGENCE PR3 (password reuse) ============
+    import app.credential_intel as _cintel2
+    import app.config as _cfg3
+    _R1, _R2, _R3 = "user1@reuse-corp.com.br", "user2@reuse-corp.com.br", "user3@reuse-corp.com.br"
+    # user1 e user2 compartilham a MESMA senha; user3 tem senha única
+    for _em, _rpw in ((_R1, "SharedPass1"), (_R2, "SharedPass1"), (_R3, "UniquePass9")):
+        assert caa.post("/exposure/findings/intake", json={
+            "exposure_type": "credential_exposure", "source": "manual_intake",
+            "detail": {"email": _em, "password": _rpw}}).status_code == 201
+
+    h1 = _cintel2.identity_hash(ta, _R1)
+    h2 = _cintel2.identity_hash(ta, _R2)
+    h3 = _cintel2.identity_hash(ta, _R3)
+
+    reuse = ca.get("/credentials/reuse").json()
+    grp = [g for g in reuse if {h1, h2} <= {i["identity_hash"] for i in g["identities"]}]
+    assert grp and grp[0]["identity_count"] == 2, reuse
+    assert len(grp[0]["group"]) == 12, grp[0]  # prefixo do hash, não o hash inteiro
+    assert "SharedPass1" not in ca.get("/credentials/reuse").text, "plaintext leak!"
+    # user3 (senha única) não aparece em nenhum grupo de reuso
+    assert all(h3 not in {i["identity_hash"] for i in g["identities"]} for g in reuse), reuse
+    _ok("password reuse groups: shared password links user1+user2; unique password excluded")
+
+    # identidades relacionadas por reuso
+    rel = ca.get(f"/credentials/identities/{h1}/related").json()
+    assert [r["identity_hash"] for r in rel] == [h2], rel
+    _ok("related identities via shared password (user1 -> user2)")
+
+    # risco adicional por reuso no dossiê
+    d1 = ca.get(f"/credentials/identities/{h1}").json()
+    d3 = ca.get(f"/credentials/identities/{h3}").json()
+    assert d1["reuse_count"] >= 1 and d1["reuse_risk"] > 0, d1
+    assert d3["reuse_count"] == 0 and d3["reuse_risk"] == 0, d3
+    _ok("reuse risk in dossier (reused > 0; unique = 0)")
+
+    # RBAC: viewer lê reuso; masking by_role mascara e-mails
+    assert cvv.get("/credentials/reuse").status_code == 200
+    _cfg3.EXPOSURE_PII_MASKING = "by_role"
+    try:
+        rv = cvv.get("/credentials/reuse").json()
+        gv = [g for g in rv if {h1, h2} <= {i["identity_hash"] for i in g["identities"]}][0]
+        assert all("***" in i["email"] and "@reuse-corp.com.br" not in i["email"] for i in gv["identities"]), gv
+    finally:
+        _cfg3.EXPOSURE_PII_MASKING = "off"
+    _ok("reuse readable by viewer; emails masked by_role")
+
+    # cross-tenant: B não vê grupos de reuso de A
+    assert all(h1 not in {i["identity_hash"] for i in g["identities"]}
+               for g in cb.get("/credentials/reuse").json()), "cross-tenant leak!"
+    assert cb.get(f"/credentials/identities/{h1}/related").status_code == 404
+    _ok("password reuse isolated per tenant (cross-tenant 404/empty)")
+
+    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS + EXPOSURE + TIMELINE + RISK + CORRELATION + SURFACE + PROMOTE + CREDINTEL + CREDID + REUSE: ALL TESTS PASSED ✅')
 if __name__ == '__main__':
     try:
         run()
