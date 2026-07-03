@@ -12,12 +12,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import audit, surface_discovery
+from app import audit, risk, surface_discovery
 from app.auth import (Principal, current_tenant_id, require_admin,
                       require_analyst, require_viewer)
 from app.database import get_db
 from app.models import (SURFACE_ASSET_TYPES, SURFACE_MVP_TYPES, Brand,
-                        SurfaceAsset, utcnow)
+                        ExposureFinding, SurfaceAsset, utcnow)
 from app.schemas import SurfaceAssetOut, SurfaceImport, SurfaceTriage
 
 router = APIRouter(prefix="/surface", tags=["surface"],
@@ -152,6 +152,58 @@ def discover(request: Request, brand_id: int = Query(...),
     _audit(db, principal, tid, request, "surface.discover", brand_id,
            {"created": result["created"], "deduped": result["deduped"], "counts": result["counts"]})
     return result
+
+
+@router.post("/assets/{asset_id}/promote", status_code=201, dependencies=[Depends(require_analyst)])
+def promote(asset_id: int, request: Request, db: Session = Depends(get_db),
+            principal: Principal = Depends(require_analyst),
+            tid: int = Depends(current_tenant_id)):
+    """Promove um surface_asset a um infrastructure_exposure finding (Surface -> Exposure).
+
+    Idempotente por (tenant, infrastructure_exposure, asset_type, value). Vincula
+    bidirecionalmente e calcula o risk score. Sem segredos (superfície técnica).
+    """
+    a = _owned(db, asset_id, tid)
+    ekey = hashlib.sha256(
+        f"{tid}|infrastructure_exposure|{a.asset_type}|{_norm(a.value)}".encode("utf-8")).hexdigest()
+    existing = db.scalar(select(ExposureFinding).where(
+        ExposureFinding.tenant_id == tid, ExposureFinding.dedup_key == ekey))
+    if existing is not None:
+        a.detail = {**(a.detail or {}), "exposure_finding_id": existing.id}
+        db.add(a)
+        db.commit()
+        return {"exposure_finding_id": existing.id, "created": False}
+
+    detail = {"surface_asset_id": a.id, "surface_type": a.asset_type, "value": a.value}
+    if a.asset_type == "subdomain":
+        detail["subdomain"] = a.value
+        detail["domain"] = a.value
+    elif a.asset_type == "ip":
+        detail["ip"] = a.value
+    elif a.asset_type == "certificate":
+        detail["certificate"] = a.value
+    if a.brand_id is not None:
+        detail["brand_id"] = a.brand_id
+
+    f = ExposureFinding(
+        tenant_id=tid, exposure_type="infrastructure_exposure",
+        title=f"Exposed {a.asset_type}: {a.value}"[:300], source="attack_surface",
+        source_reliability="B", info_credibility="2", severity="medium", status="new",
+        first_seen=utcnow(), last_seen=utcnow(), dedup_key=ekey, detail=detail,
+        redacted=True, created_by_user_id=principal.user_id)
+    bd = risk.compute(f, None)
+    f.risk_score = bd["score"]
+    f.detail = {**detail, "risk_breakdown": bd}
+    db.add(f)
+    db.flush()
+    a.status = "confirmed"
+    a.detail = {**(a.detail or {}), "exposure_finding_id": f.id}
+    db.add(a)
+    db.commit()
+    db.refresh(f)
+    _audit(db, principal, tid, request, "surface.promote", a.id,
+           {"exposure_finding_id": f.id, "asset_type": a.asset_type})
+    return {"exposure_finding_id": f.id, "created": True, "risk_score": f.risk_score}
 
 
 @router.get("/types", dependencies=[Depends(require_viewer)])

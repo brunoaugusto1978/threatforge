@@ -957,7 +957,60 @@ def run():
         _sd._ct_subdomains, _sd._resolve_ips, _sd._rdap, _sd._cert_info = _SD_ORIG
 
 
-    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS + EXPOSURE + TIMELINE + RISK + CORRELATION + SURFACE: ALL TESTS PASSED ✅')
+    # ============ ASD PR3: ciclo Surface -> Exposure -> Correlation -> Investigation ============
+    p3b = ca.post("/brands", json={"name": "P3Brand", "official_domains": ["p3-corp.com.br"]})
+    assert p3b.status_code == 201, p3b.text
+    p3_bid = p3b.json()["id"]
+    # importa surface assets vinculados à brand (subdomínio + ip)
+    rimp3 = caa.post("/surface/import", json={"brand_id": p3_bid, "assets": [
+        {"asset_type": "subdomain", "value": "vpn.p3-corp.com.br"},
+        {"asset_type": "ip", "value": "203.0.113.50"}]})
+    assert rimp3.status_code == 201 and rimp3.json()["created"] == 2, rimp3.text
+    ip_sid = rimp3.json()["asset_ids"][1]  # o ip
+
+    # PROMOTE: surface asset (ip) -> infrastructure_exposure finding
+    rpro = caa.post(f"/surface/assets/{ip_sid}/promote")
+    assert rpro.status_code == 201 and rpro.json()["created"] is True, rpro.text
+    inf_fid = rpro.json()["exposure_finding_id"]
+    _ok("promote surface asset (ip) -> infrastructure_exposure finding")
+
+    # o finding aparece no módulo Exposure com o tipo certo
+    fdet = caa.get(f"/exposure/findings/{inf_fid}").json()
+    assert fdet["exposure_type"] == "infrastructure_exposure", fdet
+    assert fdet["detail"].get("ip") == "203.0.113.50", fdet
+    assert fdet["detail"].get("surface_asset_id") == ip_sid, fdet
+    _ok("infrastructure_exposure finding materialized (linked to surface asset)")
+
+    # promote idempotente
+    rpro2 = caa.post(f"/surface/assets/{ip_sid}/promote")
+    assert rpro2.status_code == 201 and rpro2.json()["created"] is False and rpro2.json()["exposure_finding_id"] == inf_fid, rpro2.text
+    _ok("promote idempotent (same infrastructure finding)")
+
+    # CORRELATION do infra finding: inclui o surface asset e a brand (ponte via surface.brand_id)
+    gp3 = ca.get(f"/correlation?entity=finding:{inf_fid}").json()
+    kinds3 = {n["kind"] for n in gp3["nodes"]}
+    assert "surface_asset" in kinds3, kinds3
+    assert "brand" in kinds3, kinds3  # Brand<->Subdomain/IP<->Exposure fechado
+    _ok("correlate infra finding -> surface_asset + brand (Surface<->Exposure<->Brand)")
+
+    # seed a partir do surface asset também correlaciona o finding
+    gsurf = ca.get(f"/correlation?entity=surface:{ip_sid}").json()
+    assert gsurf["seed"]["kind"] == "surface_asset"
+    assert any(n["kind"] == "exposure_finding" for n in gsurf["nodes"]), gsurf
+    _ok("correlate by surface asset -> exposure finding")
+
+    # INVESTIGATION: abre case a partir do infra finding (fecha o ciclo)
+    rcase3 = caa.post(f"/exposure/findings/{inf_fid}/case")
+    assert rcase3.status_code == 201, rcase3.text
+    _ok("open Investigation Case from infrastructure_exposure (cycle closed)")
+
+    # cross-tenant: B não promove asset de A
+    assert cb.post(f"/surface/assets/{ip_sid}/promote").status_code == 404
+    # audit
+    assert any(a.get("action") == "surface.promote" for a in ca.get("/audit").json())
+    _ok("cross-tenant promote -> 404; audit surface.promote")
+
+    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS + EXPOSURE + TIMELINE + RISK + CORRELATION + SURFACE + PROMOTE: ALL TESTS PASSED ✅')
 if __name__ == '__main__':
     try:
         run()

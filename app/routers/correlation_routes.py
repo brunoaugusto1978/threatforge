@@ -14,7 +14,7 @@ from app.database import get_db
 router = APIRouter(prefix="/correlation", tags=["correlation"],
                    dependencies=[Depends(require_viewer)])
 
-_ENTITY_KINDS = {"finding", "asset", "observable", "email", "domain", "hash", "ip"}
+_ENTITY_KINDS = {"finding", "asset", "observable", "surface", "email", "domain", "hash", "ip"}
 
 
 @router.get("")
@@ -23,7 +23,7 @@ def get_correlation(entity: str = Query(..., description="finding:{id} | asset:{
     kind, sep, ref = entity.partition(":")
     if not sep or kind not in _ENTITY_KINDS or not ref:
         raise HTTPException(status_code=422, detail="invalid entity selector.")
-    if kind in ("finding", "asset", "observable"):
+    if kind in ("finding", "asset", "observable", "surface"):
         try:
             ref = int(ref)
         except ValueError:
