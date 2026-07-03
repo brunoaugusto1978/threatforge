@@ -897,6 +897,66 @@ def run():
     assert any(a.get("action") == "surface.import" for a in asurf)
     _ok("audit logs surface.import")
 
+    # ---- descoberta PASSIVA (mocks: sem internet real) ----
+    import app.surface_discovery as _sd
+    _SD_ORIG = (_sd._ct_subdomains, _sd._resolve_ips, _sd._rdap, _sd._cert_info)
+    _sd._ct_subdomains = lambda domain, client, limit=300: (
+        ["vpn." + domain, "mail." + domain] if domain == "surf-corp.com.br" else [])
+    # vpn e mail compartilham 203.0.113.10 (hosting compartilhado): ASD deve deduplicar
+    _sd._resolve_ips = lambda host: (
+        ["203.0.113.10"] if host.startswith("vpn.") else
+        (["203.0.113.10", "203.0.113.11"] if host.startswith("mail.") else []))
+    _sd._rdap = lambda domain, client: {"registered": "2020-01-01T00:00:00Z", "handle": "REG-1"}
+    _sd._cert_info = lambda domain, client: {
+        "issuer": "Let's Encrypt", "not_before": "2026-01-01", "not_after": "2026-04-01",
+        "serial": "deadbeef01"}
+    try:
+        sb = ca.post("/brands", json={"name": "SurfBrand", "official_domains": ["surf-corp.com.br"]})
+        assert sb.status_code == 201, sb.text
+        sb_id = sb.json()["id"]
+
+        # viewer não pode descobrir (require_admin) -> 403
+        assert cvv.post(f"/surface/discover?brand_id={sb_id}").status_code == 403
+        _ok("viewer cannot run passive discovery (403)")
+
+        rd = ca.post(f"/surface/discover?brand_id={sb_id}")
+        assert rd.status_code == 201, rd.text
+        res = rd.json()
+        # valida COMPORTAMENTO, não cardinalidade artificial de IPs (subdomínios podem
+        # compartilhar IP -> dedup é o esperado em ASD).
+        assert res["counts"]["subdomain"] == 3, res
+        assert res["counts"]["certificate"] == 1, res
+        assert res["counts"]["ip"] >= 1, res
+        assert res["deduped"] >= 1, res  # ao menos o IP compartilhado foi deduplicado
+        _ok("passive discovery materializes subdomains + ip(s) + cert (shared IP deduped)")
+
+        assets = ca.get(f"/surface/assets?brand_id={sb_id}").json()
+        kinds = {a["asset_type"] for a in assets}
+        assert {"subdomain", "ip", "certificate"} <= kinds, kinds
+        # encadeamento: ip tem parent_id (subdomínio)
+        ips = [a for a in assets if a["asset_type"] == "ip"]
+        assert ips and all(a["parent_id"] for a in ips), ips  # todo IP tem parent (subdomínio)
+        # rdap no apex
+        apex = [a for a in assets if a["value"] == "surf-corp.com.br"]
+        assert apex and apex[0]["detail"].get("rdap"), apex
+        _ok("discovered assets chained (ip.parent = subdomain) + rdap on apex")
+
+        # re-descoberta é idempotente (dedup)
+        rd2 = ca.post(f"/surface/discover?brand_id={sb_id}")
+        assert rd2.json()["created"] == 0 and rd2.json()["deduped"] >= 1, rd2.json()
+        _ok("re-discovery idempotent (all deduped)")
+
+        # cross-tenant: B não descobre a brand de A
+        assert cb.post(f"/surface/discover?brand_id={sb_id}").status_code == 404
+        _ok("cross-tenant discovery -> 404")
+
+        # audit
+        assert any(a.get("action") == "surface.discover" for a in ca.get("/audit").json())
+        _ok("audit logs surface.discover")
+    finally:
+        _sd._ct_subdomains, _sd._resolve_ips, _sd._rdap, _sd._cert_info = _SD_ORIG
+
+
     print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS + EXPOSURE + TIMELINE + RISK + CORRELATION + SURFACE: ALL TESTS PASSED ✅')
 if __name__ == '__main__':
     try:
