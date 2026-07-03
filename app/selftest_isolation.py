@@ -1179,7 +1179,55 @@ def run():
     assert cb.get(f"/credentials/identities/{h1}/related").status_code == 404
     _ok("password reuse isolated per tenant (cross-tenant 404/empty)")
 
-    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS + EXPOSURE + TIMELINE + RISK + CORRELATION + SURFACE + PROMOTE + CREDINTEL + CREDID + REUSE: ALL TESTS PASSED ✅')
+    # ============ CREDENTIAL INTELLIGENCE PR4 (VIP hit alerts) ============
+    import app.credential_intel as _cintel4
+    import app.config as _cfg4
+    _AMAIL = "ceo-alert@vip-corp.com.br"
+    # VIP monitorado ANTES do leak -> VIP hit deve disparar alerta + audit
+    assert ca.post("/exposure/assets", json={
+        "asset_type": "identity", "label": "Alert VIP CEO", "value": _AMAIL,
+        "criticality": "critical", "consent_ref": "DPA-ALERT-1"}).status_code == 201
+
+    _SLA = "\n".join(["Build: RedLine", "MachineID: HOST-A", "Date: 2026-05-03", "",
+                       "URL: https://mail.z", f"Login: {_AMAIL}", "Password: Alert-Pass-1"]).encode()
+    assert caa.post("/exposure/import", files={"file": ("a.txt", _SLA, "text/plain")},
+                    data={"parser": "stealer_log"}).status_code == 201
+
+    ah = _cintel4.identity_hash(ta, _AMAIL)
+    # audit registrou o VIP hit
+    aud = ca.get("/audit").json()
+    assert any(a.get("action") == "credential.vip_hit" for a in aud), "no vip_hit audit"
+    _ok("VIP credential leak -> credential.vip_hit alert dispatched + audited")
+
+    ident_a = ca.get(f"/credentials/identities/{ah}").json()
+    assert ident_a["vip_asset_id"], ident_a
+
+    # reenviar alerta (analyst): 200, com resumo, SEM plaintext
+    ra = caa.post(f"/credentials/identities/{ah}/alert")
+    assert ra.status_code == 200, ra.text
+    summ = ra.json()
+    assert summ["type"] == "vip_credential_leak" and summ["leak_count"] >= 1, summ
+    assert "Alert-Pass-1" not in ra.text and "password" not in str(summ).lower(), summ
+    _ok("re-send VIP alert (analyst) -> summary, no plaintext")
+
+    # RBAC: viewer não reenvia alerta (403)
+    assert cvv.post(f"/credentials/identities/{ah}/alert").status_code == 403
+    _ok("viewer cannot resend VIP alert (403)")
+
+    # 409 quando a identidade não é VIP (usa uma identidade não-VIP existente)
+    _NV = "nonvip-alert@plain-corp.com.br"
+    assert caa.post("/exposure/findings/intake", json={
+        "exposure_type": "credential_exposure", "source": "manual_intake",
+        "detail": {"email": _NV, "password": "Np1"}}).status_code == 201
+    nvh = _cintel4.identity_hash(ta, _NV)
+    assert caa.post(f"/credentials/identities/{nvh}/alert").status_code == 409
+    _ok("re-alert on non-VIP identity -> 409")
+
+    # cross-tenant: B não reenvia alerta da identidade de A
+    assert cb.post(f"/credentials/identities/{ah}/alert").status_code == 404
+    _ok("cross-tenant VIP alert -> 404")
+
+    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS + EXPOSURE + TIMELINE + RISK + CORRELATION + SURFACE + PROMOTE + CREDINTEL + CREDID + REUSE + VIPALERT: ALL TESTS PASSED ✅')
 if __name__ == '__main__':
     try:
         run()
