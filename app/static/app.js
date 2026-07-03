@@ -606,7 +606,8 @@ function navigate(view) {
     b.classList.toggle("active", b.dataset.view === view));
   ({ dashboard: viewDashboard, iocs: viewIocs, brands: viewBrands, watchlist: viewWatchlist,
      org: viewOrg, users: viewUsers, audit: viewAudit, cases: viewCases,
-     integrations: viewIntegrations, exposure: viewExposure }[view] || viewDashboard)();
+     integrations: viewIntegrations, exposure: viewExposure,
+     credentials: viewCredentials }[view] || viewDashboard)();
 }
 
 async function viewDashboard() {
@@ -1550,6 +1551,8 @@ const ACTIONS = {
   corList: (id) => renderCorList(id),
   corGraph: (id) => renderCorGraph(id),
   tlFilter: (_id, btn) => tlSourceFilter(btn.dataset.name),
+  credDossier: (_id, btn) => credDossier(btn.dataset.hash),
+  credCase: (_id, btn) => credCase(btn.dataset.hash),
 };
 document.addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-action]");
@@ -2245,6 +2248,115 @@ function corNodeClick(kind, refid) {
   else if (kind === "monitored_asset") { EXPOSURE_TAB = "assets"; navigate("exposure"); }
   else if (kind === "exposure_finding") { EXPOSURE_TAB = "findings"; navigate("exposure"); }
   else toast(`${kind}: ${refid}`);
+}
+
+// ---------- credential intelligence ----------
+function _credBand(score) { score = score || 0; return score >= 90 ? "critical" : score >= 70 ? "high" : score >= 40 ? "medium" : "low"; }
+
+async function viewCredentials() {
+  const m = $("#main");
+  m.innerHTML = `<h2 class="title">Credential Intelligence</h2>
+    <p class="muted" style="margin-top:-6px">Identity dossiers from credential leaks. Passwords are never stored — only hashes/masks.</p>
+    <div id="credList">loading…</div><div id="credDetail"></div>`;
+  let rows = [];
+  try { rows = await api("GET", "/credentials/identities"); }
+  catch (e) { $("#credList").textContent = e.message; return; }
+  if (!rows.length) { $("#credList").innerHTML = '<span class="muted">No credential identities yet.</span>'; return; }
+  const th = (t) => `<th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);font-size:12px;color:var(--muted)">${t}</th>`;
+  const td = (v) => `<td style="padding:6px 10px;border-bottom:1px solid var(--line)">${v}</td>`;
+  const body = rows.map(r => {
+    const band = _credBand(r.max_risk);
+    const vip = r.vip_asset_id ? _pill("VIP", "#c0392b", "#fff", "VIP identity") : "";
+    const reuse = (r.reuse_count > 0) ? _pill("reuse " + r.reuse_count, "#8e44ad", "#fff", "Password reuse") : "";
+    const risk = _pill(String(r.max_risk || 0), _RISK_COLOR[band], "#fff", "Max risk");
+    return `<tr>
+      ${td("<b>" + esc(r.email) + "</b>")}
+      ${td('<span class="muted" style="font-size:12px">' + esc(r.domain || "") + "</span>")}
+      ${td(risk + " " + vip + " " + reuse)}
+      ${td('<span class="muted" style="font-size:12px">leaks ' + esc(r.leak_count) + " · uniq " + esc(r.unique_passwords) + "</span>")}
+      ${td('<button class="sm ghost" data-action="credDossier" data-hash="' + esc(r.identity_hash) + '">Dossier</button>')}
+    </tr>`;
+  }).join("");
+  $("#credList").innerHTML = `<div class="panel" style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">
+    <thead><tr>${["Email", "Domain", "Risk / flags", "Leaks", ""].map(th).join("")}</tr></thead>
+    <tbody>${body}</tbody></table></div>`;
+}
+
+function _credReuseGraph(ident, related) {
+  const W = 320, H = Math.max(190, 90 + related.length * 26), cx = W / 2, cy = H / 2;
+  const R = Math.min(125, 55 + related.length * 12);
+  let edges = "", nodes = "";
+  related.forEach((r, i) => {
+    const ang = (i / related.length) * 2 * Math.PI - Math.PI / 2;
+    const x = cx + R * Math.cos(ang), y = cy + R * Math.sin(ang);
+    edges += `<line x1="${cx}" y1="${cy}" x2="${x.toFixed(0)}" y2="${y.toFixed(0)}" stroke="#8e44ad" stroke-width="1.6"/>`;
+    const lbl = (r.email || "").split("@")[0];
+    nodes += `<g data-hash="${esc(r.identity_hash)}" style="cursor:pointer"><title>${esc(r.email)}</title>
+      <circle cx="${x.toFixed(0)}" cy="${y.toFixed(0)}" r="16" fill="#2f6fb0"></circle>
+      <text x="${x.toFixed(0)}" y="${(y + 30).toFixed(0)}" font-size="10" text-anchor="middle" fill="currentColor">${esc(lbl.slice(0, 12))}</text></g>`;
+  });
+  const seed = `<g><title>${esc(ident.email)}</title>
+    <circle cx="${cx}" cy="${cy}" r="20" fill="#c0392b" stroke="#fff" stroke-width="2"></circle>
+    <text x="${cx}" y="${cy + 5}" font-size="13" text-anchor="middle">🔑</text></g>`;
+  return `<svg data-credgraph="1" viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px;color:var(--txt);margin-top:6px">${edges}${seed}${nodes}</svg>`;
+}
+
+async function credDossier(hash) {
+  const box = $("#credDetail");
+  if (!box) return;
+  box.innerHTML = '<div class="panel" style="margin-top:12px"><span class="muted">loading dossier…</span></div>';
+  let ident, findings, related, tl;
+  try {
+    [ident, findings, related, tl] = await Promise.all([
+      api("GET", `/credentials/identities/${hash}`),
+      api("GET", `/credentials/identities/${hash}/findings`).catch(() => []),
+      api("GET", `/credentials/identities/${hash}/related`).catch(() => []),
+      api("GET", `/timeline?scope=identity:${hash}`).catch(() => []),
+    ]);
+  } catch (e) { box.innerHTML = `<div class="panel" style="margin-top:12px"><span class="muted">${esc(e.message)}</span></div>`; return; }
+  const band = _credBand(ident.max_risk);
+  const vip = ident.vip_asset_id ? _pill("VIP", "#c0392b", "#fff") : "";
+  const reuse = (ident.reuse_count > 0) ? _pill("reuse " + ident.reuse_count + " (+" + ident.reuse_risk + ")", "#8e44ad", "#fff") : "";
+  const risk = _pill("risk " + (ident.max_risk || 0), _RISK_COLOR[band], "#fff");
+  const fHtml = findings.length ? findings.map(f => {
+    const det = Object.entries(f.detail || {}).filter(([k]) => k !== "risk_breakdown")
+      .map(([k, v]) => `<span class="muted" style="font-size:12px;margin-right:10px"><b>${esc(k)}</b>: ${esc(String(v))}</span>`).join("");
+    return `<div style="padding:5px 0;border-bottom:1px solid var(--line)">
+      <span class="muted" style="font-size:11px">${esc((f.created_at || "").slice(0, 16).replace("T", " "))} · ${esc(f.source)} · risk ${esc(f.risk_score)}</span>
+      <div style="margin-top:2px">${det}</div></div>`;
+  }).join("") : '<span class="muted">No leaks.</span>';
+  const rHtml = related.length ? related.map(r =>
+    `<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-bottom:1px solid var(--line)">
+      <span>${esc(r.email)}</span>
+      <button class="sm ghost" data-action="credDossier" data-hash="${esc(r.identity_hash)}">open</button></div>`).join("")
+    : '<span class="muted">No related identities.</span>';
+  box.innerHTML = `<div class="panel" style="margin-top:12px;border-left:3px solid var(--accent)">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <div><b>${esc(ident.email)}</b> <span class="muted" style="font-size:12px">${esc(ident.domain || "")}</span></div>
+      <span style="display:flex;gap:6px;align-items:center">${risk} ${vip} ${reuse}
+        ${can("analyst") ? `<button class="sm" data-action="credCase" data-hash="${esc(hash)}">Open investigation</button>` : ""}</span>
+    </div>
+    <div class="muted" style="font-size:12px;margin-top:6px">leaks ${esc(ident.leak_count)} · unique passwords ${esc(ident.unique_passwords)} · sources: ${esc((ident.sources || []).join(", ") || "—")}${(ident.stealer_families || []).length ? " · stealers: " + esc(ident.stealer_families.join(", ")) : ""}</div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:10px">
+      <div style="flex:1;min-width:280px"><b>Leaks (${findings.length})</b><div style="margin-top:6px">${fHtml}</div></div>
+      <div style="flex:1;min-width:240px"><b>Related by password reuse (${related.length})</b><div style="margin-top:6px">${rHtml}</div>
+        ${related.length ? `<div style="margin-top:8px"><b>Reuse graph</b>${_credReuseGraph(ident, related)}</div>` : ""}</div>
+    </div>
+    <div style="margin-top:12px"><b>Timeline</b>${renderTimeline(tl)}</div>
+  </div>`;
+  const svg = box.querySelector("svg[data-credgraph]");
+  if (svg) svg.addEventListener("click", (e) => {
+    const g = e.target.closest("[data-hash]");
+    if (g) credDossier(g.dataset.hash);
+  });
+}
+
+async function credCase(hash) {
+  try {
+    const r = await api("POST", `/credentials/identities/${hash}/case`);
+    toast(`Case #${r.case_id} opened`);
+    navigate("cases");
+  } catch (e) { toast(e.message, true); }
 }
 
 // ---------- form helpers ----------
