@@ -1010,7 +1010,59 @@ def run():
     assert any(a.get("action") == "surface.promote" for a in ca.get("/audit").json())
     _ok("cross-tenant promote -> 404; audit surface.promote")
 
-    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS + EXPOSURE + TIMELINE + RISK + CORRELATION + SURFACE + PROMOTE: ALL TESTS PASSED ✅')
+    # ============ CREDENTIAL INTELLIGENCE PR1 (stealer_log + breach) ============
+    _STEALER = "\n".join([
+        "Build: RedLine", "MachineID: DESKTOP-XYZ", "Date: 2026-05-01", "",
+        "URL: https://mail.corp.com", "Login: exec@ci-corp.com.br", "Password: P@ss-Stealer1", "",
+        "URL: https://vpn.corp.com", "Username: exec@ci-corp.com.br", "Password: Another-2", "",
+        "Cookies: super-secret-cookie-value",
+    ]).encode()
+    rst = caa.post("/exposure/import",
+                   files={"file": ("stealer.txt", _STEALER, "text/plain")},
+                   data={"parser": "stealer_log"})
+    assert rst.status_code == 201, rst.text
+    bst = rst.json()
+    assert bst["created_count"] == 2 and bst["parser"] == "stealer_log" and bst["source_file_hash"], bst
+    st_finds = caa.get(f"/exposure/findings?ingest_id={bst['id']}").json()
+    assert len(st_finds) == 2, st_finds
+    d = st_finds[0]["detail"]
+    assert d.get("source_kind") == "stealer" and d.get("stealer_family") == "redline", d
+    assert d.get("machine_id_hash") and d["machine_id_hash"] != "DESKTOP-XYZ", d
+    assert d.get("malware_date") == "2026-05-01" and d.get("captured_types") == ["passwords"], d
+    assert d.get("password_sha256") and "password" not in d, d
+    # sem plaintext / sem cookie em NENHUM lugar da resposta
+    body = caa.get(f"/exposure/findings?ingest_id={bst['id']}").text
+    assert "P@ss-Stealer1" not in body and "super-secret-cookie-value" not in body, "leak!"
+    assert "cookie" not in body.lower() or "cookies" not in str(d), d
+    _ok("stealer_log import: metadata only (family/date/machine_id_hash), no plaintext/cookies")
+
+    # breach dump (CSV): breach_name + email-only leak
+    _BREACH = "\n".join([
+        "email,password,breach",
+        "exec@ci-corp.com.br,BreachPw1,MegaBreach2024",
+        "victim2@ci-corp.com.br,,MegaBreach2024",
+    ]).encode()
+    rbr = caa.post("/exposure/import",
+                   files={"file": ("breach.csv", _BREACH, "text/csv")},
+                   data={"parser": "breach"})
+    assert rbr.status_code == 201, rbr.text
+    assert rbr.json()["created_count"] == 2, rbr.json()
+    br_finds = caa.get(f"/exposure/findings?ingest_id={rbr.json()['id']}").json()
+    assert all(f["detail"].get("source_kind") == "breach" for f in br_finds), br_finds
+    assert any(f["detail"].get("breach_name") == "MegaBreach2024" for f in br_finds), br_finds
+    assert "BreachPw1" not in caa.get(f"/exposure/findings?ingest_id={rbr.json()['id']}").text, "leak!"
+    _ok("breach import: breach_name metadata + server-side redaction")
+
+    # parser desconhecido continua 422
+    assert caa.post("/exposure/import", files={"file": ("x.txt", b"a", "text/plain")},
+                    data={"parser": "nope"}).status_code == 422
+    _ok("unknown parser still rejected (422)")
+
+    # audit do import (provenance)
+    assert any(a.get("action") == "exposure.import" for a in ca.get("/audit").json())
+    _ok("audit logs exposure.import (stealer/breach provenance)")
+
+    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS + EXPOSURE + TIMELINE + RISK + CORRELATION + SURFACE + PROMOTE + CREDINTEL: ALL TESTS PASSED ✅')
 if __name__ == '__main__':
     try:
         run()

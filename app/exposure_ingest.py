@@ -32,7 +32,13 @@ _FIELD_CLASS = {
 
 # chaves que NUNCA podem ser persistidas/retornadas em claro (removidas na redação)
 _PLAINTEXT_SECRET_KEYS = {"password", "token", "api_key", "secret", "private_key",
-                         "auth_key", "client_secret", "passwd", "pwd"}
+                         "auth_key", "client_secret", "passwd", "pwd",
+                         "cookie", "cookies", "session", "autofill", "card", "cvv",
+                         "wallet", "crypto_wallet", "seed_phrase"}
+
+# valores que NUNCA são retidos (nem hash) — dados sensíveis de stealer log
+_DROP_KEYS = {"cookie", "cookies", "session", "sessions", "autofill", "card", "cc",
+              "cvv", "wallet", "crypto_wallet", "seed_phrase"}
 
 
 def classify(field: str) -> str:
@@ -111,6 +117,8 @@ def redact_detail(detail: dict) -> dict:
     out = {}
     for k, v in detail.items():
         kl = k.lower()
+        if kl in _DROP_KEYS:
+            continue  # nunca retido (nem hash)
         if kl in ("password", "passwd", "pwd"):
             if v:
                 out["password_sha256"] = sha256_norm(v)
@@ -147,7 +155,12 @@ def dedup_key(tenant_id: int, exposure_type: str, detail: dict) -> str:
 # ---------------------------------------------------------------------------
 # Parsers (local; parser_version versionado p/ reprocessamento)
 # ---------------------------------------------------------------------------
-PARSER_VERSIONS = {"combolist": "1.0", "csv_generic": "1.0", "json_findings": "1.0"}
+PARSER_VERSIONS = {"combolist": "1.0", "csv_generic": "1.0", "json_findings": "1.0",
+                   "stealer_log": "1.0", "breach": "1.0"}
+
+
+def _machine_id_hash(v) -> str:
+    return hashlib.sha256(("mid:" + norm(v)).encode("utf-8")).hexdigest()
 
 
 def _rec_credential(email, password, extra=None):
@@ -221,8 +234,94 @@ def parse_json_findings(text: str) -> Iterable[dict]:
         yield item
 
 
+_STEALER_META_KEYS = {
+    "build": "stealer_family", "stealer": "stealer_family", "software": "stealer_family",
+    "machineid": "machine_id", "machine id": "machine_id", "hwid": "machine_id", "pc": "machine_id",
+    "date": "malware_date", "log date": "malware_date", "install date": "malware_date",
+}
+
+
+def parse_stealer_log(text: str):
+    """Stealer log (estilo Passwords.txt): metadados globais (Build/MachineID/Date)
+    + blocos URL/Login/Password. Retém SÓ metadados (family/date/machine_id_hash/
+    captured_types); senha é redigida; cookies/tokens nunca entram."""
+    fam = mid = mdate = None
+    blocks, cur, cur_line = [], {}, 0
+
+    def _flush():
+        if cur.get("login") and cur.get("password"):
+            blocks.append((dict(cur), cur_line))
+
+    for i, raw in enumerate(text.splitlines()):
+        line = raw.strip()
+        if not line:
+            _flush(); cur.clear(); cur_line = 0
+            continue
+        if ":" not in line:
+            continue
+        key, _, val = line.partition(":")
+        key = key.strip().lower(); val = val.strip()
+        meta = _STEALER_META_KEYS.get(key)
+        if meta == "stealer_family":
+            fam = fam or val.lower()
+        elif meta == "machine_id":
+            mid = mid or val
+        elif meta == "malware_date":
+            mdate = mdate or val
+        elif key in ("url", "host", "soft"):
+            if cur.get("login") and cur.get("password"):
+                _flush(); cur.clear(); cur_line = 0
+            cur["url"] = val; cur_line = cur_line or (i + 1)
+        elif key in ("login", "username", "user", "email", "user name"):
+            cur["login"] = val; cur_line = cur_line or (i + 1)
+        elif key in ("password", "pass", "passwd"):
+            cur["password"] = val; cur_line = cur_line or (i + 1)
+    _flush()
+
+    for blk, line_no in blocks:
+        login = blk.get("login", "")
+        if "@" not in login:
+            yield {"_error": "login is not an email", "_line": line_no}
+            continue
+        extra = {"source_kind": "stealer", "captured_types": ["passwords"]}
+        if fam:
+            extra["stealer_family"] = fam
+        if mdate:
+            extra["malware_date"] = mdate
+        if mid:
+            extra["machine_id_hash"] = _machine_id_hash(mid)  # pseudônimo, nunca cru
+        if blk.get("url"):
+            extra["url"] = blk["url"]
+        rec = _rec_credential(login, blk["password"], extra)
+        rec["_line"] = line_no
+        yield rec
+
+
+def parse_breach(text: str):
+    """Breach dump em CSV. Colunas: email (obrig.), password (opcional -> redigida),
+    breach/breach_name, domain. source_kind=breach."""
+    reader = csv.DictReader(io.StringIO(text))
+    for i, row in enumerate(reader):
+        row = {(k or "").strip().lower(): (v or "").strip() for k, v in row.items()}
+        email = row.get("email")
+        if not email or "@" not in email:
+            yield {"_error": "missing/invalid email", "_line": i + 2}
+            continue
+        extra = {"source_kind": "breach"}
+        bn = row.get("breach") or row.get("breach_name")
+        if bn:
+            extra["breach_name"] = bn
+        if row.get("domain"):
+            extra["domain"] = row["domain"]
+        rec = _rec_credential(email, row.get("password"), extra)
+        rec["_line"] = i + 2
+        yield rec
+
+
 PARSERS = {
     "combolist": parse_combolist,
     "csv_generic": parse_csv_generic,
     "json_findings": parse_json_findings,
+    "stealer_log": parse_stealer_log,
+    "breach": parse_breach,
 }
