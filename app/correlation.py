@@ -12,7 +12,7 @@ import re
 from sqlalchemy import select
 
 from app.models import (Brand, BrandFinding, ExposureFinding, InvestigationCase,
-                        MonitoredAsset, Observable)
+                        MonitoredAsset, Observable, SurfaceAsset)
 
 _LIMIT = 1000  # bound por tabela (tenant-scoped)
 
@@ -53,6 +53,24 @@ def _ids_from_exposure(f) -> dict:
         ids["hashes"].add(_norm(d["password_sha256"]))
     if d.get("fingerprint"):
         ids["hashes"].add(_norm(d["fingerprint"]))
+    if d.get("ip"):
+        ids["ips"].add(_norm(d["ip"]))
+    for k in ("subdomain", "host"):
+        if d.get(k):
+            ids["domains"].add(_norm(d[k]))
+    return ids
+
+
+def _ids_from_surface(a) -> dict:
+    ids = _blank_ids()
+    v = _norm(a.value)
+    if a.asset_type == "subdomain":
+        ids["domains"].add(v)
+        apex = (a.detail or {}).get("apex")
+        if apex:
+            ids["domains"].add(_norm(apex))
+    elif a.asset_type == "ip":
+        ids["ips"].add(v)
     return ids
 
 
@@ -118,6 +136,11 @@ def _seed(db, tid, kind, ref):
         if not o or o.tenant_id != tid:
             return None, None, None
         return _node("observable", o.id, f"{o.type}:{o.value}"), _ids_from_observable(o), ("observable", o.id)
+    if kind == "surface":
+        a = db.get(SurfaceAsset, int(ref))
+        if not a or a.tenant_id != tid:
+            return None, None, None
+        return _node("surface_asset", a.id, f"{a.asset_type}:{a.value}"), _ids_from_surface(a), ("surface_asset", a.id)
     if kind in ("email", "domain", "hash", "ip"):
         ids = _blank_ids()
         ids[kind + "s"].add(_norm(ref))
@@ -177,6 +200,18 @@ def correlate(db, tid: int, kind: str, ref) -> dict | None:
         for bf in db.scalars(select(BrandFinding).where(BrandFinding.tenant_id == tid).limit(_LIMIT)):
             if _norm(bf.domain) in ids["domains"]:
                 add(_node("brand_finding", bf.id, bf.domain, bf.score), f"domain:{_norm(bf.domain)}")
+
+    # Surface assets (subdomain/ip) — fecha Brand <-> Subdomain <-> IP <-> Exposure
+    for sa in db.scalars(select(SurfaceAsset).where(SurfaceAsset.tenant_id == tid).limit(_LIMIT)):
+        if self_ref == ("surface_asset", sa.id):
+            continue
+        ov = _overlap(ids, _ids_from_surface(sa))
+        if ov:
+            add(_node("surface_asset", sa.id, f"{sa.asset_type}:{sa.value}"), f"{ov[0]}:{ov[1]}")
+            if sa.brand_id is not None:
+                b = db.get(Brand, sa.brand_id)
+                if b is not None and b.tenant_id == tid:
+                    add(_node("brand", b.id, b.name), "surface")
 
     # Cases (snapshot referencia exposure finding ou domínio)
     for c in db.scalars(select(InvestigationCase).where(InvestigationCase.tenant_id == tid).limit(_LIMIT)):
