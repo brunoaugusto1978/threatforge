@@ -94,3 +94,16 @@ def _fire_vip_alert(db, tid, ci, principal) -> None:
         action="credential.vip_hit", target_type="credential_identity",
         target_id=ci.id, request=None, commit=False,
         detail={"asset_id": asset.id, "domain": ci.domain, "leak_count": ci.leak_count})
+
+
+def reuse_partner_count(db, tid: int, ci) -> int:
+    """Nº de outras identidades que compartilham ao menos um password_sha256."""
+    hashes = set(ci.password_hashes or [])
+    if not hashes:
+        return 0
+    partners = set()
+    for other in db.scalars(select(CredentialIdentity).where(
+            CredentialIdentity.tenant_id == tid, CredentialIdentity.id != ci.id)):
+        if hashes & set(other.password_hashes or []):
+            partners.add(other.id)
+    return len(partners)
