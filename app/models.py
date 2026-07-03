@@ -628,3 +628,43 @@ class SurfaceAsset(Base):
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, index=True)
+
+
+# ---------------------------------------------------------------------------
+# Credential Intelligence — agregação por identidade (dossiê de e-mail).
+# Materializado incrementalmente a partir de credential_exposure findings.
+# ---------------------------------------------------------------------------
+CREDENTIAL_IDENTITY_STATUS = ("new", "reviewing", "mitigated", "closed")
+
+
+class CredentialIdentity(Base):
+    """Consolida os leaks de um e-mail (tenant-scoped). Nunca senha em claro:
+    guarda só os hashes de senha distintos (para contagem/reuso)."""
+    __tablename__ = "credential_identity"
+    __table_args__ = (
+        CheckConstraint("status IN ('new','reviewing','mitigated','closed')",
+                        name="ck_credid_status"),
+        UniqueConstraint("tenant_id", "identity_hash", name="uq_credid_identity"),
+        Index("ix_credid_tenant", "tenant_id"),
+        Index("ix_credid_hash", "identity_hash"),
+        Index("ix_credid_domain", "domain"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
+    identity_hash: Mapped[str] = mapped_column(String(64), index=True)  # sha256(tenant|email)
+    email: Mapped[str] = mapped_column(String(320))
+    domain: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    leak_count: Mapped[int] = mapped_column(Integer, default=0)
+    password_hashes: Mapped[list] = mapped_column(JSON, default=list)  # sha256 distintos
+    sources: Mapped[list] = mapped_column(JSON, default=list)
+    stealer_families: Mapped[list] = mapped_column(JSON, default=list)
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    vip_asset_id: Mapped[int | None] = mapped_column(
+        ForeignKey("monitored_asset.id", ondelete="SET NULL"), nullable=True)
+    max_risk: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(20), default="new")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True)

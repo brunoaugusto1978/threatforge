@@ -1062,7 +1062,72 @@ def run():
     assert any(a.get("action") == "exposure.import" for a in ca.get("/audit").json())
     _ok("audit logs exposure.import (stealer/breach provenance)")
 
-    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS + EXPOSURE + TIMELINE + RISK + CORRELATION + SURFACE + PROMOTE + CREDINTEL: ALL TESTS PASSED ✅')
+    # ============ CREDENTIAL INTELLIGENCE PR2 (credential_identity) ============
+    import app.config as _cfg2
+    import app.credential_intel as _cintel
+    _VMAIL = "vipexec@ci2-corp.com.br"
+    # VIP monitorado com o mesmo e-mail -> deve ligar vip_asset_id
+    assert ca.post("/exposure/assets", json={
+        "asset_type": "identity", "label": "CI VIP", "value": _VMAIL,
+        "criticality": "critical", "consent_ref": "DPA-CI-1"}).status_code == 201
+
+    _SL2 = "\n".join(["Build: RedLine", "MachineID: HOST-CI", "Date: 2026-05-02", "",
+                       "URL: https://mail.x", f"Login: {_VMAIL}", "Password: CI-Pass-A"]).encode()
+    assert caa.post("/exposure/import", files={"file": ("s.txt", _SL2, "text/plain")},
+                    data={"parser": "stealer_log"}).status_code == 201
+    _BR2 = ("email,password,breach\n" + f"{_VMAIL},CI-Pass-B,BreachCI\n").encode()
+    assert caa.post("/exposure/import", files={"file": ("b.csv", _BR2, "text/csv")},
+                    data={"parser": "breach"}).status_code == 201
+    # intake manual (3ª senha distinta)
+    assert caa.post("/exposure/findings/intake", json={
+        "exposure_type": "credential_exposure", "source": "manual_intake",
+        "detail": {"email": _VMAIL, "password": "CI-Pass-C"}}).status_code == 201
+
+    ihash = _cintel.identity_hash(ta, _VMAIL)
+    ident = ca.get(f"/credentials/identities/{ihash}").json()
+    assert ident["leak_count"] == 3, ident
+    assert ident["unique_passwords"] == 3, ident
+    assert {"stealer", "breach", "manual_intake"} <= set(ident["sources"]), ident
+    assert "redline" in ident["stealer_families"], ident
+    assert ident["vip_asset_id"], ident            # VIP hit ligado
+    assert ident["max_risk"] > 0 and ident["email"] == _VMAIL, ident
+    _ok("credential_identity aggregates leaks/sources/families + VIP hit")
+
+    # dedup: reimportar o mesmo stealer não aumenta leak_count
+    caa.post("/exposure/import", files={"file": ("s.txt", _SL2, "text/plain")}, data={"parser": "stealer_log"})
+    assert ca.get(f"/credentials/identities/{ihash}").json()["leak_count"] == 3, "dedup should not raise leak_count"
+    _ok("re-import same credential does not inflate leak_count (dedup)")
+
+    # findings da identidade (mascarados)
+    idf = ca.get(f"/credentials/identities/{ihash}/findings").json()
+    assert len(idf) == 3 and all("CI-Pass-" not in str(x["detail"]) for x in idf), idf
+    _ok("identity findings listed; no plaintext passwords")
+
+    # lista + filtro vip
+    vips = ca.get("/credentials/identities?vip=true").json()
+    assert any(i["identity_hash"] == ihash for i in vips), vips
+    _ok("identities list + vip filter")
+
+    # masking por role
+    _cfg2.EXPOSURE_PII_MASKING = "by_role"
+    try:
+        vmasked = cvv.get(f"/credentials/identities/{ihash}").json()["email"]
+        assert "***" in vmasked and vmasked != _VMAIL, vmasked
+    finally:
+        _cfg2.EXPOSURE_PII_MASKING = "off"
+    _ok("credential identity email masked for viewer (by_role)")
+
+    # cross-tenant: B não vê a identidade de A
+    assert cb.get(f"/credentials/identities/{ihash}").status_code == 404
+    assert cb.get("/credentials/identities").json() == []
+    _ok("credential identities isolated per tenant (cross-tenant 404)")
+
+    # abrir investigação a partir da identidade (VIP -> severidade critica)
+    rcc = caa.post(f"/credentials/identities/{ihash}/case")
+    assert rcc.status_code == 201 and rcc.json()["severity"] == "critico", rcc.text
+    _ok("open Investigation Case from credential identity (VIP -> critico)")
+
+    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS + EXPOSURE + TIMELINE + RISK + CORRELATION + SURFACE + PROMOTE + CREDINTEL + CREDID: ALL TESTS PASSED ✅')
 if __name__ == '__main__':
     try:
         run()
