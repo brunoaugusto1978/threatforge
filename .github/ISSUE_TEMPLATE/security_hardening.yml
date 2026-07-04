@@ -1,0 +1,41 @@
+name: Security hardening (non-vulnerability)
+description: Propose a defensive hardening improvement. NOT for reporting vulnerabilities.
+title: "[hardening]: "
+labels: ["security", "hardening", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > **Do not report vulnerabilities here.** For an exploitable security
+        > issue, follow **SECURITY.md** (private report to
+        > security@cbgsecurity.com.br or a private GitHub Security Advisory).
+        >
+        > This form is for **non-sensitive** hardening suggestions (defense in
+        > depth, safer defaults, headers, dependency updates).
+  - type: textarea
+    id: area
+    attributes:
+      label: Area to harden
+      description: e.g. security headers, CORS, dependency update, safer default, input validation.
+    validations:
+      required: true
+  - type: textarea
+    id: rationale
+    attributes:
+      label: Rationale
+      description: Why does this reduce risk? Reference a standard (OWASP, CIS) if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Suggested change
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Confirmations
+      options:
+        - label: This is NOT an exploitable vulnerability (those follow SECURITY.md).
+          required: true
+        - label: This report contains no secrets or exploit details for an active vulnerability.
+          required: true

@@ -1,0 +1,29 @@
+name: Documentation
+description: Report a documentation gap, error or improvement
+title: "[docs]: "
+labels: ["documentation", "triage"]
+body:
+  - type: input
+    id: location
+    attributes:
+      label: Document / page
+      description: File path or URL (e.g. README.md, docs/LICENSE_FAQ.md).
+    validations:
+      required: true
+  - type: textarea
+    id: issue
+    attributes:
+      label: What is wrong or missing?
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested improvement
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Confirmations
+      options:
+        - label: I checked that this is not already covered elsewhere in the docs.
+          required: true

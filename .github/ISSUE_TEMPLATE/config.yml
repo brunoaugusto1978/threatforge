@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability (do NOT open a public issue)
+    url: https://cbgsecurity.com.br
+    about: "Report privately per SECURITY.md — email security@cbgsecurity.com.br or open a private GitHub Security Advisory."
+  - name: Commercial / Enterprise licensing
+    url: https://cbgsecurity.com.br
+    about: "Enterprise features or a commercial license — email commercial@cbgsecurity.com.br (see COMMERCIAL.md)."
+  - name: Community & contributions
+    url: https://cbgsecurity.com.br
+    about: "General community questions — email opensource@cbgsecurity.com.br (see CONTRIBUTING.md)."
