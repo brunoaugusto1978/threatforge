@@ -1216,7 +1216,6 @@ function enterpriseUpgradeMessage(payload, fallback) {
 
   if (upgrade.message) lines.push(upgrade.message);
   if (upgrade.email) lines.push(`Contact: ${upgrade.email}`);
-  if (upgrade.whatsapp) lines.push(`WhatsApp: ${upgrade.whatsapp}`);
   if (upgrade.url) lines.push(`More information: ${upgrade.url}`);
 
   return lines.filter(Boolean).join("\n");
