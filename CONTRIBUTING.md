@@ -128,4 +128,6 @@ Commercial or Enterprise-only modules must not be committed to this public repos
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the Apache-2.0 license used by this repository.
+By contributing, you agree that your contributions are licensed under the **AGPL-3.0-or-later** license used by this repository (the Community Edition), and you certify authorship under the **Developer Certificate of Origin (DCO)** by signing off your commits (`git commit -s`).
+
+Because ThreatForge is **dual-licensed** (see [`COMMERCIAL.md`](COMMERCIAL.md)), contributions that may also ship in the commercial **Enterprise Edition** require a **Contributor License Agreement (CLA)** granting the maintainer the right to relicense the contribution commercially. Maintainers will request a CLA where applicable; contributions without it remain AGPL-only in Community.

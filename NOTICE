@@ -1,0 +1,47 @@
+ThreatForge(TM) — Community Edition
+
+Copyright (C) 2025–2026 CBG Assessoria e Consultoria
+
+ThreatForge is developed and maintained by CBG Assessoria e Consultoria.
+Founded by Bruno Augusto Lobo Soares.
+Official website: https://cbgsecurity.com.br
+
+SPDX-License-Identifier: AGPL-3.0-or-later
+
+This product is free software: you can redistribute it and/or modify it
+under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at your
+option) any later version. See the LICENSE file for the full text.
+
+Because ThreatForge is typically operated as a network service, please note
+AGPL-3.0 section 13 ("Remote Network Interaction"): if you run a modified
+version and let users interact with it over a network, you must offer those
+users access to the Corresponding Source of your modified version.
+
+--------------------------------------------------------------------------
+Trademarks
+--------------------------------------------------------------------------
+ThreatForge is a trademark of CBG Assessoria e Consultoria.
+"ThreatForge" and associated logos are trademarks of CBG Assessoria e Consultoria. The AGPL grants
+no trademark rights in the name or logos; see COMMERCIAL.md for details.
+
+--------------------------------------------------------------------------
+Third-party components
+--------------------------------------------------------------------------
+This distribution depends on the following open-source packages, each
+under its own license. This list is informational; consult each project
+for authoritative license terms.
+
+  fastapi .............. MIT License
+  starlette ............ BSD-3-Clause
+  uvicorn .............. BSD-3-Clause
+  httpx ................ BSD-3-Clause
+  python-dotenv ........ BSD-3-Clause
+  sqlalchemy ........... MIT License
+  alembic .............. MIT License
+  pydantic ............. MIT License
+  argon2-cffi .......... MIT License
+  python-multipart ..... Apache-2.0
+  psycopg2-binary ...... LGPL-3.0-or-later
+
+Full third-party license texts are available from the respective projects.

@@ -13,11 +13,18 @@ ThreatForge is currently in early-stage development. Security fixes will be appl
 
 If you believe you have found a security vulnerability in ThreatForge, please report it responsibly.
 
-Do not open a public GitHub issue for sensitive vulnerabilities.
+Please **do not** open a public GitHub issue for security vulnerabilities.
 
 Preferred contact:
 
-Open a private GitHub Security Advisory or contact the maintainer directly.
+- Email: **security@cbgsecurity.com.br**
+- Or open a private GitHub Security Advisory.
+
+PGP: a public key will be published for encrypted reports (planned).
+
+Response target: we aim to acknowledge new reports within **48 hours** and to
+provide a remediation timeline after triage. Please allow reasonable time for a
+fix before any public disclosure (coordinated disclosure).
 
 When reporting, include:
 
@@ -89,3 +96,5 @@ After receiving a valid vulnerability report, the maintainer will attempt to:
 5. publish a security note or release when appropriate.
 
 ThreatForge is an open source defensive security project. Coordinated disclosure is expected.
+
+ThreatForge is maintained by CBG Assessoria e Consultoria (https://cbgsecurity.com.br).
