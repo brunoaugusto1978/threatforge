@@ -112,7 +112,7 @@ if _rw:
 
 # Contatos comerciais p/ o CTA de upgrade Enterprise (bloco "upgrade" no 402).
 THREATFORGE_ENTERPRISE_CONTACT_EMAIL: str = os.environ.get(
-    "THREATFORGE_ENTERPRISE_CONTACT_EMAIL", "to.brunoaugusto@yahoo.com.br")
+    "THREATFORGE_ENTERPRISE_CONTACT_EMAIL", "commercial@cbgsecurity.com.br")
 THREATFORGE_ENTERPRISE_CONTACT_WHATSAPP: str = os.environ.get(
     "THREATFORGE_ENTERPRISE_CONTACT_WHATSAPP", "+55 21 964946855")
 THREATFORGE_ENTERPRISE_CONTACT_URL: str = os.environ.get(

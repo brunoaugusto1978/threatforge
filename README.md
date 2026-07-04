@@ -592,4 +592,58 @@ See [Community Roadmap](docs/ROADMAP.md).
 
 ## License
 
-Apache-2.0
+ThreatForge uses a **dual-licensing** model.
+
+- **Community Edition** (this repository) — **GNU Affero General Public License,
+  version 3 or later** (`SPDX-License-Identifier: AGPL-3.0-or-later`). Full text
+  in [`LICENSE`](LICENSE).
+- **Enterprise Edition** (private `threatforge-enterprise` repository) —
+  **commercial license**. See [`COMMERCIAL.md`](COMMERCIAL.md).
+
+> **AGPL-3.0 section 13 (network use):** ThreatForge is normally run as a network
+> service. If you modify it and offer it to users over a network, you must make
+> the Corresponding Source of your modified version available to those users
+> under the AGPL. If that is incompatible with your deployment, a commercial
+> license is available — contact **commercial@cbgsecurity.com.br**.
+
+### Community vs. Enterprise
+
+Both editions share the **same database and schema**. Enterprise is an overlay
+package that unlocks gated features via `app/features.py` and the pluggable
+registries — no fork, no migration. Upgrade by installing the Enterprise package
+and activating a license (see [`docs/ENTERPRISE_INSTALL.md`](docs/ENTERPRISE_INSTALL.md)).
+
+| Capability | Community (AGPL-3.0) | Enterprise (commercial) |
+|---|---|---|
+| CTI core (IOCs, scoring, connectors: CISA KEV / URLhaus / MITRE ATT&CK / EPSS) | Yes | Yes |
+| Brand monitoring, typosquat, passive scanner (crt.sh / DNS / RDAP) | Yes | Yes |
+| Multi-tenant isolation, RBAC, audit log, SSO-ready auth | Yes | Yes |
+| Exposure Monitoring (DRP): assets, findings, manual/authorized intake, dedup, server-side redaction | Yes | Yes |
+| Attack Surface Discovery (passive, manual import) | Yes | Yes |
+| Credential Intelligence (identity rollup, password-reuse, VIP hits) — local intake | Yes | Yes |
+| Risk score, Timeline, Correlation engine + graph view | Yes | Yes |
+| Investigation cases, evidence, notes | Yes | Yes |
+| Markdown / JSON export, partial STIX 2.1 export | Yes | Yes |
+| PDF export (cases, credential dossiers) — `export.pdf` | Locked (402) | Yes |
+| MISP / OpenCTI / generic integrations — `integration.*` | Catalog + stubs (402) | Yes |
+| Premium enrichment — `enrichment.premium` | Locked (402) | Yes |
+| Automated feeds (stealer / breach / paste / dark & deep web) | No | Yes |
+| Continuous monitoring & real-time alerts | No | Yes |
+| k-anonymity breach enrichment (HIBP-style, hash-prefix only) | No | Yes |
+| Active surface scanning (ports / Shodan / Censys, allowlisted) | No | Yes |
+| Commercial support, SLAs, indemnification | Community support | Yes |
+
+Locked Community features are **visible** in the UI with an upgrade call-to-action
+and return **HTTP 402** when invoked without an active license.
+
+### Licensing FAQ (short)
+
+- **Can I use it internally?** Yes.
+- **Can I study and modify it?** Yes.
+- **Can I contribute?** Yes — under AGPL-3.0-or-later with a DCO sign-off (see [`CONTRIBUTING.md`](CONTRIBUTING.md)).
+- **Can I sell a SaaS based on ThreatForge Community?** Only by complying with the AGPL (including section 13 — publish your modified source to your users) **or** by purchasing a commercial license.
+- **How do I upgrade to Enterprise?** Install the Enterprise package and activate a license. **No database migration or platform reinstall** — same schema. See [`docs/ENTERPRISE_INSTALL.md`](docs/ENTERPRISE_INSTALL.md).
+- **Who maintains ThreatForge?** ThreatForge is developed and maintained by **CBG Assessoria e Consultoria**, founded by **Bruno Augusto Lobo Soares**. Website: https://cbgsecurity.com.br.
+
+Full details and worked examples: [`docs/LICENSE_FAQ.md`](docs/LICENSE_FAQ.md).
+Commercial licensing: **commercial@cbgsecurity.com.br** · Security: **security@cbgsecurity.com.br** · Community: **opensource@cbgsecurity.com.br**.
