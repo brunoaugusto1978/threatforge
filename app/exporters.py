@@ -127,13 +127,42 @@ def render_case_markdown(case, notes, evidence, edition: str = "community") -> s
     return "\n".join(L)
 
 
-def render_case_pdf(case, **kwargs) -> bytes:
-    """Premium PDF export — NOT available in Community.
+def _case_report(case, edition: str = "community", **_) -> dict:
+    """Non-secret report payload for the Enterprise PDF renderer.
 
-    The Enterprise package overrides this function with a real renderer. Here it
-    only exposes the seam and refuses, leaking nothing about the Enterprise module.
+    No secrets: no storage keys, no file paths, no evidence binaries — only case
+    metadata the analyst already sees.
     """
-    raise EnterpriseFeatureRequired(Feature.EXPORT_PDF)
+    cid = getattr(case, "id", "")
+    title = getattr(case, "title", None) or f"Investigation Case {cid}"
+    findings: list[dict] = []
+    snap = getattr(case, "finding_snapshot", None)
+    if isinstance(snap, dict):
+        findings.append({
+            "title": str(snap.get("domain") or snap.get("title") or "finding"),
+            "severity": str(getattr(case, "severity", "") or ""),
+            "summary": "",
+        })
+    return {
+        "tenant_name": str(getattr(case, "tenant_id", "") or ""),
+        "report_title": str(title),
+        "executive_summary": f"Investigation case #{cid} ({getattr(case, 'status', '')}).",
+        "risk_score": int(getattr(case, "risk_score", 0) or 0),
+        "findings": findings,
+        "report_id": f"case-{cid}",
+    }
+
+
+def render_case_pdf(case, **kwargs) -> bytes:
+    """Premium case PDF. Community/unlicensed -> HTTP 402.
+
+    Formal path: gate via the feature layer, then delegate the actual rendering to
+    the Enterprise package through :mod:`app.enterprise_adapter`. No premium code
+    lives here, and Community never imports the Enterprise package directly.
+    """
+    from app import enterprise_adapter, features
+    features.ensure_enabled(features.Feature.EXPORT_PDF)
+    return enterprise_adapter.generate_case_pdf(_case_report(case, **kwargs))
 
 
 # ---------------------------------------------------------------------------
@@ -312,6 +341,49 @@ def render_credential_markdown(ident: dict, findings: list, related: list,
     return "\n".join(L)
 
 
-def render_credential_pdf(ident, **kwargs) -> bytes:
-    """PDF premium do dossiê — NÃO disponível no Community (override no Enterprise)."""
-    raise EnterpriseFeatureRequired(Feature.EXPORT_PDF)
+def _credential_report(ident, findings=None, related=None, events=None,
+                       edition: str = "community", **_) -> dict:
+    """Non-secret report payload for a credential dossier PDF.
+
+    ``ident`` is the **already role-masked** dossier dict produced by the route
+    (same as export.md/.json), NOT the raw ORM object — so a viewer never gets
+    the full e-mail. Never includes plaintext passwords/cookies/tokens or full
+    password hashes; ``findings`` arrive redacted/masked from the route.
+    """
+    if isinstance(ident, dict):
+        ihash = str(ident.get("identity_hash") or ident.get("id") or "")
+        subject = str(ident.get("email") or ihash)   # masked upstream by role
+        risk = int(ident.get("max_risk") or 0)
+        leaks = ident.get("leak_count") or 0
+    else:  # defensive fallback; routes always pass the masked dict
+        ihash = str(getattr(ident, "identity_hash", "") or "")
+        subject = str(getattr(ident, "email", "") or ihash)
+        risk = int(getattr(ident, "max_risk", 0) or 0)
+        leaks = getattr(ident, "leak_count", 0) or 0
+    return {
+        "tenant_name": str((ident.get("tenant_id") if isinstance(ident, dict)
+                            else getattr(ident, "tenant_id", "")) or ""),
+        "report_title": "Credential Exposure Dossier",
+        "executive_summary": "Aggregated credential exposure (redacted; no plaintext secrets).",
+        "risk_score": risk,
+        "findings": [{
+            "title": subject,
+            "severity": "",
+            "summary": f"leaks={leaks}; sources={len(findings or [])}",
+        }],
+        "report_id": f"cred-{ihash[:12]}",
+    }
+
+
+def render_credential_pdf(ident, findings=None, related=None, events=None,
+                          **kwargs) -> bytes:
+    """Premium credential-dossier PDF. Community/unlicensed -> HTTP 402.
+
+    ``ident`` must be the role-masked dossier dict (see the route). Same formal,
+    adapter-mediated path as :func:`render_case_pdf`.
+    """
+    from app import enterprise_adapter, features
+    features.ensure_enabled(features.Feature.EXPORT_PDF)
+    return enterprise_adapter.generate_credential_pdf(
+        _credential_report(ident, findings=findings, related=related,
+                           events=events, **kwargs))

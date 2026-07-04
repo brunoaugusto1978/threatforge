@@ -30,24 +30,36 @@ Community — **no schema change either way.**
    pip install threatforge-enterprise   # from your private index / provided artifact
    ```
 
-2. Set the edition and license in the environment (e.g. `.env`):
+2. Provide the edition and the signed license in the environment (e.g. `.env`
+   or Docker/Podman secrets):
 
    ```dotenv
    THREATFORGE_EDITION=enterprise
-   THREATFORGE_LICENSE_KEY=<your-license-key>
+   THREATFORGE_ENTERPRISE_LICENSE_FILE=/run/secrets/threatforge-license.json
+   THREATFORGE_ENTERPRISE_PUBLIC_KEY_FILE=/run/secrets/threatforge-license-public.pem
+   THREATFORGE_ENTERPRISE_LICENSE_KEY_ID=cbg-prod-2026-01
+   THREATFORGE_ENTERPRISE_INSTALLATION_ID=tf_inst_customer_x   # optional binding
    ```
 
-3. Restart the application. On startup, `threatforge-enterprise` overrides
-   `features._resolve_license()` and registers its providers (feeds, realtime,
-   enrichment, premium integrations). No `alembic upgrade` is required for the
-   edition switch itself — the schema is unchanged.
+   > These variables are read by the private `threatforge-enterprise` package.
+   > Community only records *whether* they are set (never their contents). The
+   > older `THREATFORGE_LICENSE_KEY` name is **not** used.
+
+3. Restart the application. On startup, `threatforge-enterprise` resolves the
+   license through `app.enterprise_adapter`, which `app/features.py` consults;
+   granted features unlock. No `alembic upgrade` is required for the edition
+   switch — the schema is unchanged.
 
 4. Verify:
 
    ```bash
+   # License state (admin token) — no secrets are returned:
+   curl -sS -H "Authorization: Bearer <token>" http://localhost:8000/license/status
+
    # A gated feature that returned HTTP 402 in Community now succeeds, e.g.:
    curl -sS -H "Authorization: Bearer <token>" \
         http://localhost:8000/cases/<id>/export.pdf -o case.pdf
+   test "$(head -c 4 case.pdf)" = "%PDF" && echo "PDF OK"
    ```
 
 ## 4. What unlocks
@@ -66,6 +78,12 @@ All of these flow through the same seam — `features.ensure_enabled(...)` and t
 pluggable registries (integrations, ingest parsers, timeline sources,
 exporters) — so Community and Enterprise never diverge in schema or wiring.
 
+Administrators can inspect the current state at any time via
+`GET /license/status` (admin/platform-admin), which reports the edition, whether
+the Enterprise package is present, whether the license is valid, and the
+allowed/blocked **canonical** feature keys — without exposing the license,
+signature, keys or file paths.
+
 ## 5. Rollback (also no migration)
 
 To return to Community:
@@ -80,7 +98,7 @@ To return to Community:
 
    ```dotenv
    THREATFORGE_EDITION=community
-   # unset THREATFORGE_LICENSE_KEY
+   # unset THREATFORGE_ENTERPRISE_LICENSE_FILE / _PUBLIC_KEY_FILE / _LICENSE_KEY_ID
    ```
 
 3. Restart. Gated features return to their Community behavior (locked, HTTP 402

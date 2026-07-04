@@ -401,10 +401,14 @@ def export_case_pdf(case_id: int, request: Request,
     try:
         pdf_bytes = exporters.render_case_pdf(case, edition=config.EDITION)
     except features.EnterpriseFeatureRequired as exc:
+        _audit(db, principal, tid, request, "feature.denied", case.id,
+               {"feature": exc.feature, "edition": config.EDITION})
         _audit(db, principal, tid, request, "case.export_pdf_denied", case.id,
                {"edition": config.EDITION})
         raise exc
-    # Caminho Enterprise (não presente no Community).
+    # Enterprise path (licensed): real bytes produced via the adapter.
+    _audit(db, principal, tid, request, "feature.allowed", case.id,
+           {"feature": features.Feature.EXPORT_PDF.value, "edition": config.EDITION})
     return Response(content=pdf_bytes, media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="case-{case.id}.pdf"'})
 

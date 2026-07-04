@@ -1315,7 +1315,183 @@ def run():
     assert any(a.get("action") == "credential.export" for a in ca.get("/audit").json())
     _ok("cross-tenant credential export -> 404; audit credential.export")
 
-    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS + EXPOSURE + TIMELINE + RISK + CORRELATION + SURFACE + PROMOTE + CREDINTEL + CREDID + REUSE + VIPALERT + CREDTL + CREDREPORT: ALL TESTS PASSED ✅')
+
+    # =========================================================================
+    # Enterprise license activation bridge (item 10) — fake adapter, no real pkg
+    # Validates the license CONTRACT without depending on threatforge-enterprise.
+    # =========================================================================
+    from app import config as _lcfg, enterprise_adapter as _lea
+
+    _orig_edition = _lcfg.EDITION
+    _orig_loader = _lea._load_enterprise_integration
+
+    class _FakeSummary:
+        def __init__(self, valid, features, reason=None, plan="enterprise",
+                     license_type="offline", license_id="lic_test_001",
+                     customer="ACME Corp", trial=False,
+                     issued_at="2026-07-01T00:00:00Z",
+                     expires_at="2027-07-01T00:00:00Z"):
+            self.valid = valid; self.reason = reason; self.plan = plan
+            self.license_type = license_type; self.license_id = license_id
+            self.customer = customer; self.trial = trial
+            self.features = list(features); self.limits = {}; self.entitlements = {}
+            self.issued_at = issued_at; self.expires_at = expires_at
+
+    class _FakeReportInput:
+        def __init__(self, **kw):
+            self.kw = kw
+
+    class _FakePdfResult:
+        def __init__(self, p):
+            self.output_path = p
+
+    class _FakeIntegration:
+        EnterpriseReportInput = _FakeReportInput
+        def __init__(self, summary):
+            self._summary = summary
+        def get_enterprise_license_summary(self):
+            return self._summary
+        def is_enterprise_feature_enabled(self, feature):
+            return bool(self._summary.valid and feature in set(self._summary.features))
+        def generate_enterprise_pdf(self, report_input, output_path):
+            with open(output_path, "wb") as fh:
+                fh.write(b"%PDF-1.4\n% fake enterprise report\n%%EOF\n")
+            return _FakePdfResult(str(output_path))
+
+    def _install(summary):
+        _lea._load_enterprise_integration = lambda: _FakeIntegration(summary)
+
+    def _community_mode():
+        _lcfg.EDITION = "community"
+        _lea._load_enterprise_integration = lambda: None
+
+    _CASE_PDF = f"/cases/{mcid}/export.pdf"
+    _CRED_PDF = f"/credentials/identities/{rh}/export.pdf"
+
+    # data created before "activation" is present up front
+    assert ca.get(f"/cases/{mcid}").status_code == 200
+    assert ca.get(f"/credentials/identities/{rh}").status_code == 200
+
+    # (1) Community default -> PDF 402 with standardized body
+    _community_mode()
+    r = ca.get(_CASE_PDF)
+    assert r.status_code == 402, r.text
+    j = r.json()
+    assert j.get("error") == "enterprise_feature_required", j
+    assert j.get("feature") == "export.pdf", j
+    assert j.get("upgrade", {}).get("contact"), j
+    st = ca.get("/license/status").json()
+    assert st["edition"] == "community" and st["license_valid"] is False, st
+    assert st["reason"] == "package_missing", st
+    assert st["allowed_features"] == [] and "export.pdf" in st["blocked_features"], st
+
+    # (2) Enterprise package present, no valid license -> 402
+    _lcfg.EDITION = "enterprise"
+    _install(_FakeSummary(valid=False, features=[], reason="malformed_license"))
+    assert ca.get(_CASE_PDF).status_code == 402
+    st = ca.get("/license/status").json()
+    assert st["enterprise_package_available"] is True and st["license_valid"] is False, st
+    assert st["reason"] == "missing", st
+
+    # (3) Valid license WITHOUT export.pdf -> 402
+    _install(_FakeSummary(valid=True, features=["integration.misp"]))
+    assert ca.get(_CASE_PDF).status_code == 402
+    st = ca.get("/license/status").json()
+    assert "integration.misp" in st["allowed_features"], st
+    assert "export.pdf" in st["blocked_features"], st
+
+    # (4) Valid license WITH export.pdf (canonical key) -> 200 %PDF (case + credential)
+    _install(_FakeSummary(valid=True, features=["export.pdf", "integration.misp"]))
+    r = ca.get(_CASE_PDF)
+    assert r.status_code == 200, r.text
+    assert r.content[:4] == b"%PDF", r.content[:16]
+    assert r.headers["content-type"].startswith("application/pdf"), r.headers
+    rc = ca.get(_CRED_PDF)
+    assert rc.status_code == 200 and rc.content[:4] == b"%PDF", rc.status_code
+    st = ca.get("/license/status").json()
+    assert st["license_valid"] is True and "export.pdf" in st["allowed_features"], st
+    assert st["license_id"] == "lic_test_001" and st["customer"] == "ACME Corp", st
+    assert st["expires_at"], st
+
+    # (4b) Internal alias key (premium_pdf_reports) also unlocks canonical export.pdf
+    _install(_FakeSummary(valid=True, features=["premium_pdf_reports"]))
+    assert ca.get(_CASE_PDF).status_code == 200
+
+    # (5) Expired license -> 402, reason expired
+    _install(_FakeSummary(valid=False, features=[], reason="expired"))
+    assert ca.get(_CASE_PDF).status_code == 402
+    assert ca.get("/license/status").json()["reason"] == "expired"
+
+    # (6) Cross-tenant stays 404 even with a valid license
+    _install(_FakeSummary(valid=True, features=["export.pdf"]))
+    assert cb.get(_CASE_PDF).status_code == 404
+    assert cb.get(_CRED_PDF).status_code == 404
+
+    # (7) Existing data still accessible after all toggles
+    assert ca.get(f"/cases/{mcid}").status_code == 200
+    assert ca.get(f"/credentials/identities/{rh}").status_code == 200
+
+    # (8) /license/status leaks no secrets, and requires admin
+    raw = ca.get("/license/status")
+    assert raw.status_code == 200
+    _low = raw.text.lower()
+    for _bad in ["signature", "private", "-----begin", "public_key",
+                 "license_file", "/run/secrets", "\"payload\""]:
+        assert _bad not in _low, f"/license/status leaked: {_bad}"
+    assert an.get("/license/status").status_code == 403  # analyst < admin
+
+    # (9) Audit records feature.allowed / feature.denied / license.status_checked
+    _install(_FakeSummary(valid=True, features=["export.pdf"]))
+    ca.get(_CASE_PDF)                                   # feature.allowed
+    _install(_FakeSummary(valid=False, features=[], reason="expired"))
+    ca.get(_CASE_PDF)                                   # feature.denied
+    ca.get("/license/status")                           # license.status_checked
+    _actions = {a.get("action") for a in ca.get("/audit").json()}
+    assert "feature.allowed" in _actions, _actions
+    assert "feature.denied" in _actions, _actions
+    assert "license.status_checked" in _actions, _actions
+
+    # (10) Credential PDF uses the SAME role-masked dossier as md/json (no PII leak).
+    #      Capture the payload handed to the Enterprise renderer and assert the
+    #      full e-mail never reaches it for a viewer, while masked value does.
+    import app.config as _lcfg2
+    _captured = {}
+    class _CapReportInput:
+        def __init__(self, **kw):
+            self.kw = kw
+    class _CapIntegration:
+        EnterpriseReportInput = _CapReportInput
+        def get_enterprise_license_summary(self):
+            return _FakeSummary(True, ["export.pdf"])
+        def is_enterprise_feature_enabled(self, feature):
+            return feature == "export.pdf"
+        def generate_enterprise_pdf(self, report_input, output_path):
+            _captured["report"] = dict(getattr(report_input, "kw", {}))
+            with open(output_path, "wb") as fh:
+                fh.write(b"%PDF-1.4\n% captured\n%%EOF\n")
+            return _FakePdfResult(str(output_path))
+    _lcfg2.EDITION = "enterprise"
+    _lea._load_enterprise_integration = lambda: _CapIntegration()
+    _lcfg2.EXPOSURE_PII_MASKING = "by_role"
+    try:
+        rp = cvv.get(_CRED_PDF)   # cvv = viewer
+        assert rp.status_code == 200 and rp.content[:4] == b"%PDF", rp.status_code
+        import json as _json
+        _payload = _json.dumps(_captured.get("report", {}), default=str)
+        assert _RUSER not in _payload, "full e-mail leaked into Enterprise PDF payload!"
+        assert "repuser" not in _payload, "e-mail local-part leaked into PDF payload!"
+        assert "***" in _payload, "masked marker missing from PDF payload"
+    finally:
+        _lcfg2.EXPOSURE_PII_MASKING = "off"
+    _ok("credential PDF payload is role-masked for viewer (no full e-mail; %PDF)")
+
+    # restore Community defaults for anything after this block
+    _lea._load_enterprise_integration = _orig_loader
+    _lcfg.EDITION = _orig_edition
+    _ok("enterprise license activation: 402 matrix, %PDF on valid, alias, expired, "
+        "cross-tenant 404, data survival, no secret leak, admin-only, audit")
+
+    print('\nTENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS + EXPOSURE + TIMELINE + RISK + CORRELATION + SURFACE + PROMOTE + CREDINTEL + CREDID + REUSE + VIPALERT + CREDTL + CREDREPORT + LICENSE: ALL TESTS PASSED ✅')
 if __name__ == '__main__':
     try:
         run()

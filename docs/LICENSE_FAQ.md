@@ -53,7 +53,7 @@ maintainer can relicense them commercially. See [`CONTRIBUTING.md`](../CONTRIBUT
 ## Upgrading to Enterprise
 
 1. Install the Enterprise package into the same environment as Community.
-2. Set `THREATFORGE_EDITION=enterprise` and `THREATFORGE_LICENSE_KEY=...`.
+2. Set `THREATFORGE_EDITION=enterprise` and point `THREATFORGE_ENTERPRISE_LICENSE_FILE` / `THREATFORGE_ENTERPRISE_PUBLIC_KEY_FILE` / `THREATFORGE_ENTERPRISE_LICENSE_KEY_ID` at your signed license (see `docs/ENTERPRISE_INSTALL.md`).
 3. Restart.
 
 There is **no database migration**, no container swap, no tenant re-creation, and

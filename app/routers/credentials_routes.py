@@ -243,12 +243,22 @@ def export_identity_pdf(identity_hash: str, request: Request, db: Session = Depe
                         tid: int = Depends(current_tenant_id)):
     """PDF premium do dossiê — bloqueado no Community (402)."""
     ci = _owned(db, identity_hash, tid)
+    # Same role-masked dossier as export.md/.json — the PDF must not leak PII the
+    # md/json views mask (e.g. a viewer must never get the full e-mail).
+    ident, findings, related, events = _dossier(db, tid, principal, ci)
     try:
-        pdf_bytes = exporters.render_credential_pdf(ci, edition=config.EDITION)
+        pdf_bytes = exporters.render_credential_pdf(
+            ident, findings=findings, related=related, events=events,
+            edition=config.EDITION)
     except features.EnterpriseFeatureRequired as exc:
+        _audit(db, principal, tid, request, "feature.denied", ci.id,
+               {"feature": exc.feature, "edition": config.EDITION})
         _audit(db, principal, tid, request, "credential.export_pdf_denied", ci.id,
                {"edition": config.EDITION})
         raise exc
+    # Enterprise path (licensed): real bytes produced via the adapter.
+    _audit(db, principal, tid, request, "feature.allowed", ci.id,
+           {"feature": features.Feature.EXPORT_PDF.value, "edition": config.EDITION})
     return Response(content=pdf_bytes, media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="credential-{ci.id}.pdf"'})
 

@@ -111,12 +111,23 @@ if _rw:
         pass
 
 # Contatos comerciais p/ o CTA de upgrade Enterprise (bloco "upgrade" no 402).
+# Public contact only — no personal addresses/numbers.
 THREATFORGE_ENTERPRISE_CONTACT_EMAIL: str = os.environ.get(
     "THREATFORGE_ENTERPRISE_CONTACT_EMAIL", "commercial@cbgsecurity.com.br")
-THREATFORGE_ENTERPRISE_CONTACT_WHATSAPP: str = os.environ.get(
-    "THREATFORGE_ENTERPRISE_CONTACT_WHATSAPP", "+55 21 964946855")
 THREATFORGE_ENTERPRISE_CONTACT_URL: str = os.environ.get(
     "THREATFORGE_ENTERPRISE_CONTACT_URL", "https://cbgsecurity.com.br")
+
+# --- Enterprise license activation (consumed by the private threatforge-enterprise
+# package; Community only records whether they are set, never their contents). ---
+THREATFORGE_ENTERPRISE_LICENSE_FILE: str = os.environ.get(
+    "THREATFORGE_ENTERPRISE_LICENSE_FILE", "")
+THREATFORGE_ENTERPRISE_PUBLIC_KEY_FILE: str = os.environ.get(
+    "THREATFORGE_ENTERPRISE_PUBLIC_KEY_FILE", "")
+THREATFORGE_ENTERPRISE_LICENSE_KEY_ID: str = os.environ.get(
+    "THREATFORGE_ENTERPRISE_LICENSE_KEY_ID", "")
+THREATFORGE_ENTERPRISE_INSTALLATION_ID: str = os.environ.get(
+    "THREATFORGE_ENTERPRISE_INSTALLATION_ID", "")
+
 THREATFORGE_ENTERPRISE_CONTACT_MESSAGE: str = os.environ.get(
     "THREATFORGE_ENTERPRISE_CONTACT_MESSAGE",
     "Contact the ThreatForge Enterprise team to enable premium features.")
@@ -125,33 +136,4 @@ EVIDENCE_ORIGINS: set[str] = {
     "manual_upload", "authorized_export", "whatsapp_intake", "telegram_public", "email", "other",
 }
 
-ENTERPRISE_CONTACT_EMAIL: str = os.environ.get(
-    "THREATFORGE_ENTERPRISE_CONTACT_EMAIL",
-    "to.brunoaugusto@yahoo.com.br",
-).strip()
-
-ENTERPRISE_CONTACT_WHATSAPP: str = os.environ.get(
-    "THREATFORGE_ENTERPRISE_CONTACT_WHATSAPP",
-    "+55 21 964946855",
-).strip()
-
-ENTERPRISE_CONTACT_URL: str = os.environ.get(
-    "THREATFORGE_ENTERPRISE_CONTACT_URL",
-    "https://cbgsecurity.com.br",
-).strip()
-
-
-def enterprise_license_message() -> str:
-    lines = ["Premium PDF export requires a ThreatForge Enterprise license."]
-
-    if ENTERPRISE_CONTACT_EMAIL:
-        lines.append(f"Contact: {ENTERPRISE_CONTACT_EMAIL}")
-
-    if ENTERPRISE_CONTACT_WHATSAPP:
-        lines.append(f"WhatsApp: {ENTERPRISE_CONTACT_WHATSAPP}")
-
-    if ENTERPRISE_CONTACT_URL:
-        lines.append(f"More information: {ENTERPRISE_CONTACT_URL}")
-
-    return "\n".join(lines)
 
