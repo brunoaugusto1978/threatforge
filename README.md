@@ -4,11 +4,16 @@
 
 ThreatForge is an open source platform for Cyber Threat Intelligence, Digital Risk Protection and digital risk investigation. It helps security analysts, SOC teams, fraud teams and researchers organize indicators, enrich observables, monitor brand abuse, prioritize risk and generate actionable intelligence.
 
-## Current Version
+## Release status
 
-```text
-v0.6.0
-```
+**Current release: v0.9.0 — Community Preview** (first public Community release,
+AGPL-3.0-or-later). This is a preview, not 1.0: feature-rich and internally
+tested, but schema/API/UI may still change before a stable 1.0.
+
+- Release notes: [`docs/RELEASE_NOTES_v0.9.0.md`](docs/RELEASE_NOTES_v0.9.0.md)
+- Changelog: [`CHANGELOG.md`](CHANGELOG.md)
+- Roadmap (Community × Enterprise): [`ROADMAP.md`](ROADMAP.md)
+- Governance & maintainer: [`GOVERNANCE.md`](GOVERNANCE.md)
 
 ## Optional Enterprise Adapter
 
@@ -581,14 +586,13 @@ See [Public Readiness Check](docs/PUBLIC_READINESS_CHECK.md).
 
 ## Roadmap
 
-The roadmap below lists planned future work. Completed readiness work is tracked separately in the current status section.
+ThreatForge Community is currently at **v0.9.0 Community Preview**.
+The historical v0.7/v0.8/v0.9 milestones have already landed on `main`.
+Future work is tracked in the canonical roadmap:
 
-- **v0.7** — Investigation cases, case workflow, analyst notes, evidence attachments and case-level exports.
-- **v0.8** — Timeline, investigation activity history, report exports and operational review workflows.
-- **v0.9** — Relationship graph, Neo4j integration and entity correlation views.
-- **v1.0** — Partial STIX model, MISP/OpenCTI integrations, production hardening, stable packaging and public stable release.
-
-See [Community Roadmap](docs/ROADMAP.md).
+- [ROADMAP.md](ROADMAP.md) — Community × Enterprise roadmap
+- [CHANGELOG.md](CHANGELOG.md) — completed milestones
+- [docs/RELEASE_NOTES_v0.9.0.md](docs/RELEASE_NOTES_v0.9.0.md) — current public preview release notes
 
 ## License
 

@@ -1,0 +1,74 @@
+name: Bug report
+description: Report a defect in ThreatForge Community
+title: "[bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please do **not** include secrets, tokens,
+        real credentials or any plaintext sensitive data. For security
+        vulnerabilities, follow SECURITY.md instead of this form.
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: ThreatForge version or `main` commit hash.
+      placeholder: "v0.9.0 or commit abcdef1"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and the impact.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal, ordered steps to reproduce the behavior.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Auth / RBAC / tenants
+        - Cases / evidence / export
+        - Integrations (gated)
+        - Exposure Monitoring
+        - Attack Surface Discovery
+        - Credential Intelligence
+        - Reports
+        - UI
+        - Deployment / Docker
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, deployment method, database, browser (if UI).
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Confirmations
+      options:
+        - label: This report contains no secrets, credentials or plaintext sensitive data.
+          required: true
+        - label: This is not a security vulnerability (those follow SECURITY.md).
+          required: true

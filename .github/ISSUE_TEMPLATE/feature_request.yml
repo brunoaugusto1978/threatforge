@@ -1,0 +1,46 @@
+name: Feature request
+description: Suggest a capability or improvement for ThreatForge Community
+title: "[feat]: "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please describe the problem first, then the proposed solution. Note that
+        automated external collection, real-time infrastructure and premium
+        integrations are Enterprise scope (see ROADMAP.md).
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What are you trying to achieve? What is missing today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+  - type: dropdown
+    id: edition
+    attributes:
+      label: Intended edition
+      description: Where do you think this belongs? Maintainer decides finally (see GOVERNANCE.md).
+      options:
+        - Community (open CTI/DRP core, manual/authorized intake)
+        - Enterprise (automated collection / realtime / premium)
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Confirmations
+      options:
+        - label: I checked ROADMAP.md and existing issues for duplicates.
+          required: true

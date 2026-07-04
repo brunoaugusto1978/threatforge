@@ -1,0 +1,11 @@
+# ThreatForge funding configuration.
+#
+# All entries are commented out on purpose. Uncomment and fill in ONLY once the
+# corresponding account exists — do not point to placeholder or made-up links.
+#
+# github: []                       # GitHub Sponsors username(s), once enabled
+# open_collective:                 # Open Collective slug, once created
+# custom: ["https://cbgsecurity.com.br"]   # e.g. a sponsor/contact page
+#
+# Until sponsorship is set up, commercial support is available via
+# commercial@cbgsecurity.com.br (see COMMERCIAL.md).
