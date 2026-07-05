@@ -57,13 +57,15 @@ python3 -m py_compile <all changed .py files>   → OK
 node --check app/static/app.js                  → OK
 ```
 
-**Pending — must run locally before tagging `v0.9.1`:**
+**Local validation completed before publishing `v0.9.1`:**
 
 ```bash
-python -m compileall -q app
-docker compose up -d --build
-docker compose exec api python -m app.selftest_isolation
-pytest tests/
+docker compose up -d --build                                      # OK
+curl http://localhost:8000/health                                 # OK, version 0.9.1
+docker compose exec api python -m app.selftest_isolation           # OK
+docker compose cp tests api:/tmp/tests                             # OK
+docker compose exec api python -m pytest /tmp/tests/test_observables_enrich.py /tmp/tests/test_exposure_open_case.py -q  # OK, 7 passed
+docker compose exec api python -m pytest /tmp/tests -q             # OK, 15 passed
 ```
 
 Expected selftest output (unchanged chain, now correctly documented in the README):
@@ -72,11 +74,9 @@ Expected selftest output (unchanged chain, now correctly documented in the READM
 TENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS + EXPOSURE + TIMELINE + RISK + CORRELATION + SURFACE + PROMOTE + CREDINTEL + CREDID + REUSE + VIPALERT + CREDTL + CREDREPORT + LICENSE: ALL TESTS PASSED ✅
 ```
 
-## Manual validation checklist (mandatory before tag)
+## Manual validation completed before tag
 
-The following flows are exercised by real UI interaction and have no
-automated coverage in this release — please walk through them once with
-synthetic data before tagging:
+The following flows were exercised by real UI interaction with synthetic data before publishing this release:
 
 1. **Etapa 1 — installation**
    - Fresh `git clone` (or fresh zip extract).
