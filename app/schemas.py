@@ -86,6 +86,10 @@ class ObservableOut(BaseModel):
     score: int
     verdict: str
     score_factors: list | None
+    # Friendly, non-technical messages about external enrichment sources that
+    # failed on the last /enrich call (e.g. "Não foi possível consultar a fonte
+    # URLhaus no momento."). Never contains raw exception classes or HTTP detail.
+    enrichment_warnings: list[str] | None = None
 
     model_config = {"from_attributes": True}
 

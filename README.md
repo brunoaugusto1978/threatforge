@@ -111,6 +111,29 @@ Notes:
 - for local HTTP usage, keep `COOKIE_SECURE=false`;
 - for production over HTTPS, use `COOKIE_SECURE=true`;
 - `APP_BASE_URL` is used to build invitation links.
+- **`DATABASE_URL` and `POSTGRES_PASSWORD` must be kept in sync.** In the
+  normal Docker flow, `docker-compose.yml` explicitly sets the `api` service's
+  `DATABASE_URL` from `POSTGRES_PASSWORD` (line `DATABASE_URL:
+  postgresql+psycopg2://threatforge:${POSTGRES_PASSWORD}@db:5432/threatforge`),
+  which **overrides** whatever `DATABASE_URL` you have in `.env`. So under
+  Compose you only need to set `POSTGRES_PASSWORD` in `.env`. If you ever
+  run the API outside Compose (bare `uvicorn`, an external Postgres, or
+  otherwise sourcing `DATABASE_URL` yourself), the password embedded in
+  `DATABASE_URL` must match `POSTGRES_PASSWORD` exactly, or authentication
+  against the database will fail.
+- **If the Postgres data volume was already created with an old password**,
+  changing `POSTGRES_PASSWORD` in `.env` alone will not update the database
+  user's password — Postgres only reads that variable on first initialization
+  of an empty volume. In that case, reset the local volume:
+
+  ```bash
+  docker compose down -v
+  ```
+
+  ⚠️ `docker compose down -v` deletes the named volumes (`pgdata`,
+  `evidence_data`), which **removes all local data** (tenants, users, findings,
+  evidence). Only use it in development/POC environments, never against data
+  you need to keep.
 
 Start the application:
 
@@ -124,10 +147,10 @@ Validate the installation:
 curl http://localhost:8000/health
 ```
 
-Expected response:
+Expected response (version tracks the current release, e.g. `0.9.1`):
 
 ```json
-{"status":"ok","service":"threatforge","version":"0.6.9"}
+{"status":"ok","service":"threatforge","version":"0.9.1"}
 ```
 
 The API and UI will be available at:
@@ -150,10 +173,10 @@ Run the main selftest:
 docker compose exec api python -m app.selftest_isolation
 ```
 
-Expected result:
+Expected result (the full chain of scenarios covered by the selftest):
 
 ```text
-TENANT ISOLATION + INVITES + OPERATOR ROLES: ALL TESTS PASSED ✅
+TENANT ISOLATION + INVITES + OPERATOR ROLES + BRAND EDIT + ARCHIVE/DELETE + CASES + NOTES + EVIDENCE + EXPORT + INTEGRATIONS + EXPOSURE + TIMELINE + RISK + CORRELATION + SURFACE + PROMOTE + CREDINTEL + CREDID + REUSE + VIPALERT + CREDTL + CREDREPORT + LICENSE: ALL TESTS PASSED ✅
 ```
 
 This test validates:
