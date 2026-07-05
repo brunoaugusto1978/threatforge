@@ -34,7 +34,7 @@ logging.basicConfig(level=logging.INFO)
 app = FastAPI(
     title="ThreatForge",
     description="Open Source Cyber Threat Intelligence Platform",
-    version="0.6.0",
+    version=config.APP_VERSION,
 )
 
 
@@ -99,7 +99,7 @@ app.include_router(license_routes.router)
 
 @app.get("/health", tags=["meta"])
 def health():
-    return {"status": "ok", "service": "threatforge", "version": "0.6.0"}
+    return {"status": "ok", "service": "threatforge", "version": config.APP_VERSION}
 
 
 @app.get("/stats", tags=["meta"])

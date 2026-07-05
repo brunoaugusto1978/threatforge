@@ -17,7 +17,7 @@ from fastapi import (APIRouter, Depends, File, Form, HTTPException, Query,
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import audit, config, credential_intel, exposure_ingest as ing, risk
+from app import audit, config, correlation, credential_intel, exposure_ingest as ing, risk
 from app.auth import (Principal, current_tenant_id, require_admin,
                       require_analyst, require_viewer)
 from app.database import get_db
@@ -374,6 +374,39 @@ def triage_finding(finding_id: int, payload: FindingTriage, request: Request,
     return _finding_out(f, principal)
 
 
+def _unique_correlated_brand_id(db: Session, tid: int, finding_id: int) -> int | None:
+    """If the finding's correlation graph points to exactly one brand, return
+    its id. Returns None on zero or multiple candidate brands — never guesses
+    among several possible brands."""
+    graph = correlation.correlate(db, tid, "finding", finding_id)
+    if not graph:
+        return None
+    brand_ids = {n["ref"]["id"] for n in graph.get("nodes", []) if n.get("kind") == "brand"}
+    if len(brand_ids) == 1:
+        return next(iter(brand_ids))
+    return None
+
+
+def _finding_context_description(db: Session, f: "ExposureFinding") -> str:
+    """Human-readable case description carrying the operational context of the
+    finding it was opened from (finding type, affected email/asset, source,
+    risk score, import id when available)."""
+    d = f.detail or {}
+    affected = d.get("email") or d.get("domain") or d.get("url") or d.get("person_label")
+    if not affected and f.asset_id:
+        asset = db.get(MonitoredAsset, f.asset_id)
+        affected = asset.label if asset else None
+
+    lines = [f"Opened from exposure finding #{f.id} ({f.exposure_type})."]
+    if affected:
+        lines.append(f"Affected: {affected}")
+    lines.append(f"Source: {f.source}")
+    lines.append(f"Risk score: {f.risk_score}")
+    if f.ingest_id:
+        lines.append(f"Import id: {f.ingest_id}")
+    return "\n".join(lines)
+
+
 @router.post("/findings/{finding_id}/case", status_code=201, dependencies=[Depends(require_analyst)])
 def open_case(finding_id: int, request: Request, db: Session = Depends(get_db),
               principal: Principal = Depends(require_analyst),
@@ -383,16 +416,26 @@ def open_case(finding_id: int, request: Request, db: Session = Depends(get_db),
                 "source": f.source, "source_reliability": f.source_reliability,
                 "info_credibility": f.info_credibility, "dedup_key": f.dedup_key,
                 "detail": f.detail}  # detail já redigido (sem segredo em claro)
+
+    brand_id = _unique_correlated_brand_id(db, tid, f.id)
+    # principal.user_id is None for operator/service-key principals, which do
+    # not map to a tenant user row — the case is intentionally left unassigned
+    # in that case rather than assigned to a nonexistent/wrong user.
+    assignee_user_id = principal.user_id
+
     case = InvestigationCase(
-        tenant_id=tid, title=(f.title or f"Exposure #{f.id}")[:255],
-        description=f"Opened from exposure finding #{f.id} ({f.exposure_type}).",
+        tenant_id=tid, brand_id=brand_id, title=(f.title or f"Exposure #{f.id}")[:255],
+        description=_finding_context_description(db, f),
         severity=_SEV_TO_CASE.get(f.severity, "medio"), status="open",
-        finding_snapshot=snapshot, created_by_user_id=principal.user_id)
+        finding_snapshot=snapshot, created_by_user_id=principal.user_id,
+        assignee_user_id=assignee_user_id)
     db.add(case)
     db.commit()
     db.refresh(case)
-    _audit(db, principal, tid, request, "exposure.case_opened", f.id, {"case_id": case.id})
-    return {"case_id": case.id, "status": case.status, "severity": case.severity}
+    _audit(db, principal, tid, request, "exposure.case_opened", f.id,
+           {"case_id": case.id, "brand_id": brand_id, "assignee_user_id": assignee_user_id})
+    return {"case_id": case.id, "status": case.status, "severity": case.severity,
+            "brand_id": case.brand_id, "assignee_user_id": case.assignee_user_id}
 
 
 # ==================== catálogo de tipos ====================

@@ -674,8 +674,17 @@ async function addIoc() {
 }
 async function enrich(id) {
   toast("Enriquecendo…");
-  try { await api("POST", `/observables/${id}/enrich`); toast("Enriquecido"); await loadIocs(); }
-  catch (e) { toast(e.message, true); }
+  try {
+    const o = await api("POST", `/observables/${id}/enrich`);
+    if (o && o.enrichment_warnings && o.enrichment_warnings.length) {
+      // Friendly, source-level warnings (e.g. an external source unavailable).
+      // Never a raw exception/HTTP error — the backend never sends that here.
+      toast(o.enrichment_warnings.join(" "), true);
+    } else {
+      toast("Enriquecido");
+    }
+    await loadIocs();
+  } catch (e) { toast(e.message, true); }
 }
 async function iocDetail(id) {
   try {
@@ -1641,6 +1650,54 @@ function _riskBandOf(f) {
   return s >= 90 ? "critical" : s >= 70 ? "high" : s >= 40 ? "medium" : "low";
 }
 
+// ----- lightweight identifier overlap for the dashboard's "Top Exposed
+// Assets" widget. Mirrors the email/domain matching used by the backend
+// Correlation Engine (app/correlation.py) so that assets linked to a finding
+// only through correlation (no direct asset_id FK yet) still show up here,
+// matching what the Correlate graph already displays for that finding. -----
+function _domainOfEmail(email) {
+  const e = String(email || "").trim().toLowerCase();
+  const at = e.indexOf("@");
+  return at >= 0 ? e.slice(at + 1) : null;
+}
+
+function _findingIdentifiers(f) {
+  const d = (f && f.detail) || {};
+  const emails = new Set(), domains = new Set();
+  if (d.email) {
+    emails.add(String(d.email).trim().toLowerCase());
+    const dom = _domainOfEmail(d.email);
+    if (dom) domains.add(dom);
+  }
+  if (d.domain) domains.add(String(d.domain).trim().toLowerCase());
+  for (const k of ["subdomain", "host"]) {
+    if (d[k]) domains.add(String(d[k]).trim().toLowerCase());
+  }
+  if (d.url) {
+    try { domains.add(new URL(d.url).hostname.toLowerCase()); } catch (_) { /* malformed URL, ignore */ }
+  }
+  return { emails, domains };
+}
+
+function _assetIdentifiers(a) {
+  const v = String((a && a.value) || "").trim().toLowerCase();
+  const emails = new Set(), domains = new Set();
+  if (v.includes("@")) {
+    emails.add(v);
+    const dom = _domainOfEmail(v);
+    if (dom) domains.add(dom);
+  } else if (a.asset_type === "domain" || v.includes(".")) {
+    domains.add(v);
+  }
+  return { emails, domains };
+}
+
+function _hasOverlap(idsA, idsB) {
+  for (const e of idsA.emails) if (idsB.emails.has(e)) return true;
+  for (const d of idsA.domains) if (idsB.domains.has(d)) return true;
+  return false;
+}
+
 async function loadExposureDashboard() {
   const box = $("#expBody");
   if (!box) return;
@@ -1661,12 +1718,29 @@ async function loadExposureDashboard() {
   const newToday = findings.filter(f => (f.created_at || "").slice(0, 10) === today).length;
   const openCases = cases.filter(c => !["closed", "false_positive"].includes(c.status)).length;
 
+  // Precompute asset identifiers once (skip keyword/secret_pattern/etc — they
+  // don't have an email/domain shape to match against).
+  const assetIds = assets.map(a => ({ asset: a, ids: _assetIdentifiers(a) }));
+
   const byAsset = {};
+  const bump = (assetId, riskScore) => {
+    const a = byAsset[assetId] || { count: 0, max: 0 };
+    a.count++; a.max = Math.max(a.max, riskScore || 0);
+    byAsset[assetId] = a;
+  };
   findings.forEach(f => {
-    if (!f.asset_id) return;
-    const a = byAsset[f.asset_id] || { count: 0, max: 0 };
-    a.count++; a.max = Math.max(a.max, f.risk_score || 0);
-    byAsset[f.asset_id] = a;
+    const linkedAssetIds = new Set();
+    if (f.asset_id) linkedAssetIds.add(f.asset_id);
+    // Correlation-based link: same email/domain as a monitored asset, even
+    // without a direct asset_id FK on the finding — matches what the
+    // Correlate graph already shows for this finding.
+    const fIds = _findingIdentifiers(f);
+    if (fIds.emails.size || fIds.domains.size) {
+      for (const { asset, ids } of assetIds) {
+        if (!linkedAssetIds.has(asset.id) && _hasOverlap(fIds, ids)) linkedAssetIds.add(asset.id);
+      }
+    }
+    linkedAssetIds.forEach(assetId => bump(assetId, f.risk_score));
   });
   const label = {}; assets.forEach(a => { label[a.id] = a.label; });
   const topAssets = Object.entries(byAsset)
@@ -1777,7 +1851,7 @@ async function hydrateRisk(id) {
 }
 
 function riskBreakdownHtml(bd) {
-  if (!bd || !bd.factors) return '<span class="muted">No breakdown.</span>';
+  if (!bd || !bd.factors || !bd.factors.length) return '<span class="muted">No risk factors available.</span>';
   const rows = bd.factors.map(x => `<div style="display:flex;justify-content:space-between;gap:12px;font-size:13px">
       <span><b>+${esc(x.points)}</b> ${esc(x.value || x.label)}${x.reason ? ` <span class="muted">(${esc(x.reason)})</span>` : ""}</span>
       <span class="muted" style="font-size:11px">${esc(x.label)}</span></div>`).join("");
@@ -1862,10 +1936,34 @@ const _FIELD_ORDER = ["person_label", "email", "domain", "url", "url_defanged", 
   "exposure_kind", "password_masked", "password_sha256", "secret_masked", "fingerprint",
   "stealer_family", "breach_name", "line_source", "sightings"];
 
+// Fields that already have a dedicated, richer renderer elsewhere and must
+// never be dumped as a raw string here (that's how "[object Object]" leaked
+// into Exposure > Findings: risk_breakdown is {score, band, factors}).
+const _DETAIL_HIDDEN_FIELDS = new Set(["risk_breakdown"]);
+
+// Safe scalar/object/array formatter used by prettyDetail. Never returns
+// "[object Object]": objects are rendered as "key: value" pairs, arrays as
+// comma-joined items, empty/null as an explicit placeholder.
+function formatDetailValue(value) {
+  if (value === null || value === undefined) return "—";
+  if (Array.isArray(value)) {
+    if (!value.length) return "—";
+    return value.map(v => (v !== null && typeof v === "object") ? formatDetailValue(v) : String(v)).join(", ");
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value);
+    if (!entries.length) return "—";
+    return entries.map(([k, v]) =>
+      `${k}: ${(v !== null && typeof v === "object") ? formatDetailValue(v) : String(v)}`).join(", ");
+  }
+  return String(value);
+}
+
 function prettyDetail(detail) {
   const d = detail || {};
-  const keys = Object.keys(d);
-  const ordered = _FIELD_ORDER.filter(k => k in d).concat(keys.filter(k => !_FIELD_ORDER.includes(k)));
+  const keys = Object.keys(d).filter(k => !_DETAIL_HIDDEN_FIELDS.has(k));
+  const ordered = _FIELD_ORDER.filter(k => k in d && keys.includes(k))
+    .concat(keys.filter(k => !_FIELD_ORDER.includes(k)));
   if (!ordered.length) return '<span class="muted">no detail</span>';
   const items = ordered.map(k => {
     const meta = _FIELD_META[k] || ["\u2022", k];
@@ -1874,7 +1972,7 @@ function prettyDetail(detail) {
     return `<div style="display:flex;gap:6px;align-items:baseline;min-width:210px">
       <span>${meta[0]}</span>
       <span class="muted" style="font-size:12px">${esc(meta[1])}</span>
-      <span style="${mono}">${esc(String(d[k]))}</span></div>`;
+      <span style="${mono}">${esc(formatDetailValue(d[k]))}</span></div>`;
   }).join("");
   return `<div style="display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:4px">${items}</div>`;
 }

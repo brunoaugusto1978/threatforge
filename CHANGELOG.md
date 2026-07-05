@@ -16,6 +16,63 @@ automated dark/deep-web feeds, real-time collection, k-anonymity breach
 enrichment, premium integrations (MISP/OpenCTI), premium PDF/export, and
 Enterprise packaging with license activation.
 
+## [0.9.1] — POC Hardening Release
+
+Patch release on top of `0.9.0` consolidating fixes found during the CBG
+Assessoria e Consultoria Community POC. No new premium features, no
+Enterprise/licensing changes.
+
+### Fixed
+- **/health and FastAPI app version**: now sourced from `config.APP_VERSION`
+  (`0.9.1`) instead of a hardcoded string that had drifted to `0.6.0` on
+  `main` while the README still expected `0.6.9`.
+- **README and `.env.example` — installation**: documented that
+  `docker-compose.yml` overrides `DATABASE_URL` for the `api` service from
+  `POSTGRES_PASSWORD` (so `POSTGRES_PASSWORD` is the single source of truth
+  under Compose), and when/why `docker compose down -v` is required to reset
+  a stale Postgres volume — with an explicit local-data-loss warning.
+- **README — selftest example**: aligned with the real chain of scenarios
+  currently emitted by `app/selftest_isolation.py`
+  (`… + LICENSE: ALL TESTS PASSED ✅`).
+- **Enrichment error UX** (`POST /observables/{id}/enrich`): external-source
+  failures (e.g. URLhaus HTTP 403) no longer surface raw exception classes
+  (`HTTPStatusError`) or return 502. The IOC is kept — never removed or
+  corrupted — and, on a first enrichment attempt where every applicable
+  source failed, its verdict is `unknown` (not a fabricated
+  `no_known_threat`). Technical detail (source, HTTP status, exception type)
+  is recorded via the audit trail; the UI receives a friendly,
+  source-specific message via a new `enrichment_warnings` field.
+- **Exposure Findings UI**: fixed `risk_breakdown` rendering as
+  `[object Object]`. The generic detail renderer now skips `risk_breakdown`
+  (already rendered by the dedicated Risk breakdown panel) and safely
+  formats any other nested object, array, empty or null value.
+- **Open investigation** (`POST /exposure/findings/{id}/case`): the new case
+  now inherits `brand_id` when the finding's correlation graph resolves to
+  exactly one brand (never guesses among multiple), assigns the
+  authenticated user as `assignee_user_id` when the principal has one, and
+  builds a description containing finding type, affected email/asset,
+  source, risk score and ingest id (when available).
+- **Exposure Dashboard — Top Exposed Assets**: also counts findings linked
+  to a monitored asset through correlation (shared e-mail/domain), not just
+  the direct `asset_id` FK — matching what the Correlate graph already
+  shows for the same finding.
+
+### Added
+- `tests/test_observables_enrich.py` — pytest coverage for the URLhaus 403
+  scenario (friendly message, IOC stays UNKNOWN, audit trail entry).
+- `tests/test_exposure_open_case.py` — pytest coverage for the Open
+  investigation `brand_id` inheritance when correlation is unique, and
+  for the negative case with multiple candidate brands.
+- `docs/RELEASE_NOTES_v0.9.1.md` — release notes with manual validation
+  checklist covering the frontend-only fixes (risk_breakdown formatter,
+  Top Exposed Assets) that have no automated coverage yet.
+
+### Unchanged
+- Historical `[0.7.0]` entry below (Investigation Cases, Evidence & Export
+  milestone) is preserved as-is.
+- Enterprise adapter, licensing, feature gates, PDF gate, integrations
+  gates, STIX export — all untouched.
+
 ## [0.9.0] — Community Preview — 2026-07-04
 
 First **public** Community release. Consolidates everything on `main` since the

@@ -9,6 +9,10 @@ load_dotenv()
 API_KEY: str = os.environ.get("API_KEY", "")
 DATABASE_URL: str = os.environ.get("DATABASE_URL", "sqlite:///./threatforge.db")
 
+# Single source of truth for the app/service version (FastAPI docs, /health, etc).
+# Keep this in sync with the release tag; do not hardcode the version elsewhere.
+APP_VERSION: str = "0.9.1"
+
 # --- Auth / sessão ---
 # Segredo para assinar JWT. Se vazio, cai no API_KEY (defina um próprio em prod).
 JWT_SECRET: str = os.environ.get("JWT_SECRET", "") or os.environ.get("API_KEY", "")
