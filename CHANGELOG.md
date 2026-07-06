@@ -17,6 +17,85 @@ enrichment, real MISP/OpenCTI connector transport with encrypted secret vault
 and anti-SSRF validation, premium PDF/export, and Enterprise packaging with
 license activation.
 
+## [0.9.3] — Real Integration Configuration UI
+
+Small UX release on top of `0.9.2`. Focus: fix the misleading
+"Integration configured" toast that fired after posting an empty body — the
+UI now opens a real form driven by each connector's descriptor and the router
+enforces the required-fields contract instead of accepting arbitrary payloads.
+
+### Added
+- **Integration configuration modal** in `app/static/app.js`. Clicking
+  **Configure** on an unlocked Integrations card opens a modal built from the
+  descriptor's `config_schema` (non-secret inputs) and `secrets_schema`
+  (password-style inputs). Boolean/enum/integer/array types render as native
+  form controls. Required fields marked with `*`. Save shows *Integration
+  configuration saved*; missing required fields show *Configuration required:
+  <fields>*. A **Test connection** button in the modal reports `ready` /
+  `not_configured` without touching any external service. CSP-safe (no inline
+  handlers): the click dispatcher already in the app.js drives every button.
+- **`GET /integrations/{name}/connections`** — returns the tenant's stored row
+  (masked; `null` if unsaved) so the modal can prefill non-secret fields on
+  re-open. Viewer+ can read it; response never carries secret values.
+- **`secrets_schema`** on `GET /integrations/{name}`: publishes
+  `{ required, optional }` secret *names* per connector so the UI can render
+  the credential section without ever inlining secret keys in the front-end.
+- **`SecretSpec` / `SECRETS_SPEC`** in `app/integrations/schemas.py` —
+  declares MISP's `api_key` (required), OpenCTI's `api_token` (required),
+  Generic's optional `token`/`secret`. No value ever passes through this
+  module; it's a name-only contract.
+- **`ready` flag** on the connection response reflecting the new
+  `_is_ready(row, descriptor, name)` predicate.
+
+### Fixed
+- **`POST /integrations/{name}/connections`** now enforces the descriptor's
+  required config fields and required secret names. Missing keys yield **422**
+  with `{ missing_fields, missing_config_fields, missing_required_secrets }`
+  and audit `integration.config_rejected` — nothing is persisted, no
+  `Integration configured` toast fires. The previous v0.9.2 behaviour of
+  accepting `{}` and reporting success was misleading and is gone.
+- **`/test`** and **`/sync`** now report `ready` / `queued` only when the
+  stored row satisfies `_is_ready` (all required config + secret markers
+  present). A row saved with just `base_url` for MISP correctly reports
+  `not_configured` — before, any persisted row reported `ready`.
+- **UI Save flow** no longer shows *Integration configured* when the operator
+  submits an empty form. The button is disabled by the same required-fields
+  check on the server; a client-side missing-fields toast shows exactly which
+  fields to fill.
+- **Merge-safe secret markers** on re-save: the router loads the existing
+  row *before* running required-secret validation, so a re-save with a blank
+  credential input is treated as satisfied by the ``present=True`` marker
+  already on file. Editing non-secret fields keeps the *secret on file*
+  marker and ``/test`` keeps reporting *Ready* instead of regressing to
+  *not_configured*. First-configuration payloads without the required secret
+  still 422 (there is no marker to inherit from).
+
+### Security
+- Secret values are never sent back to the client, never persisted in
+  `config_json`, never landed in the audit trail, and — on save — the DOM
+  inputs are wiped after the response is processed as defence in depth.
+- `GET /integrations/{name}/connections` returns the same masked view as the
+  POST response — viewer+ can see whether a secret is on file, never its
+  value.
+- Community without an Enterprise entitlement keeps returning **402** on all
+  four endpoints (`POST /connections`, `GET /connections`, `POST /test`,
+  `POST /sync`) with the existing upgrade block. A new
+  `integration.read_denied` audit action covers the GET path.
+- Locked *Configure (Enterprise)* cards short-circuit to the upgrade CTA
+  without rendering the form, so unlicensed operators can't be tricked into
+  typing a credential into a UI that would then 402.
+
+### Tests
+- `tests/test_integrations_config.py` reworked for the v0.9.3 contract:
+  descriptor `secrets_schema` matrix (MISP/OpenCTI/Generic); 422 breakdowns
+  for empty / missing-secret / missing-config payloads; `config_rejected`
+  audit action; `GET /connections` before and after save; prefill without
+  secret leakage; `ready` flag on the response; parametric secret masking
+  (now uses `generic` so no unrelated required credential is needed); upsert
+  preserves the *secret on file* marker across secret-less re-saves; unknown
+  integration name still 404; viewer 403 on write, 200 (masked) on read; and
+  tenant isolation for `POST`, `GET` and `POST /test`.
+
 ## [0.9.2] — Enterprise Integration Configuration
 
 Small feature release on top of `0.9.1`. Focus: destravar the Integrations

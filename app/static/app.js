@@ -1545,7 +1545,10 @@ const ACTIONS = {
   caseExportMd: (id) => exportCaseMarkdown(id),
   caseExportStix: (id) => exportCaseStix(id),
   caseExportPdf: (id) => exportCasePdf(id),
-  integrationConfigure: (_id, btn) => configureIntegration(btn.dataset.name),
+  integrationConfigure: (_id, btn) => configureIntegration(btn.dataset.name, btn.dataset.locked === "1"),
+  integrationModalSave: (_id, btn) => integrationModalSave(btn.dataset.name),
+  integrationModalTest: (_id, btn) => integrationModalTest(btn.dataset.name),
+  integrationModalClose: () => integrationModalClose(),
   expTab: (_id, btn) => exposureTab(btn.dataset.name),
   expApplyFilters: () => applyExposureFilters(),
   expTriage: (id) => triageExposure(id),
@@ -1588,7 +1591,7 @@ async function viewIntegrations() {
         : '<span class="muted" style="border:1px solid var(--line);border-radius:10px;padding:1px 8px;font-size:12px">Available</span>';
       const caps = (it.capabilities || []).map(c => `<code style="font-size:11px;background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:1px 5px;margin:0 4px 4px 0;display:inline-block">${esc(c)}</code>`).join("");
       const btn = canConfig
-        ? `<button class="sm ghost" data-action="integrationConfigure" data-name="${esc(it.name)}">${locked ? "Configure (Enterprise)" : "Configure"}</button>`
+        ? `<button class="sm ghost" data-action="integrationConfigure" data-name="${esc(it.name)}" data-locked="${locked ? "1" : "0"}">${locked ? "Configure (Enterprise)" : "Configure"}</button>`
         : '<span class="muted" style="font-size:12px">Admin only</span>';
       return `<div class="panel" style="display:flex;flex-direction:column;gap:8px">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
@@ -1602,20 +1605,352 @@ async function viewIntegrations() {
   }</div>`;
 }
 
-async function configureIntegration(name) {
+// -----------------------------------------------------------------------------
+// Integration configuration modal (v0.9.3)
+//
+// Renders a real form from the descriptor's JSON schema plus a small
+// secrets_schema (required/optional). Behaviour:
+//
+// * Locked (Enterprise 🔒) cards go straight to the upgrade CTA — no modal.
+// * Unlocked cards open a modal seeded with any previously stored non-secret
+//   config (fetched from GET /integrations/{name}/connections). Secret inputs
+//   are always blank; the placeholder tells the operator whether a secret is
+//   already on file, but the value never leaves the server.
+// * Save posts the form to POST /integrations/{name}/connections; missing
+//   required fields surface as 422 with a `missing_fields` list which we turn
+//   into a "Configuration required: <fields>" toast rather than a generic
+//   error. On 200 we show "Integration configuration saved" and close the
+//   modal.
+// * Test posts to /integrations/{name}/test and reports ready / not_configured
+//   without leaking any credential state.
+// -----------------------------------------------------------------------------
+
+// Fields matching these lowercased names are always rendered as password
+// inputs regardless of the JSON schema, mirroring the server-side
+// _SECRET_KEYS list so a config_schema that accidentally exposes a secret
+// name is still masked in the UI.
+const _INTG_SECRET_LOOKING = new Set([
+  "api_key", "api_token", "token", "secret", "password",
+  "client_secret", "auth_key", "private_key",
+]);
+
+function _intgIsSecretName(name) {
+  return _INTG_SECRET_LOOKING.has(String(name || "").toLowerCase());
+}
+
+function _intgFieldOrder(descriptor) {
+  const props = (descriptor.config_schema && descriptor.config_schema.properties) || {};
+  const required = new Set(descriptor.config_schema && descriptor.config_schema.required || []);
+  // Render required first, then optional; stable order otherwise.
+  const keys = Object.keys(props);
+  keys.sort((a, b) => {
+    const ra = required.has(a) ? 0 : 1;
+    const rb = required.has(b) ? 0 : 1;
+    if (ra !== rb) return ra - rb;
+    return 0;
+  });
+  return keys;
+}
+
+function _intgRenderInput(fieldName, schema, currentValue, required) {
+  const label = `<label style="margin-top:12px">${esc(fieldName)}${required ? ' <span style="color:var(--red)">*</span>' : ""}</label>`;
+  const desc = schema.description
+    ? `<div class="muted" style="font-size:12px;margin-top:2px">${esc(schema.description)}</div>`
+    : "";
+  const dataAttr = `data-intg-field="${esc(fieldName)}" data-intg-type="${esc(schema.type || "string")}"`;
+  let input;
+
+  // Enum -> select
+  if (Array.isArray(schema.enum) && schema.enum.length) {
+    const opts = schema.enum.map(v => {
+      const sel = String(v) === String(currentValue ?? "") ? " selected" : "";
+      return `<option value="${esc(v)}"${sel}>${esc(v)}</option>`;
+    }).join("");
+    input = `<select ${dataAttr} style="width:100%">${opts}</select>`;
+  } else if (schema.type === "boolean") {
+    const checked = currentValue === true ? " checked" : "";
+    input = `<label style="display:flex;align-items:center;gap:8px;margin-top:6px">
+      <input type="checkbox" ${dataAttr}${checked}> ${esc(schema.description || "Enabled")}</label>`;
+    // Boolean already carries its own label
+    return `${input}${desc && !schema.description ? desc : ""}`;
+  } else if (schema.type === "integer" || schema.type === "number") {
+    const val = currentValue == null ? "" : String(currentValue);
+    input = `<input type="number" ${dataAttr} value="${esc(val)}" style="width:100%">`;
+  } else if (schema.type === "array") {
+    const val = Array.isArray(currentValue) ? currentValue.join(", ") : "";
+    input = `<input type="text" ${dataAttr} value="${esc(val)}" placeholder="Comma-separated" style="width:100%">`;
+  } else {
+    const val = currentValue == null ? "" : String(currentValue);
+    input = `<input type="text" ${dataAttr} value="${esc(val)}" style="width:100%">`;
+  }
+  return `${label}${desc}${input}`;
+}
+
+function _intgRenderSecret(fieldName, required, alreadyOnFile) {
+  const label = `<label style="margin-top:12px">${esc(fieldName)}${required ? ' <span style="color:var(--red)">*</span>' : ""}</label>`;
+  const hint = alreadyOnFile
+    ? `<div class="muted" style="font-size:12px;margin-top:2px">A secret is already on file. Leave blank to keep it unchanged.</div>`
+    : `<div class="muted" style="font-size:12px;margin-top:2px">Never displayed after saving.</div>`;
+  const ph = alreadyOnFile ? "•••••••• (on file)" : "";
+  return `${label}${hint}<input type="password" autocomplete="off" data-intg-secret="${esc(fieldName)}" placeholder="${esc(ph)}" value="" style="width:100%">`;
+}
+
+async function configureIntegration(name, locked) {
+  // Locked branch: don't render a form the user can't submit.
+  // Emit an empty request just to trigger the 402 + upgrade block the same
+  // way the previous version did — this preserves the "Configure (Enterprise)"
+  // -> upgrade CTA UX for unlicensed Community.
+  if (locked) {
+    try {
+      const headers = SUPPORT_TENANT ? { "X-Tenant-Id": String(SUPPORT_TENANT.id) } : {};
+      const fallback = "This premium integration requires a ThreatForge Enterprise license.";
+      const res = await fetch(`/integrations/${encodeURIComponent(name)}/connections`, {
+        method: "POST", credentials: "same-origin",
+        headers: { ...headers, "Content-Type": "application/json" }, body: "{}",
+      });
+      let data = {};
+      try { data = await res.json(); } catch (_) { data = {}; }
+      toast(enterpriseUpgradeMessage(data, fallback), true);
+    } catch (e) { toast(e.message || "Configuration failed", true); }
+    return;
+  }
+
+  // Unlocked: fetch descriptor + current stored row (may be null).
+  let descriptor, current;
+  try {
+    descriptor = await api("GET", `/integrations/${encodeURIComponent(name)}`);
+  } catch (e) {
+    // Descriptor GET is viewer+; 402 means the licence dropped between the
+    // catalog fetch and the click — treat like the locked branch.
+    if (e.status === 402) { toast(enterpriseUpgradeMessage(e.detail || {}, "This premium integration requires a ThreatForge Enterprise license."), true); return; }
+    toast(e.message || "Failed to load integration", true);
+    return;
+  }
+  try {
+    current = await api("GET", `/integrations/${encodeURIComponent(name)}/connections`);
+  } catch (e) {
+    // 402 here means the licence gate rejected the read — treat like locked.
+    if (e.status === 402) { toast(enterpriseUpgradeMessage(e.detail || {}, "This premium integration requires a ThreatForge Enterprise license."), true); return; }
+    // Any other failure: proceed with an empty prefill; the operator can
+    // still configure from scratch.
+    current = null;
+  }
+  _intgRenderModal(descriptor, current);
+}
+
+function _intgRenderModal(descriptor, current) {
+  const name = descriptor.name;
+  const configSchema = descriptor.config_schema || {};
+  const props = configSchema.properties || {};
+  const required = new Set(configSchema.required || []);
+  const secretsSchema = descriptor.secrets_schema || { required: [], optional: [] };
+  const storedConfig = (current && current.config) || {};
+  const storedSecrets = (current && current.secrets_metadata) || {};
+
+  const fieldOrder = _intgFieldOrder(descriptor);
+  const configHtml = fieldOrder.map(f => {
+    // Secret-looking fields inside config_schema get rendered as passwords.
+    if (_intgIsSecretName(f)) {
+      return _intgRenderSecret(f, required.has(f), Boolean(storedSecrets[f]));
+    }
+    return _intgRenderInput(f, props[f] || {}, storedConfig[f], required.has(f));
+  }).join("");
+
+  const allSecrets = [
+    ...secretsSchema.required.map(s => [s, true]),
+    ...secretsSchema.optional.map(s => [s, false]),
+  ];
+  const secretsHtml = allSecrets.map(([s, req]) =>
+    _intgRenderSecret(s, req, Boolean(storedSecrets[s]))
+  ).join("");
+
+  const readyBadge = current && current.ready
+    ? '<span style="color:var(--green);font-size:12px;border:1px solid var(--green);border-radius:10px;padding:1px 8px;margin-left:8px">Ready</span>'
+    : (current ? '<span class="muted" style="font-size:12px;border:1px solid var(--line);border-radius:10px;padding:1px 8px;margin-left:8px">Not configured</span>' : "");
+
+  const caps = (descriptor.capabilities || []).map(c => `<code style="font-size:11px;background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:1px 5px;margin:0 4px 4px 0;display:inline-block">${esc(c)}</code>`).join("");
+
+  // Backdrop + centered panel, matching the app's existing dark theme.
+  // No inline event handlers — CSP forbids them (script-src 'self'). Backdrop
+  // close is wired below in JS by listening for a click whose target IS the
+  // backdrop element itself.
+  const html = `
+    <div id="intgModalBackdrop" style="position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:10000;display:flex;align-items:center;justify-content:center;padding:20px">
+      <div id="intgModal" role="dialog" aria-labelledby="intgModalTitle" style="background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:24px;max-width:520px;width:100%;max-height:90vh;overflow:auto">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <h3 id="intgModalTitle" style="margin:0">Configure ${esc(descriptor.title)}${readyBadge}</h3>
+          <button class="sm ghost" data-action="integrationModalClose" aria-label="Close">✕</button>
+        </div>
+        <div class="muted" style="font-size:13px;margin-top:6px">${esc(descriptor.description || "")}</div>
+        <div style="margin-top:6px">${caps}</div>
+        <form id="intgModalForm" style="margin-top:8px">
+          ${configHtml}
+          ${secretsHtml ? `<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--line)"><b style="font-size:13px">Credentials</b></div>${secretsHtml}` : ""}
+          <div id="intgModalError" class="err" style="min-height:18px"></div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">
+            <button type="button" class="sm ghost" data-action="integrationModalClose">Cancel</button>
+            <button type="button" class="sm ghost" data-action="integrationModalTest" data-name="${esc(name)}">Test connection</button>
+            <button type="button" class="sm" data-action="integrationModalSave" data-name="${esc(name)}">Save</button>
+          </div>
+        </form>
+      </div>
+    </div>`;
+
+  const holder = document.createElement("div");
+  holder.innerHTML = html;
+  const backdrop = holder.firstElementChild;
+  document.body.appendChild(backdrop);
+
+  // Backdrop click (target === backdrop, not any descendant) closes the modal.
+  // The buttons inside use data-action and go through the delegated click
+  // dispatcher above; we don't stop propagation, so their data-action fires
+  // first and their handler tears the modal down.
+  backdrop.addEventListener("click", (ev) => {
+    if (ev.target === backdrop) integrationModalClose();
+  });
+
+  // Submit handler on the form so Enter in a text input doesn't reload the
+  // page — inline onsubmit is CSP-forbidden.
+  const form = backdrop.querySelector("#intgModalForm");
+  if (form) form.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    integrationModalSave(name);
+  });
+
+  // Focus the first non-hidden input so keyboard-first users get a sane entry point.
+  const first = document.querySelector('#intgModalForm input:not([type=hidden]), #intgModalForm select');
+  if (first) first.focus();
+}
+
+function integrationModalClose() {
+  const bd = document.getElementById("intgModalBackdrop");
+  if (bd) bd.remove();
+}
+
+function _intgCollectPayload() {
+  const form = document.getElementById("intgModalForm");
+  if (!form) return {};
+  const payload = {};
+
+  // Non-secret fields.
+  form.querySelectorAll("[data-intg-field]").forEach(inp => {
+    const field = inp.dataset.intgField;
+    const type = inp.dataset.intgType;
+    if (inp.type === "checkbox") {
+      payload[field] = inp.checked;
+      return;
+    }
+    const raw = (inp.value || "").trim();
+    if (raw === "") return;  // omit -> backend treats as missing
+    if (type === "integer") { const n = parseInt(raw, 10); if (!Number.isNaN(n)) payload[field] = n; return; }
+    if (type === "number")  { const n = parseFloat(raw);  if (!Number.isNaN(n)) payload[field] = n; return; }
+    if (type === "array")   { payload[field] = raw.split(",").map(s => s.trim()).filter(Boolean); return; }
+    payload[field] = raw;
+  });
+
+  // Secret fields — only include when the operator actually typed a value
+  // this turn. Blank means "keep whatever is on file server-side."
+  form.querySelectorAll("[data-intg-secret]").forEach(inp => {
+    const raw = inp.value || "";
+    if (raw === "") return;
+    payload[inp.dataset.intgSecret] = raw;
+  });
+
+  return payload;
+}
+
+function _intgSetError(msg) {
+  const el = document.getElementById("intgModalError");
+  if (el) el.textContent = msg || "";
+}
+
+function _intgClearSecretInputs() {
+  const form = document.getElementById("intgModalForm");
+  if (!form) return;
+  // Wipe every value the operator just typed from the DOM so it isn't left
+  // in memory beyond the request that used it. New placeholder reflects
+  // that a secret is now on file.
+  form.querySelectorAll("[data-intg-secret]").forEach(inp => {
+    inp.value = "";
+    inp.placeholder = "•••••••• (on file)";
+  });
+}
+
+async function integrationModalSave(name) {
+  _intgSetError("");
+  const payload = _intgCollectPayload();
   try {
     const headers = SUPPORT_TENANT ? { "X-Tenant-Id": String(SUPPORT_TENANT.id) } : {};
-    const fallback = "This premium integration requires a ThreatForge Enterprise license.";
     const res = await fetch(`/integrations/${encodeURIComponent(name)}/connections`, {
+      method: "POST", credentials: "same-origin",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    let data = {};
+    try { data = await res.json(); } catch (_) { data = {}; }
+
+    if (res.ok) {
+      // Discard whatever the operator typed in secret inputs from the DOM
+      // and close. The response never contained secret values in the first
+      // place — only presence markers — but zeroing the inputs is defence
+      // in depth against a mis-configured browser extension reading them.
+      _intgClearSecretInputs();
+      toast("Integration configuration saved");
+      integrationModalClose();
+      // Optional: refresh the catalogue in the background if that view is up.
+      if (typeof viewIntegrations === "function" && document.querySelector("#intgList")) {
+        viewIntegrations();
+      }
+      return;
+    }
+
+    if (res.status === 422) {
+      const detail = (data && data.detail) || {};
+      const missing = Array.isArray(detail.missing_fields) ? detail.missing_fields : [];
+      const msg = missing.length
+        ? `Configuration required: ${missing.join(", ")}`
+        : (detail.message || "Configuration required.");
+      _intgSetError(msg);
+      toast(msg, true);
+      return;
+    }
+
+    if (res.status === 402) {
+      const msg = enterpriseUpgradeMessage(data, "This premium integration requires a ThreatForge Enterprise license.");
+      _intgSetError(msg);
+      toast(msg, true);
+      return;
+    }
+
+    const fallback = (data && data.detail && (data.detail.message || data.detail)) || `Error ${res.status}`;
+    _intgSetError(String(fallback));
+    toast(String(fallback), true);
+  } catch (e) {
+    _intgSetError(e.message || "Save failed");
+    toast(e.message || "Save failed", true);
+  }
+}
+
+async function integrationModalTest(name) {
+  _intgSetError("");
+  try {
+    const headers = SUPPORT_TENANT ? { "X-Tenant-Id": String(SUPPORT_TENANT.id) } : {};
+    const res = await fetch(`/integrations/${encodeURIComponent(name)}/test`, {
       method: "POST", credentials: "same-origin",
       headers: { ...headers, "Content-Type": "application/json" }, body: "{}",
     });
-    if (res.ok) { toast("Integration configured"); return; }
     let data = {};
     try { data = await res.json(); } catch (_) { data = {}; }
-    // 402 -> mesmo CTA de upgrade do PDF; outros erros -> mensagem simples
-    toast(enterpriseUpgradeMessage(data, fallback), true);
-  } catch (e) { toast(e.message || "Configuration failed", true); }
+    if (res.status === 402) {
+      toast(enterpriseUpgradeMessage(data, "This premium integration requires a ThreatForge Enterprise license."), true);
+      return;
+    }
+    if (!res.ok) { toast(`Error ${res.status}`, true); return; }
+    const ok = data && data.status === "ready";
+    toast(data.message || (ok ? "Connection ready." : "Configuration required."), !ok);
+  } catch (e) {
+    toast(e.message || "Test failed", true);
+  }
 }
 
 // ---------- exposure monitoring (DRP) ----------
