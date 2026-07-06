@@ -668,3 +668,47 @@ class CredentialIdentity(Base):
     status: Mapped[str] = mapped_column(String(20), default="new")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, index=True)
+
+
+# ---------------------------------------------------------------------------
+# Enterprise Integration Configuration (v0.9.2)
+# Persists minimal, non-secret configuration for premium connectors
+# (MISP / OpenCTI / Generic) when an Enterprise license unlocks the feature.
+# Community never stores real secrets: incoming api_key / token / secret /
+# password values are stripped before persistence and only presence metadata
+# (masked hint) is kept in ``secrets_metadata``. Real connector I/O still
+# lives in the private ``threatforge-enterprise`` package.
+# ---------------------------------------------------------------------------
+class IntegrationConnection(Base):
+    """Persisted connector configuration, one row per (tenant, integration name).
+
+    Fields:
+      - ``config_json``  — non-secret configuration (base_url, direction, tags…);
+        matches the descriptor's public ``config_schema`` shape.
+      - ``secrets_metadata`` — dict keyed by secret field name with only masked
+        presence info (e.g. ``{"api_key": {"present": true, "masked": "***"}}``).
+        The real value is never persisted here.
+      - ``enabled`` — whether the connection is active (default True on save).
+    """
+    __tablename__ = "integration_connections"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_integration_conn_tenant_name"),
+        Index("ix_integration_conn_tenant", "tenant_id"),
+        Index("ix_integration_conn_name", "name"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # Note: no ``index=True`` on ``tenant_id`` or ``name`` — the indexes are
+    # declared explicitly in ``__table_args__`` (``ix_integration_conn_tenant``
+    # / ``ix_integration_conn_name``) so the ORM's ``create_all`` and the
+    # Alembic migration agree on names and never emit a duplicate index.
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(60))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    config_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    secrets_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow)

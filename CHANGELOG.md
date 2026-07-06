@@ -13,8 +13,67 @@ and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.
 
 Planned next (Enterprise, out of this repository — see [ROADMAP.md](ROADMAP.md)):
 automated dark/deep-web feeds, real-time collection, k-anonymity breach
-enrichment, premium integrations (MISP/OpenCTI), premium PDF/export, and
-Enterprise packaging with license activation.
+enrichment, real MISP/OpenCTI connector transport with encrypted secret vault
+and anti-SSRF validation, premium PDF/export, and Enterprise packaging with
+license activation.
+
+## [0.9.2] — Enterprise Integration Configuration
+
+Small feature release on top of `0.9.1`. Focus: destravar the Integrations
+screen when the Enterprise licence overlay unlocks `integration.misp`,
+`integration.opencti` or `integration.generic`. No new Community-only capability
+and no Enterprise/licensing contract change.
+
+### Added
+- **`integration_connections` table** (migration
+  `20260706_01_integration_connections`) — one row per `(tenant_id, name)`
+  storing `enabled`, `config_json` (non-secret configuration matching the
+  descriptor's public schema) and `secrets_metadata` (masked presence hints).
+  Community never persists real credentials; the encrypted secret vault stays
+  in `threatforge-enterprise`.
+- **`app.models.IntegrationConnection`** — SQLAlchemy model backing the new
+  table, unique-constrained on `(tenant_id, name)` and indexed on both.
+
+### Fixed
+- **`POST /integrations/{name}/connections`**, **`.../test`**, **`.../sync`**
+  no longer return **501 Not Implemented** when the Enterprise licence unlocks
+  the descriptor's feature. The three endpoints now:
+  - **`/connections`** — strip secret keys (`api_key`, `api_token`, `token`,
+    `secret`, `password`, `client_secret`, `auth_key`, `private_key`), upsert
+    the tenant's connection row and return it with `secrets_metadata`
+    describing only *which* secrets were received (never the values). Audit
+    `integration.config_saved`.
+  - **`/test`** — return `{configured, status, message}` reflecting whether the
+    tenant has a stored connection (`ready` vs `not_configured`); no external
+    call is made. Audit `integration.test_requested`.
+  - **`/sync`** — return `{accepted, status, message}` (`queued` vs
+    `not_configured`); no external call is made. Audit
+    `integration.sync_requested`.
+- Community without an Enterprise entitlement keeps returning **402** with the
+  existing upgrade block and keeps writing the `integration.*_denied` audit
+  actions — the licence gate order was preserved so unlicensed hosts are
+  unaffected by this release.
+
+### Security
+- Even under a valid Enterprise licence, Community never persists nor echoes
+  secret fields in cleartext: the router strips them before hitting the
+  database and before serialising the response, and the audit log records only
+  the field *names* that were present, not their values.
+- Tenant isolation: the connection row is looked up strictly by
+  `(tenant_id, name)`. Tenant A cannot read, overwrite or test tenant B's
+  connection.
+- RBAC unchanged: viewer sees the catalogue only; configure/test/sync require
+  admin effective role, which excludes `support_operator` and `support_viewer`
+  (so tenant-support operators cannot manage connector credentials).
+
+### Tests
+- New `tests/test_integrations_config.py` covers the entire release contract:
+  unlicensed 402 + `*_denied` audit; MISP / OpenCTI / Generic configuration
+  upsert; empty-body minimal payload accepted; secret masking (parametric over
+  every secret key, case-insensitive); `/test` and `/sync` transitions; audit
+  actions on the licensed path; unknown integration `404`; viewer 403 even
+  when licensed; and cross-tenant isolation for both `/connections` and
+  `/test`.
 
 ## [0.9.1] — POC Hardening Release
 
