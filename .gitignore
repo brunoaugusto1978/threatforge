@@ -16,3 +16,6 @@ data/
 # Local security scan outputs
 security-reports/
 .local/
+evidencias/
+backups/
+*.zip
