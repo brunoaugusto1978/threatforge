@@ -175,3 +175,10 @@ isolation — all pass. Legacy suites keep passing (no schema change).
 3. `/audit` shows `integration.config_saved` for the successful save,
    `integration.config_rejected` for the empty-form attempt, and neither
    entry contains the secret value.
+
+## Publication status
+
+Published on GitHub as tag `v0.9.3`.
+
+Release URL:
+https://github.com/brunoaugusto1978/threatforge/releases/tag/v0.9.3
