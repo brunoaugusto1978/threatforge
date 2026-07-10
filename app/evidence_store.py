@@ -47,7 +47,7 @@ def sniff_ok(declared: str, head: bytes) -> bool:
     return False
 
 
-_STORAGE_KEY_RE = re.compile(r"^[1-9][0-9]*/[1-9][0-9]*/[0-9a-f]{32}\\.bin$")
+_STORAGE_KEY_RE = re.compile(r"^[1-9][0-9]*/[1-9][0-9]*/[0-9a-f]{32}\.bin$")
 
 
 def _positive_id(value: int, name: str) -> int:
@@ -113,8 +113,8 @@ def save_stream(upload, tenant_id: int, case_id: int) -> dict:
         if out:
             out.close()
             out = None
-        if full and os.path.exists(full):
-            os.remove(full)
+        if full and full.exists():
+            full.unlink()
         raise
     finally:
         if out:
