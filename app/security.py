@@ -82,20 +82,37 @@ def verify_password(password: str, stored: str) -> bool:
     return False
 
 
-def generate_api_key() -> tuple[str, str, str]:
-    """Gera uma API key de tenant. Retorna (chave_completa, prefix, sha256).
+def _server_secret_bytes() -> bytes:
+    """Stable server-side secret used to protect high-entropy API keys at rest."""
+    secret = getattr(config, "JWT_SECRET", "") or getattr(config, "API_KEY", "")
+    if not secret:
+        raise RuntimeError("JWT_SECRET or API_KEY must be configured for API key hashing.")
+    return secret.encode("utf-8")
 
-    The full key is displayed only once; the database stores prefix + hash.
+
+def _hmac_sha256(value: str, *, purpose: str) -> str:
+    return hmac.new(
+        _server_secret_bytes(),
+        f"{purpose}:{value}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def generate_api_key() -> tuple[str, str, str]:
+    """Gera uma API key de tenant. Retorna (chave_completa, prefix, hmac_sha256).
+
+    The full key is displayed only once; the database stores prefix + keyed hash.
+    Existing SHA-256-only API keys must be regenerated after this hardening.
     """
     secret = secrets.token_urlsafe(32)
     full = f"tfk_{secret}"
     prefix = full[:12]
-    digest = hashlib.sha256(full.encode()).hexdigest()
+    digest = hash_api_key(full)
     return full, prefix, digest
 
 
-def hash_api_key(full_key: str) -> str:
-    return hashlib.sha256(full_key.encode()).hexdigest()
+def hash_api_key(api_key: str) -> str:
+    return f"hmac_sha256${_hmac_sha256(api_key, purpose='tenant-api-key')}"
 
 
 def generate_invite_token() -> tuple[str, str]:
