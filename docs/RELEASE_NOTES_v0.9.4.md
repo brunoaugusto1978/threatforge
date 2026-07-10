@@ -161,3 +161,7 @@ changed recently, and what still needs attention.
 - `GET /stats` is unchanged and still available; the Dashboard's Overview
   screen now calls `GET /dashboard/overview` instead.
 - `app.config.APP_VERSION` bumped to `0.9.4`.
+
+## Publication status
+
+Published as GitHub Release: https://github.com/brunoaugusto1978/threatforge/releases/tag/v0.9.4
