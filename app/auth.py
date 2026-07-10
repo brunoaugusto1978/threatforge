@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from app import config
 from app.database import get_db
 from app.models import ApiKey, OperatorTenantAccess, User, utcnow
-from app.security import decode_token, hash_api_key
+from app.security import decode_token, verify_api_key
 
 ROLE_RANK = {"viewer": 1, "analyst": 2, "admin": 3}
 
@@ -63,15 +63,18 @@ def _from_tenant_api_key(request: Request, db: Session) -> Principal | None:
     api_key = request.headers.get("X-API-Key")
     if not api_key:
         return None
-    digest = hash_api_key(api_key)
-    row = db.scalar(select(ApiKey).where(ApiKey.key_hash == digest, ApiKey.active == True))  # noqa: E712
+    prefix = api_key[:12]
+    rows = list(db.scalars(select(ApiKey).where(
+        ApiKey.prefix == prefix,
+        ApiKey.active == True,  # noqa: E712
+    )))
+    row = next((candidate for candidate in rows if verify_api_key(api_key, candidate.key_hash)), None)
     if row is None:
         return None
     row.last_used_at = utcnow()
     db.commit()
     return Principal(subject=f"apikey:{row.prefix}", role=row.role, kind="service",
                      is_operator=False, tenant_id=row.tenant_id)
-
 
 def _from_cookie(request: Request, db: Session) -> Principal | None:
     token = request.cookies.get(config.COOKIE_NAME)
