@@ -17,6 +17,29 @@ enrichment, real MISP/OpenCTI connector transport with encrypted secret vault
 and anti-SSRF validation, premium PDF/export, and Enterprise packaging with
 license activation.
 
+## [0.9.5] — Security Hardening
+
+### Security
+
+- Hardened GitHub Actions workflow permissions by restricting the default `GITHUB_TOKEN` to read-only repository contents.
+- Hardened tenant API key storage by replacing deterministic SHA-256 lookup with prefix-based verification against a slow hash.
+- Hardened evidence storage path handling with strict storage key validation, positive tenant/case identifiers, `Path.resolve()` containment checks, and `pathlib`-based file operations.
+- Resolved all open CodeQL alerts reported for workflow permissions, weak sensitive-data hashing, and evidence storage path handling.
+
+### Operational notes
+
+- Tenant API keys generated before this hardening must be regenerated.
+- User/password login, UI workflows, cases, exposure monitoring, credentials, integrations, and dashboard usage are not affected.
+- No database migration is required.
+
+### Validation
+
+- `python -m app.selftest_isolation` passed.
+- `python -m pytest -q` passed: 71 tests.
+- GitHub Actions CI passed on `main`.
+- GitHub CodeQL passed on `main` with no open alerts.
+
+
 ## [0.9.4] — Operational Dashboard Overview
 
 Replaces the old Dashboard, which only called `GET /stats` and rendered six
