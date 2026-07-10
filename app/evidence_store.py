@@ -4,8 +4,9 @@ storage_key é gerado pelo servidor (UUID); nunca usa o filename do usuário no 
 from __future__ import annotations
 
 import hashlib
-import os
+import re
 import uuid
+from pathlib import Path
 
 from app import config
 
@@ -46,8 +47,39 @@ def sniff_ok(declared: str, head: bytes) -> bool:
     return False
 
 
-def _full(storage_key: str) -> str:
-    return os.path.join(config.EVIDENCE_STORAGE_DIR, storage_key)
+_STORAGE_KEY_RE = re.compile(r"^[1-9][0-9]*/[1-9][0-9]*/[0-9a-f]{32}\\.bin$")
+
+
+def _positive_id(value: int, name: str) -> int:
+    if not isinstance(value, int) or value <= 0:
+        raise EvidenceConfigError(f"invalid {name}")
+    return value
+
+
+def _base_dir() -> Path:
+    base = Path(config.EVIDENCE_STORAGE_DIR).expanduser()
+    if not base.is_absolute():
+        base = Path.cwd() / base
+    return base.resolve()
+
+
+def _new_storage_key(tenant_id: int, case_id: int) -> str:
+    tid = _positive_id(tenant_id, "tenant_id")
+    cid = _positive_id(case_id, "case_id")
+    return f"{tid}/{cid}/{uuid.uuid4().hex}.bin"
+
+
+def _full(storage_key: str) -> Path:
+    if not isinstance(storage_key, str) or not _STORAGE_KEY_RE.fullmatch(storage_key):
+        raise EvidenceConfigError("invalid evidence storage key")
+
+    base = _base_dir()
+    full = (base / storage_key).resolve()
+    try:
+        full.relative_to(base)
+    except ValueError as exc:
+        raise EvidenceConfigError("invalid evidence storage path") from exc
+    return full
 
 
 def save_stream(upload, tenant_id: int, case_id: int) -> dict:
@@ -62,10 +94,10 @@ def save_stream(upload, tenant_id: int, case_id: int) -> dict:
     out = None
     full = None
     if backend == "local":
-        storage_key = f"{tenant_id}/{case_id}/{uuid.uuid4().hex}.bin"
+        storage_key = _new_storage_key(tenant_id, case_id)
         full = _full(storage_key)
-        os.makedirs(os.path.dirname(full), exist_ok=True)
-        out = open(full, "wb")
+        full.parent.mkdir(parents=True, exist_ok=True)
+        out = full.open("wb")
     try:
         while True:
             chunk = upload.file.read(1024 * 1024)
@@ -92,7 +124,7 @@ def save_stream(upload, tenant_id: int, case_id: int) -> dict:
 
 
 def path_for(storage_key: str) -> str:
-    return _full(storage_key)
+    return str(_full(storage_key))
 
 
 def delete_key(storage_key: str | None) -> None:
@@ -100,7 +132,7 @@ def delete_key(storage_key: str | None) -> None:
         return
     full = _full(storage_key)
     try:
-        if os.path.exists(full):
-            os.remove(full)
+        if full.exists():
+            full.unlink()
     except OSError:
         pass
