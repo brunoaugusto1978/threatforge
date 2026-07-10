@@ -17,6 +17,80 @@ enrichment, real MISP/OpenCTI connector transport with encrypted secret vault
 and anti-SSRF validation, premium PDF/export, and Enterprise packaging with
 license activation.
 
+## [0.9.4] — Operational Dashboard Overview
+
+Replaces the old Dashboard, which only called `GET /stats` and rendered six
+basic counters, with a real operational overview of CTI/DRP/Exposure
+Monitoring state. Every number, distribution, list and status shown is
+computed live from the tenant's own rows — nothing mocked, nothing sampled.
+
+### Added
+- **`GET /dashboard/overview`** (`app/routers/dashboard_routes.py`) — new
+  tenant-scoped, viewer+ endpoint (same RBAC as `GET /stats`) that aggregates,
+  in a single response:
+  - **Summary counters** across IOCs (`Observable`), brands (`Brand`), brand
+    findings (`BrandFinding`), investigation cases (`InvestigationCase`),
+    exposure findings (`ExposureFinding`), monitored assets
+    (`MonitoredAsset`), credential identities (`CredentialIdentity`) and
+    integration connections (`IntegrationConnection`).
+  - **Distributions** of cases by severity/status and exposure findings by
+    severity/status, pre-seeded with every known bucket at `0` so the shape
+    never changes between an empty and a populated tenant.
+  - **Recent cases** and **recent exposure findings** (most recent first,
+    configurable `recent_limit`, default 5, max 20).
+  - **Top exposed assets** — monitored assets ranked by the number of linked
+    exposure findings, then by highest risk score (`risk.band_of`), for a
+    quick "what needs attention" view (`top_assets_limit`, default 5, max 20).
+  - **Integrations status** — per catalog connector (`misp`/`opencti`/
+    `generic`), whether the Enterprise feature is licensed and whether a
+    connection has been saved for the tenant. Reduced to
+    `{name, title, premium, license_enabled, connected, connection_enabled}`.
+    The connection query is **column-scoped**
+    (`select(IntegrationConnection.name, IntegrationConnection.enabled)`) —
+    `config_json`/`secrets_metadata` are never fetched from the database into
+    this request at all, not just excluded from the response.
+  - **Recent imports** (`recent_ingests`, `summary.exposure_ingests_total`) —
+    the most recent `ExposureIngestBatch` rows (source, parser, filename,
+    record/created/deduped/error counts, status), giving the same import
+    provenance visible under `GET /exposure/ingests` a place on the overview.
+  - No new migration: every field is computed with `SELECT`/`COUNT`/
+    `GROUP BY` over existing tables. No audit log entry is written (mirrors
+    the read-only, frequently-polled `GET /stats`).
+- **New Overview screen** (`app/static/app.js`, `app/static/index.html`) —
+  `viewDashboard()` now renders summary cards, severity/status distribution
+  bars, recent cases/findings tables, a top-exposed-assets table and an
+  integrations status table, all built from `GET /dashboard/overview`.
+  Clicking a case/finding/asset/integration row navigates to the relevant
+  tab via the existing `data-action` click-delegation dispatcher — no inline
+  `onclick=` handlers, consistent with the app's CSP (`script-src 'self'`).
+  Minor CSS additions only (`.dashgrid`, `.distlist`/`.dist-row`/`.dist-bar`).
+
+### Security
+- **Top exposed assets never return `MonitoredAsset.value`** (which can hold
+  PII such as an e-mail/identity) — only the operator-assigned `label`,
+  `asset_type`, `criticality` and the aggregated finding count/risk.
+- **Integration status never reads `config_json`/`secrets_metadata`** —
+  column-scoped `SELECT` (name/enabled only) plus a reduced response shape,
+  matching the "no secrets in the response" invariant already enforced by
+  `app/routers/integrations_routes.py`.
+- **`recent_exposure_findings[].title` masking.** Some ingestion paths in
+  `app/exposure_ingest.py` (e.g. `parse_csv_generic`, `parse_combolist`,
+  `parse_breach`, `parse_stealer_log` via `_rec_credential`) title a
+  `credential_exposure`/`identity_exposure` finding `"Credential exposure
+  <email>"` / `"Identity exposure <email>"`. The dashboard now runs every
+  title through the same `app.exposure_ingest.mask_value` +
+  `config.EXPOSURE_PII_MASKING` policy already used for the `detail` dict on
+  `GET /exposure/findings`, so a non-admin caller under `by_role` masking
+  never sees the raw e-mail on the overview screen either.
+- Covered by `tests/test_dashboard_overview.py`: tenant isolation, viewer+
+  RBAC (401 unauthenticated), real-data aggregation (including the empty-
+  tenant "everything is really 0" case), ranking order of top exposed
+  assets, real `recent_ingests` from an actual `POST /exposure/import`, the
+  title-masking behavior for a viewer vs. an admin under `by_role` policy,
+  and an explicit scan for `config_json`/`secrets_metadata`/`api_key`/
+  `hashed_password`/`password_hash` anywhere in the response even after a
+  licensed integration is configured with a real secret value.
+
 ## [0.9.3] — Real Integration Configuration UI
 
 Small UX release on top of `0.9.2`. Focus: fix the misleading

@@ -612,20 +612,149 @@ function navigate(view) {
 
 async function viewDashboard() {
   const m = $("#main");
-  m.innerHTML = `<h2 class="title">Overview</h2><div class="cards" id="cards">loading…</div>`;
+  m.innerHTML = `<h2 class="title">Overview</h2><div id="dashBody">loading…</div>`;
   try {
-    const s = await api("GET", "/stats");
-    $("#cards").innerHTML = `
-      ${cardHtml(s.observables, "Registered IOCs")}
-      ${cardHtml(s.observables_malicious, "Malicious IOCs", true)}
-      ${cardHtml(s.brands, "Monitored brands")}
-      ${cardHtml(s.findings, "Brand findings")}
-      ${cardHtml(s.findings_priority, "Priority findings", true)}
-      ${cardHtml(s.users, "Users")}`;
-  } catch (e) { $("#cards").textContent = e.message; }
+    const o = await api("GET", "/dashboard/overview");
+    $("#dashBody").innerHTML = renderDashboard(o);
+  } catch (e) { $("#dashBody").textContent = e.message; }
 }
 function cardHtml(n, label, alert = false) {
   return `<div class="card ${alert ? "alert" : ""}"><div class="n">${esc(n)}</div><div class="l">${esc(label)}</div></div>`;
+}
+
+// ---- Overview: real-data aggregation from GET /dashboard/overview ----
+const _DASH_CASE_SEV_ORDER = ["critico", "alto", "medio", "baixo"];
+const _DASH_CASE_STATUS_ORDER = ["open", "triage", "investigating", "contained", "closed", "false_positive"];
+const _DASH_EXP_SEV_ORDER = ["critical", "high", "medium", "low"];
+const _DASH_EXP_STATUS_ORDER = ["new", "triaging", "confirmed", "mitigated", "closed", "false_positive", "duplicate"];
+
+function renderDashboard(o) {
+  const s = o.summary || {};
+  const cards = [
+    cardHtml(s.iocs_total, "IOCs"),
+    cardHtml(s.iocs_malicious, "Malicious IOCs", s.iocs_malicious > 0),
+    cardHtml(s.brands_active, "Active brands"),
+    cardHtml(s.brand_findings_priority, "Priority brand findings", s.brand_findings_priority > 0),
+    cardHtml(s.cases_open, "Open cases", s.cases_open > 0),
+    cardHtml(s.exposure_findings_open, "Open exposure findings", s.exposure_findings_open > 0),
+    cardHtml(s.monitored_assets_active, "Active monitored assets"),
+    cardHtml(s.credential_identities_high_risk, "High-risk credential identities", s.credential_identities_high_risk > 0),
+    cardHtml(s.integrations_connected, "Integrations connected"),
+    cardHtml(s.exposure_ingests_total, "Imports processed"),
+  ].join("");
+
+  const gen = (o.generated_at || "").slice(0, 19).replace("T", " ");
+  return `
+    <div class="cards" style="margin-bottom:18px">${cards}</div>
+    <div class="dashgrid">
+      <div class="panel"><h3 style="margin-top:0">Cases by severity</h3>${distList(o.cases_by_severity, _DASH_CASE_SEV_ORDER, SEV_COLOR, severityLabel)}</div>
+      <div class="panel"><h3 style="margin-top:0">Cases by status</h3>${distList(o.cases_by_status, _DASH_CASE_STATUS_ORDER, {}, null)}</div>
+      <div class="panel"><h3 style="margin-top:0">Exposure findings by severity</h3>${distList(o.exposure_by_severity, _DASH_EXP_SEV_ORDER, _SEV_COLOR, null)}</div>
+      <div class="panel"><h3 style="margin-top:0">Exposure findings by status</h3>${distList(o.exposure_by_status, _DASH_EXP_STATUS_ORDER, _STATUS_COLOR, null)}</div>
+    </div>
+    <div class="dashgrid">
+      <div class="panel"><h3 style="margin-top:0">Recent cases</h3>${dashRecentCases(o.recent_cases)}</div>
+      <div class="panel"><h3 style="margin-top:0">Recent exposure findings</h3>${dashRecentFindings(o.recent_exposure_findings)}</div>
+    </div>
+    <div class="dashgrid">
+      <div class="panel"><h3 style="margin-top:0">Top exposed assets</h3>${dashTopAssets(o.top_exposed_assets)}</div>
+      <div class="panel"><h3 style="margin-top:0">Integrations status</h3>${dashIntegrationsStatus(o.integrations)}</div>
+    </div>
+    <div class="panel"><h3 style="margin-top:0">Recent imports</h3>${dashRecentIngests(o.recent_ingests)}</div>
+    <p class="muted" style="font-size:11px;margin-top:6px">Generated at ${esc(gen)} UTC · tenant #${esc(o.tenant_id)}</p>`;
+}
+
+function distList(counts, order, colorMap, labelFn) {
+  counts = counts || {};
+  colorMap = colorMap || {};
+  const total = order.reduce((a, k) => a + (counts[k] || 0), 0) || 1;
+  const rows = order.map(k => {
+    const n = counts[k] || 0;
+    const pct = Math.round((n / total) * 100);
+    const label = labelFn ? labelFn(k) : k;
+    const color = colorMap[k] || "var(--muted)";
+    return `<div class="dist-row">
+      <span class="dist-label">${esc(label)}</span>
+      <div class="dist-bar"><i style="width:${pct}%;background:${color}"></i></div>
+      <span class="dist-n">${esc(n)}</span>
+    </div>`;
+  }).join("");
+  return `<div class="distlist">${rows}</div>`;
+}
+
+function dashRecentCases(items) {
+  if (!items || !items.length) return '<p class="muted">No cases yet.</p>';
+  const rows = items.map(c => `
+    <tr>
+      <td>#${esc(c.id)}</td>
+      <td><b>${esc(c.title)}</b></td>
+      <td><span style="color:${SEV_COLOR[c.severity] || "var(--muted)"}">${esc(severityLabel(c.severity))}</span></td>
+      <td class="muted">${esc(c.status)}</td>
+      <td class="muted">${esc((c.created_at || "").slice(0, 16).replace("T", " "))}</td>
+      <td>${actBtn("dashCaseView", c.id, "View")}</td>
+    </tr>`).join("");
+  return `<table><thead><tr><th>ID</th><th>Title</th><th>Severity</th><th>Status</th><th>Created</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function dashRecentFindings(items) {
+  if (!items || !items.length) return '<p class="muted">No exposure findings yet.</p>';
+  const rows = items.map(f => `
+    <tr>
+      <td>#${esc(f.id)}</td>
+      <td class="muted">${esc(f.exposure_type)}</td>
+      <td><b>${esc(f.title)}</b></td>
+      <td>${sevBadge(f.severity)}</td>
+      <td>${statusBadge(f.status)}</td>
+      <td>${esc(f.risk_score)} <span class="muted" style="font-size:11px">${esc((f.risk_band || "").toUpperCase())}</span></td>
+      <td class="muted">${esc(f.source)}</td>
+      <td class="muted">${esc((f.created_at || "").slice(0, 16).replace("T", " "))}</td>
+      <td>${actBtn("dashFindingView", f.id, "View")}</td>
+    </tr>`).join("");
+  return `<table><thead><tr><th>ID</th><th>Type</th><th>Title</th><th>Severity</th><th>Status</th><th>Risk</th><th>Source</th><th>Created</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function dashTopAssets(items) {
+  if (!items || !items.length) return '<p class="muted">No exposed assets yet.</p>';
+  const rows = items.map(a => `
+    <tr>
+      <td><b>${esc(a.label)}</b></td>
+      <td class="muted">${esc(a.asset_type)}</td>
+      <td class="muted">${esc(a.criticality)}</td>
+      <td>${esc(a.finding_count)}</td>
+      <td>${esc(a.max_risk_score)} <span class="muted" style="font-size:11px">${esc((a.max_risk_band || "").toUpperCase())}</span></td>
+      <td>${actBtn("dashAssetView", a.id, "View")}</td>
+    </tr>`).join("");
+  return `<table><thead><tr><th>Asset</th><th>Type</th><th>Criticality</th><th>Findings</th><th>Max risk</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function dashRecentIngests(items) {
+  if (!items || !items.length) return '<p class="muted">No imports yet.</p>';
+  const rows = items.map(b => `
+    <tr>
+      <td>#${esc(b.id)}</td>
+      <td class="muted">${esc(b.source)}</td>
+      <td class="muted">${esc(b.parser)}</td>
+      <td class="muted">${esc(b.original_filename || "—")}</td>
+      <td>${esc(b.record_count)}</td>
+      <td>${esc(b.created_count)}</td>
+      <td>${esc(b.deduped_count)}</td>
+      <td>${esc(b.error_count)}</td>
+      <td class="muted">${esc(b.status)}</td>
+      <td class="muted">${esc((b.created_at || "").slice(0, 16).replace("T", " "))}</td>
+    </tr>`).join("");
+  return `<table><thead><tr><th>ID</th><th>Source</th><th>Parser</th><th>File</th><th>Records</th><th>Created</th><th>Deduped</th><th>Errors</th><th>Status</th><th>When</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function dashIntegrationsStatus(items) {
+  if (!items || !items.length) return '<p class="muted">No integrations in the catalog.</p>';
+  const rows = items.map(it => `
+    <tr>
+      <td><b>${esc(it.title)}</b>${it.premium ? ' <span class="muted" style="font-size:11px">(Enterprise)</span>' : ""}</td>
+      <td>${it.license_enabled ? _pill("enabled", "#2e7d32", "#fff") : _pill("locked", "#555", "#fff")}</td>
+      <td>${it.connected ? (it.connection_enabled ? _pill("connected", "#2e7d32", "#fff") : _pill("saved (disabled)", "#b8860b", "#fff")) : _pill("not connected", "#555", "#fff")}</td>
+    </tr>`).join("");
+  return `<table><thead><tr><th>Integration</th><th>License</th><th>Connection</th></tr></thead><tbody>${rows}</tbody></table>
+    <div style="margin-top:10px"><button class="sm ghost" data-action="dashGotoIntegrations">Manage integrations</button></div>`;
 }
 
 // ---- IOCs ----
@@ -1564,6 +1693,10 @@ const ACTIONS = {
   tlFilter: (_id, btn) => tlSourceFilter(btn.dataset.name),
   credDossier: (_id, btn) => credDossier(btn.dataset.hash),
   credCase: (_id, btn) => credCase(btn.dataset.hash),
+  dashCaseView: (id) => { navigate("cases"); setTimeout(() => caseDetail(id), 50); },
+  dashFindingView: () => { EXPOSURE_TAB = "findings"; navigate("exposure"); },
+  dashAssetView: () => { EXPOSURE_TAB = "assets"; navigate("exposure"); },
+  dashGotoIntegrations: () => navigate("integrations"),
 };
 document.addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-action]");
