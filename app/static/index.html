@@ -89,6 +89,15 @@
   .card .n { font-size: 30px; font-weight: 700; }
   .card .l { color: var(--muted); font-size: 12px; margin-top: 4px; }
   .card.alert .n { color: var(--orange); }
+  /* Dashboard Overview (v0.9.4) */
+  .dashgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+  .dashgrid .panel { margin-bottom: 0; }
+  .distlist { display: flex; flex-direction: column; gap: 8px; }
+  .dist-row { display: grid; grid-template-columns: 110px 1fr 34px; gap: 10px; align-items: center; }
+  .dist-label { font-size: 12px; color: var(--muted); text-transform: capitalize; }
+  .dist-bar { height: 8px; border-radius: 4px; background: var(--panel2); overflow: hidden; }
+  .dist-bar > i { display: block; height: 100%; }
+  .dist-n { font-size: 12px; text-align: right; }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
     padding: 16px 18px; margin-bottom: 18px; }
   .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
