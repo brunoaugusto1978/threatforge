@@ -6,11 +6,10 @@ ThreatForge is an open source platform for Cyber Threat Intelligence, Digital Ri
 
 ## Release status
 
-**Current release: v0.9.0 — Community Preview** (first public Community release,
-AGPL-3.0-or-later). This is a preview, not 1.0: feature-rich and internally
-tested, but schema/API/UI may still change before a stable 1.0.
+**Current release: v0.10.0 — Community Preview** (AGPL-3.0-or-later).
+This is a preview, not 1.0: feature-rich and tested, but schema/API/UI may still evolve before a stable 1.0.
 
-- Release notes: [`docs/RELEASE_NOTES_v0.9.0.md`](docs/RELEASE_NOTES_v0.9.0.md)
+- Release notes: [`docs/RELEASE_NOTES_v0.10.0.md`](docs/RELEASE_NOTES_v0.10.0.md)
 - Changelog: [`CHANGELOG.md`](CHANGELOG.md)
 - Roadmap (Community × Enterprise): [`ROADMAP.md`](ROADMAP.md)
 - Governance & maintainer: [`GOVERNANCE.md`](GOVERNANCE.md)
@@ -60,6 +59,21 @@ See [Product Strategy](PRODUCT_STRATEGY.md).
 - **Platform roles** — `platform_admin`, `support_operator` and `support_viewer`.
 - **Audit logs** — sensitive actions logged with user, operator, tenant, IP and user-agent context.
 - **Web hardening** — CSP, security headers, login rate limiting and generic authentication errors.
+
+
+### Exposure, Surface and Credential Intelligence
+
+- **Exposure Monitoring** — monitored assets, findings, manual/authorized intake, deduplication and server-side redaction.
+- **Attack Surface Discovery** — passive discovery and manual import for subdomains, IPs and certificates.
+- **Credential Intelligence** — identity rollup, password-reuse grouping and VIP credential leak handling.
+- **Operational Dashboard** — tenant-scoped overview for cases, exposure findings, monitored assets and operational activity.
+
+### Investigation Cases and Review Workflow
+
+- **Investigation cases** — manage findings through cases with severity, status, assignee and audit trail.
+- **Evidence and notes** — attach evidence metadata, preserve SHA-256 hashes and add internal notes.
+- **Operational review history** — append-only case reviews through `GET /cases/{case_id}/reviews` and `POST /cases/{case_id}/reviews`.
+
 
 ### Multi-Tenant Architecture
 
@@ -147,10 +161,10 @@ Validate the installation:
 curl http://localhost:8000/health
 ```
 
-Expected response (version tracks the current release, e.g. `0.9.1`):
+Expected response (version tracks the current release, e.g. `0.10.0`):
 
 ```json
-{"status":"ok","service":"threatforge","version":"0.9.1"}
+{"status":"ok","service":"threatforge","version":"0.10.0"}
 ```
 
 The API and UI will be available at:
@@ -554,7 +568,7 @@ ThreatForge Enterprise is planned as a private/commercial edition focused on:
 - license management;
 - 90-day trial;
 - professional PDF reports;
-- case management;
+- advanced case workflow, SLA/queue, approvals and analyst handoff;
 - investigation graph;
 - enterprise integrations;
 - advanced MSSP mode;
@@ -615,7 +629,7 @@ Future work is tracked in the canonical roadmap:
 
 - [ROADMAP.md](ROADMAP.md) — Community × Enterprise roadmap
 - [CHANGELOG.md](CHANGELOG.md) — completed milestones
-- [docs/RELEASE_NOTES_v0.9.0.md](docs/RELEASE_NOTES_v0.9.0.md) — current public preview release notes
+- [docs/RELEASE_NOTES_v0.10.0.md](docs/RELEASE_NOTES_v0.10.0.md) — current public preview release notes
 
 ## License
 
@@ -649,7 +663,7 @@ and activating a license (see [`docs/ENTERPRISE_INSTALL.md`](docs/ENTERPRISE_INS
 | Attack Surface Discovery (passive, manual import) | Yes | Yes |
 | Credential Intelligence (identity rollup, password-reuse, VIP hits) — local intake | Yes | Yes |
 | Risk score, Timeline, Correlation engine + graph view | Yes | Yes |
-| Investigation cases, evidence, notes | Yes | Yes |
+| Investigation cases, evidence, notes, operational review history | Yes | Yes |
 | Markdown / JSON export, partial STIX 2.1 export | Yes | Yes |
 | PDF export (cases, credential dossiers) — `export.pdf` | Locked (402) | Yes |
 | MISP / OpenCTI / generic integrations — `integration.*` | Catalog + stubs (402) | Yes |
