@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.0] — Operational Review Workflow
+
+### Added
+- Added append-only operational review history for investigation cases.
+- Added `case_reviews` model and Alembic migration.
+- Added `GET /cases/{case_id}/reviews` for viewer+ users.
+- Added `POST /cases/{case_id}/reviews` for analyst+ users.
+- Added audit event `case.review_added`.
+- Added focused tests for RBAC, tenant isolation, review history and audit.
+
+### Validation
+- `python -m pytest -q` — 74 passed, 1 warning.
+- `python -m app.selftest_isolation` — ALL TESTS PASSED.
+
+
 All notable changes to ThreatForge Community are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
