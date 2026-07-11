@@ -397,6 +397,37 @@ class CaseNote(Base):
         DateTime(timezone=True), default=utcnow, index=True)
 
 
+
+class CaseReview(Base):
+    """Histórico append-only de revisão operacional de um Investigation Case."""
+    __tablename__ = "case_reviews"
+    __table_args__ = (
+        CheckConstraint(
+            "review_status IN ('not_reviewed','in_review','needs_changes','approved','rejected')",
+            name="ck_case_review_status"),
+        Index("ix_case_reviews_tenant", "tenant_id"),
+        Index("ix_case_reviews_case", "case_id"),
+        Index("ix_case_reviews_status", "review_status"),
+        Index("ix_case_reviews_reviewer", "reviewer_user_id"),
+        Index("ix_case_reviews_created", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
+    case_id: Mapped[int] = mapped_column(
+        ForeignKey("investigation_cases.id", ondelete="CASCADE"), index=True)
+    review_status: Mapped[str] = mapped_column(String(30), default="in_review", index=True)
+    reviewer_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class CaseEvidence(Base):
     """Anexo de evidência (append-only / cadeia de custódia). Hash calculado no servidor."""
     __tablename__ = "case_evidence"

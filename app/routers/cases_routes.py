@@ -15,13 +15,14 @@ from sqlalchemy.orm import Session
 from app import audit, config, evidence_store, exporters, features
 from app.auth import Principal, current_tenant_id, require_analyst, require_viewer
 from app.database import get_db
-from app.models import Brand, BrandFinding, CaseEvidence, CaseNote, InvestigationCase, User, utcnow
-from app.schemas import CaseCreate, CaseOut, CaseUpdate, EvidenceOut, NoteCreate, NoteOut
+from app.models import Brand, BrandFinding, CaseEvidence, CaseNote, CaseReview, InvestigationCase, User, utcnow
+from app.schemas import CaseCreate, CaseOut, CaseReviewCreate, CaseReviewOut, CaseUpdate, EvidenceOut, NoteCreate, NoteOut
 
 router = APIRouter(prefix="/cases", tags=["cases"], dependencies=[Depends(require_viewer)])
 
 ACTIVE = {"open", "triage", "investigating", "contained"}
 TERMINAL = {"closed", "false_positive"}
+_REVIEWED_STATUSES = {"needs_changes", "approved", "rejected"}
 _VERDICT_SEVERITY = {"malicious": "alto", "suspicious": "medio",
                      "low": "baixo", "no_known_threat": "baixo", "info": "baixo"}
 
@@ -225,6 +226,50 @@ def list_notes(case_id: int, db: Session = Depends(get_db),
     return [NoteOut.model_validate(n).model_dump() for n in rows]
 
 
+
+
+
+@router.post("/{case_id}/reviews", status_code=201, dependencies=[Depends(require_analyst)])
+def add_review(case_id: int, payload: CaseReviewCreate, request: Request,
+               db: Session = Depends(get_db),
+               principal: Principal = Depends(require_analyst),
+               tid: int = Depends(current_tenant_id)):
+    """Adiciona uma revisão operacional append-only ao case."""
+    case = _owned_case(db, case_id, tid)
+    reviewed_at = utcnow() if payload.review_status in _REVIEWED_STATUSES else None
+    review = CaseReview(
+        tenant_id=tid,
+        case_id=case.id,
+        review_status=payload.review_status,
+        reviewer_user_id=principal.user_id,
+        created_by_user_id=principal.user_id,
+        notes=payload.notes,
+        reviewed_at=reviewed_at,
+    )
+    case.updated_at = utcnow()
+    db.add(review)
+    db.commit()
+    db.refresh(review)
+    _audit(db, principal, tid, request, "case.review_added", case.id, {
+        "review_id": review.id,
+        "review_status": review.review_status,
+        "reviewer_user_id": review.reviewer_user_id,
+        "reviewed_at": review.reviewed_at.isoformat() if review.reviewed_at else None,
+        "notes_length": len(payload.notes or ""),
+    })
+    return CaseReviewOut.model_validate(review).model_dump()
+
+
+@router.get("/{case_id}/reviews", dependencies=[Depends(require_viewer)])
+def list_reviews(case_id: int, db: Session = Depends(get_db),
+                 tid: int = Depends(current_tenant_id)):
+    """Lista o histórico de revisão operacional do case."""
+    _owned_case(db, case_id, tid)
+    rows = db.scalars(select(CaseReview).where(
+        CaseReview.tenant_id == tid,
+        CaseReview.case_id == case_id)
+        .order_by(CaseReview.created_at.asc(), CaseReview.id.asc()))
+    return [CaseReviewOut.model_validate(r).model_dump() for r in rows]
 
 
 def _evidence_out(e: CaseEvidence) -> dict:

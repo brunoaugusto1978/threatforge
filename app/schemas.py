@@ -710,6 +710,42 @@ class NoteOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+
+# --- Case reviews ---
+ReviewStatus = Literal["not_reviewed", "in_review", "needs_changes", "approved", "rejected"]
+
+
+class CaseReviewCreate(BaseModel):
+    review_status: ReviewStatus = "in_review"
+    notes: str | None = None
+
+    @field_validator("notes")
+    @classmethod
+    def _notes_ok(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        v = v.strip()
+        if not v:
+            return None
+        if len(v) > 10000:
+            raise ValueError("review notes too long (max 10000 chars)")
+        return v
+
+
+class CaseReviewOut(BaseModel):
+    id: int
+    tenant_id: int
+    case_id: int
+    review_status: str
+    reviewer_user_id: int | None
+    created_by_user_id: int | None
+    notes: str | None
+    created_at: datetime
+    reviewed_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
 # --- Evidence ---
 class EvidenceOut(BaseModel):
     id: int
