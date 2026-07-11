@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.1] — Case Reviews Migration Hotfix
+
+### Fixed
+
+- Hardened the `20260711_01_case_reviews` Alembic migration for clean installs and existing POC databases where `case_reviews` may already exist before Alembic is stamped.
+- Avoided duplicate index creation when equivalent model-created indexes already exist.
+- Added focused migration tests for clean database creation and existing-table upgrade behavior.
+
 ## [0.10.0] — Operational Review Workflow
 
 ### Added
