@@ -565,4 +565,4 @@ Community, not as a Community dependency.
 - Neo4j Community Edition vs. Enterprise Edition licensing:
   [neo4j.com/open-core-and-neo4j](https://neo4j.com/open-core-and-neo4j/),
   [Neo4j Legal Center](https://legal.neo4j.com/).
-- Neo4j Python driver (`neo4j` package, `neo4j-driver`
+- Neo4j Python driver: optional future dependency to be evaluated before implementation.
