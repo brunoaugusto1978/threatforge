@@ -623,8 +623,8 @@ See [Public Readiness Check](docs/PUBLIC_READINESS_CHECK.md).
 
 ## Roadmap
 
-ThreatForge Community is currently at **v0.9.0 Community Preview**.
-The historical v0.7/v0.8/v0.9 milestones have already landed on `main`.
+ThreatForge Community is currently at **v0.10.0 Community Preview**.
+The historical v0.7/v0.8/v0.9 milestones and the first v0.10 operational review workflow backend slice have already landed on `main`.
 Future work is tracked in the canonical roadmap:
 
 - [ROADMAP.md](ROADMAP.md) — Community × Enterprise roadmap
