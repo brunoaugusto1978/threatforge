@@ -76,7 +76,8 @@ def test_get_enterprise_status_handles_integration_error(monkeypatch):
     assert status["available"] is True
     assert status["valid"] is False
     assert status["reason"] == "enterprise_integration_error"
-    assert "Enterprise integration failed:" in status["message"]
+    assert status["message"] == "Enterprise integration failed."
+    assert "boom" not in status["message"]
 
 
 def test_is_enterprise_feature_enabled_returns_false_when_package_is_missing(monkeypatch):
@@ -145,3 +146,40 @@ def test_generate_enterprise_pdf_report_calls_enterprise_integration(monkeypatch
     )
 
     assert output == str(tmp_path / "report.pdf")
+
+
+def test_status_propagates_dates_versions_and_core_compatibility(monkeypatch):
+    seen = {}
+
+    def summary(*, core_version):
+        seen["core_version"] = core_version
+        return SimpleNamespace(
+            valid=True,
+            reason=None,
+            plan="enterprise",
+            license_type="trial_90_days",
+            license_id="lic_cbg_poc_2026",
+            customer="CBG Assessoria e Consultoria",
+            trial=True,
+            issued_at="2026-07-18T16:18:39Z",
+            expires_at="2026-10-16T16:18:39Z",
+            features=["collection.telegram"],
+            limits={"max_tenants": 5},
+            entitlements={"valid": True},
+            enterprise_version="0.11.0",
+            core_compatibility=">=0.11.0,<0.12.0",
+            compatible=True,
+        )
+
+    monkeypatch.setattr(
+        adapter,
+        "import_module",
+        lambda _name: SimpleNamespace(get_enterprise_license_summary=summary),
+    )
+    status = adapter.get_enterprise_status()
+    assert seen["core_version"] == "0.11.0"
+    assert status["issued_at"] == "2026-07-18T16:18:39Z"
+    assert status["expires_at"] == "2026-10-16T16:18:39Z"
+    assert status["enterprise_version"] == "0.11.0"
+    assert status["core_compatibility"] == ">=0.11.0,<0.12.0"
+    assert status["core_compatible"] is True

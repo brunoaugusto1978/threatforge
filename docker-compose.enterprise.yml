@@ -14,7 +14,33 @@ services:
       THREATFORGE_ENTERPRISE_PUBLIC_KEY_FILE: /run/secrets/threatforge-license-public.pem
       THREATFORGE_ENTERPRISE_LICENSE_KEY_ID: ${THREATFORGE_ENTERPRISE_LICENSE_KEY_ID}
       THREATFORGE_ENTERPRISE_INSTALLATION_ID: ${THREATFORGE_ENTERPRISE_INSTALLATION_ID}
+      THREATFORGE_SECRET_DIR: /run/secrets
 
     volumes:
       - ${THREATFORGE_ENTERPRISE_LICENSE_HOST_FILE}:/run/secrets/threatforge-license.json:ro
       - ${THREATFORGE_ENTERPRISE_PUBLIC_KEY_HOST_FILE}:/run/secrets/threatforge-license-public.pem:ro
+      - ${THREATFORGE_TELEGRAM_COLLECTION_BOT_TOKEN_HOST_FILE:-/dev/null}:/run/secrets/telegram-collection-bot-token:ro
+
+  collector:
+    profiles: ["telegram-collector"]
+    image: threatforge-enterprise-api:0.11.0-local
+    command: ["python", "-m", "app.collection.worker"]
+    environment:
+      DATABASE_URL: postgresql+psycopg2://threatforge:${POSTGRES_PASSWORD}@db:5432/threatforge
+      THREATFORGE_EDITION: enterprise
+      THREATFORGE_ENTERPRISE_LICENSE_FILE: /run/secrets/threatforge-license.json
+      THREATFORGE_ENTERPRISE_PUBLIC_KEY_FILE: /run/secrets/threatforge-license-public.pem
+      THREATFORGE_ENTERPRISE_LICENSE_KEY_ID: ${THREATFORGE_ENTERPRISE_LICENSE_KEY_ID}
+      THREATFORGE_ENTERPRISE_INSTALLATION_ID: ${THREATFORGE_ENTERPRISE_INSTALLATION_ID}
+      THREATFORGE_SECRET_DIR: /run/secrets
+      THREATFORGE_COLLECTION_WORKER_ENABLED: ${THREATFORGE_COLLECTION_WORKER_ENABLED:-false}
+      THREATFORGE_COLLECTION_POLL_INTERVAL: ${THREATFORGE_COLLECTION_POLL_INTERVAL:-15}
+    volumes:
+      - evidence_data:/data/evidence
+      - ${THREATFORGE_ENTERPRISE_LICENSE_HOST_FILE}:/run/secrets/threatforge-license.json:ro
+      - ${THREATFORGE_ENTERPRISE_PUBLIC_KEY_HOST_FILE}:/run/secrets/threatforge-license-public.pem:ro
+      - ${THREATFORGE_TELEGRAM_COLLECTION_BOT_TOKEN_HOST_FILE:-/dev/null}:/run/secrets/telegram-collection-bot-token:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: on-failure:5

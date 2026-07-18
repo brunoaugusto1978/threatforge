@@ -93,22 +93,30 @@ def _require_registered_alert_channel(channel_type: str) -> str:
 # --------------------------------------------------------------------------- #
 def create_connection(
     db: Session, *, tenant_id: int, provider: str, name: str,
-    payload: dict | None = None, actor: str | None = None,
+    payload: dict | None = None, secret_refs: dict[str, str] | None = None,
+    actor: str | None = None,
 ) -> CollectionConnection:
-    """Create a connection. Starts disabled (#1); secrets never persisted (#3).
+    """Create a disabled connection without persisting cleartext secrets.
 
-    The provider must be registered in the provider registry (C10). The opaque
-    Secret Resolver references are persisted in ``secret_refs`` (C3).
+    ``payload`` is fail-closed through the provider schema.  ``secret_refs`` is
+    the preferred Phase 2A path: callers submit only validated opaque Secret
+    Resolver references such as ``secretref://env/THREATFORGE_...``.
     """
     provider = _require_registered_provider(provider)
     split = secret_resolver.classify_payload(payload or {}, provider=provider)
     refs = secret_resolver.persist_secrets(tenant_id, f"connection:{name}", split)
+    metadata = dict(split.secrets_metadata)
+    for raw_name, raw_ref in (secret_refs or {}).items():
+        key = str(raw_name).strip().lower()
+        ref = secret_resolver.validate_opaque_ref(raw_ref)
+        refs[key] = ref
+        metadata[key] = {"present": True, "kind": "opaque_ref", "masked": "***"}
     conn = CollectionConnection(
         tenant_id=tenant_id, provider=provider, name=name,
         enabled=False, status="pending",
         config_json=split.config_json,
         secret_refs=refs,
-        secrets_metadata=split.secrets_metadata,
+        secrets_metadata=metadata,
         created_by=actor,
     )
     db.add(conn)
@@ -184,6 +192,54 @@ def soft_delete_connection(db: Session, *, tenant_id: int, connection_id: int,
     return conn
 
 
+def get_connection(db: Session, *, tenant_id: int, connection_id: int) -> CollectionConnection:
+    return _get_connection(db, tenant_id, connection_id)
+
+
+def list_connections(db: Session, *, tenant_id: int, provider: str | None = None) -> list[CollectionConnection]:
+    stmt = select(CollectionConnection).where(
+        CollectionConnection.tenant_id == tenant_id,
+        CollectionConnection.deleted_at.is_(None),
+    )
+    if provider:
+        stmt = stmt.where(CollectionConnection.provider == str(provider).lower())
+    return list(db.scalars(stmt.order_by(CollectionConnection.id)))
+
+
+def set_connection_enabled(
+    db: Session, *, tenant_id: int, connection_id: int, enabled: bool
+) -> CollectionConnection:
+    conn = _get_connection(db, tenant_id, connection_id)
+    if enabled and not conn.provider_account_ref:
+        raise ChannelNotReady("connection identity must be verified before enabling")
+    conn.enabled = bool(enabled)
+    conn.status = "active" if enabled else "pending"
+    conn.updated_at = utcnow()
+    db.flush()
+    return conn
+
+
+def set_connection_health(
+    db: Session, *, tenant_id: int, connection_id: int, health: dict
+) -> CollectionConnection:
+    conn = _get_connection(db, tenant_id, connection_id)
+    allowed = {
+        "state", "checked_at", "last_success_at", "last_event_at",
+        "lag_seconds", "error_code", "retry_after_seconds", "ignored_updates",
+        "processed_updates",
+    }
+    clean = {k: v for k, v in dict(health or {}).items() if k in allowed}
+    conn.config_json = {**(conn.config_json or {}), "_health": clean}
+    conn.updated_at = utcnow()
+    db.flush()
+    return conn
+
+
+def connection_health(conn: CollectionConnection) -> dict:
+    health = (conn.config_json or {}).get("_health")
+    return dict(health) if isinstance(health, dict) else {"state": "pending"}
+
+
 def _get_connection(db: Session, tenant_id: int, connection_id: int) -> CollectionConnection:
     conn = db.execute(
         select(CollectionConnection).where(
@@ -217,12 +273,34 @@ def create_source(
 
 
 def enable_source(db: Session, *, tenant_id: int, source_id: int) -> CollectionSource:
+    return set_source_enabled(db, tenant_id=tenant_id, source_id=source_id, enabled=True)
+
+
+def set_source_enabled(
+    db: Session, *, tenant_id: int, source_id: int, enabled: bool
+) -> CollectionSource:
     src = _get_source(db, tenant_id, source_id)
-    src.enabled = True
-    src.status = "active"
+    src.enabled = bool(enabled)
+    src.status = "active" if enabled else "paused"
     src.updated_at = utcnow()
     db.flush()
     return src
+
+
+def get_source(db: Session, *, tenant_id: int, source_id: int) -> CollectionSource:
+    return _get_source(db, tenant_id, source_id)
+
+
+def list_sources(
+    db: Session, *, tenant_id: int, connection_id: int | None = None
+) -> list[CollectionSource]:
+    stmt = select(CollectionSource).where(
+        CollectionSource.tenant_id == tenant_id,
+        CollectionSource.deleted_at.is_(None),
+    )
+    if connection_id is not None:
+        stmt = stmt.where(CollectionSource.connection_id == connection_id)
+    return list(db.scalars(stmt.order_by(CollectionSource.id)))
 
 
 def soft_delete_source(db: Session, *, tenant_id: int, source_id: int,

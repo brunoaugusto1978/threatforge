@@ -17,7 +17,10 @@ COPY app/ ./app/
 COPY alembic.ini ./
 COPY migrations/ ./migrations/
 
-RUN mkdir -p /data/evidence && chown -R appuser /data/evidence
+RUN mkdir -p /data/evidence \
+    && chmod -R a+rX /app/app /app/migrations \
+    && chmod a+r /app/alembic.ini \
+    && chown -R appuser /data/evidence
 
 USER appuser
 EXPOSE 8000

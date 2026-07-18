@@ -32,6 +32,8 @@ def _normalized_reason(available: bool, valid: bool, raw: str | None) -> str:
         return "expired"
     if raw == "invalid_signature":
         return "invalid_signature"
+    if raw == "incompatible_core":
+        return "incompatible_core"
     if raw in (None, "", "malformed_license"):
         return "missing"
     return "invalid"
@@ -55,6 +57,10 @@ def license_status_view() -> dict:
         "trial": bool(status.get("trial")),
         "issued_at": status.get("issued_at") or None,
         "expires_at": status.get("expires_at") or None,
+        "core_version": config.APP_VERSION,
+        "enterprise_version": status.get("enterprise_version") or "",
+        "core_compatibility": status.get("core_compatibility") or "",
+        "core_compatible": bool(status.get("core_compatible")),
         "allowed_features": features.allowed_features(),
         "blocked_features": features.blocked_features(),
         "upgrade_contact": config.THREATFORGE_ENTERPRISE_CONTACT_EMAIL,

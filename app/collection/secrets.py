@@ -21,8 +21,10 @@ value. Values themselves are never persisted by Community.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import urlsplit
 
@@ -56,6 +58,58 @@ _TOKENISH_QUERY_KEYS = ("token", "key", "secret", "access_token", "hub.verify_to
 _TELEGRAM_BOT_PATH = re.compile(r"/bot\d+:[A-Za-z0-9_-]+", re.IGNORECASE)
 _LONG_TOKEN_SEG = re.compile(r"^[A-Za-z0-9_-]{16,}$")
 _URL_VALUE = re.compile(r"^\s*https?://", re.IGNORECASE)
+
+ENV_SECRET_REF_PREFIX = "secretref://env/"
+FILE_SECRET_REF_PREFIX = "secretref://file/"
+_ENV_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{2,127}$")
+
+
+def validate_opaque_ref(ref: str) -> str:
+    """Validate a supported opaque secret reference without resolving it.
+
+    Phase 2A supports environment-backed refs for the controlled POC.  The
+    variable name is non-secret, must use the ThreatForge namespace, and the
+    referenced value is never returned by API serializers.
+    """
+    value = str(ref or "").strip()
+    if value.startswith(ENV_SECRET_REF_PREFIX):
+        env_name = value[len(ENV_SECRET_REF_PREFIX):]
+        if not _ENV_NAME_RE.fullmatch(env_name) or not env_name.startswith("THREATFORGE_"):
+            raise ValueError("invalid_environment_secret_reference")
+        return value
+    if value.startswith(FILE_SECRET_REF_PREFIX):
+        name = value[len(FILE_SECRET_REF_PREFIX):]
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{1,126}", name):
+            raise ValueError("invalid_file_secret_reference")
+        return value
+    raise ValueError("unsupported_secret_reference")
+
+
+def resolve_opaque_ref(ref: str) -> str | None:
+    """Resolve a supported opaque reference through the configured resolver."""
+    value = str(ref or "").strip()
+    if value.startswith(ENV_SECRET_REF_PREFIX):
+        try:
+            validate_opaque_ref(value)
+        except ValueError:
+            return None
+        return os.getenv(value[len(ENV_SECRET_REF_PREFIX):]) or None
+    if value.startswith(FILE_SECRET_REF_PREFIX):
+        try:
+            validate_opaque_ref(value)
+            root = Path(os.getenv("THREATFORGE_SECRET_DIR", "/run/secrets")).resolve()
+            candidate = root / value[len(FILE_SECRET_REF_PREFIX):]
+            if candidate.is_symlink():
+                return None
+            path = candidate.resolve()
+            if path.parent != root or not path.is_file():
+                return None
+            if path.stat().st_size > 8192:
+                return None
+            return path.read_text(encoding="utf-8").strip() or None
+        except (OSError, UnicodeError, ValueError):
+            return None
+    return get_resolver().get(value)
 
 
 def _sha256(value: str) -> str:
@@ -245,4 +299,4 @@ def resolve_secret(secret_refs: dict[str, str], name: str) -> str | None:
     ref = (secret_refs or {}).get(name)
     if not ref:
         return None
-    return get_resolver().get(ref)
+    return resolve_opaque_ref(ref)

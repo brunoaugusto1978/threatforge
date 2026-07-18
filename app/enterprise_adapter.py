@@ -48,6 +48,9 @@ class EnterpriseAdapterStatus:
     limits: dict[str, Any] | None = None
     entitlements: dict[str, Any] | None = None
     message: str = ""
+    enterprise_version: str = ""
+    core_compatibility: str = ""
+    core_compatible: bool = False
 
 
 def _load_enterprise_integration():
@@ -97,14 +100,20 @@ def get_enterprise_status() -> dict[str, Any]:
         )
 
     try:
-        summary = integration.get_enterprise_license_summary()
-    except Exception as exc:  # noqa: BLE001 — never propagate Enterprise internals
+        from app import config
+        try:
+            summary = integration.get_enterprise_license_summary(
+                core_version=config.APP_VERSION
+            )
+        except TypeError:
+            summary = integration.get_enterprise_license_summary()
+    except Exception:  # noqa: BLE001 — never propagate Enterprise internals
         return asdict(
             EnterpriseAdapterStatus(
                 available=True,
                 valid=False,
                 reason="enterprise_integration_error",
-                message=f"Enterprise integration failed: {exc}",
+                message="Enterprise integration failed.",
             )
         )
 
@@ -124,6 +133,9 @@ def get_enterprise_status() -> dict[str, Any]:
             limits=dict(summary.limits or {}),
             entitlements=dict(summary.entitlements or {}),
             message="ThreatForge Enterprise package is available.",
+            enterprise_version=str(getattr(summary, "enterprise_version", "") or ""),
+            core_compatibility=str(getattr(summary, "core_compatibility", "") or ""),
+            core_compatible=bool(getattr(summary, "compatible", True)),
         )
     )
 
@@ -135,9 +147,35 @@ def is_enterprise_feature_enabled(feature: str) -> bool:
         return False
 
     try:
-        return bool(integration.is_enterprise_feature_enabled(feature))
+        from app import config
+        try:
+            return bool(integration.is_enterprise_feature_enabled(
+                feature, core_version=config.APP_VERSION
+            ))
+        except TypeError:
+            return bool(integration.is_enterprise_feature_enabled(feature))
     except Exception:  # noqa: BLE001
         return False
+
+
+def register_collection_extensions(
+    providers, classifiers, correlators, *, secret_loader, replace: bool = True
+) -> dict[str, str]:
+    """Ask the private package to populate host-owned collection registries.
+
+    Community passes registries and a single opaque-reference resolver callback;
+    no Community model/session is imported by the private package.
+    """
+    integration = _load_enterprise_integration()
+    if integration is None or not hasattr(integration, "register_collection_extensions"):
+        return {}
+    try:
+        return dict(integration.register_collection_extensions(
+            providers, classifiers, correlators,
+            secret_loader=secret_loader, replace=replace,
+        ) or {})
+    except Exception:
+        return {}
 
 
 def generate_enterprise_pdf_report(

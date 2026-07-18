@@ -110,3 +110,22 @@ The Enterprise package is distributed under a **commercial license**, not the
 AGPL. See [`COMMERCIAL.md`](../COMMERCIAL.md). Operating Community over a network
 carries AGPL-3.0 section 13 obligations; the commercial license removes that
 network-copyleft requirement for Enterprise deployments.
+
+## Telegram Intelligence collector (v0.11.0)
+
+Inbound Telegram Intelligence is distinct from the outbound Telegram alert
+variables. Configure an opaque file-backed secret reference in the UI and mount
+the token file read-only through the Enterprise Compose overlay.
+
+The collector is isolated from FastAPI and disabled by default. After approving
+the controlled POC runbook, start it with:
+
+    COMPOSE_PROJECT_NAME=community docker compose \
+      --env-file .env \
+      --env-file .env.enterprise.local \
+      -f docker-compose.yml \
+      -f docker-compose.enterprise.yml \
+      --profile telegram-collector \
+      up -d --no-build collector
+
+Disabling a connection/source stops new ingestion without deleting evidence.

@@ -93,6 +93,7 @@ Run:
     cd ~/threatforge
 
     COMPOSE_PROJECT_NAME=community docker compose \
+      --env-file .env \
       --env-file .env.enterprise.local \
       -f docker-compose.yml \
       -f docker-compose.enterprise.yml \
@@ -108,6 +109,7 @@ Check the containers:
     cd ~/threatforge
 
     COMPOSE_PROJECT_NAME=community docker compose \
+      --env-file .env \
       --env-file .env.enterprise.local \
       -f docker-compose.yml \
       -f docker-compose.enterprise.yml \
@@ -123,6 +125,7 @@ Check the Enterprise package and license:
     cd ~/threatforge
 
     COMPOSE_PROJECT_NAME=community docker compose \
+      --env-file .env \
       --env-file .env.enterprise.local \
       -f docker-compose.yml \
       -f docker-compose.enterprise.yml \
@@ -208,3 +211,25 @@ The following operational files are versioned:
 
 License files, public keys, private keys and local environment files are not
 committed.
+
+## Telegram collector profile
+
+The inbound collector is disabled by default and is not part of the API
+process. Configure a read-only bot-token host file and add this ignored local
+setting:
+
+    THREATFORGE_TELEGRAM_COLLECTION_BOT_TOKEN_HOST_FILE=/secure/path/token
+    THREATFORGE_COLLECTION_WORKER_ENABLED=true
+
+Then start the isolated profile only after POC authorization:
+
+    COMPOSE_PROJECT_NAME=community docker compose \
+      --env-file .env \
+      --env-file .env.enterprise.local \
+      -f docker-compose.yml \
+      -f docker-compose.enterprise.yml \
+      --profile telegram-collector \
+      up -d --no-build collector
+
+The source metadata stores only
+`secretref://file/telegram-collection-bot-token`.

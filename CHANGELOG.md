@@ -34,6 +34,20 @@ and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.
 
 ## [Unreleased]
 
+### Added
+
+- Added a licensed Telegram Intelligence catalog and tenant-scoped connection/source API.
+- Added an isolated collector worker and private-provider registration seam.
+- Added opaque environment/file secret references and sanitized provider health.
+- Added Enterprise/core compatibility and version metadata to license status.
+- Added a controlled CBG Telegram POC runbook and explicit inbound/outbound boundary.
+
+### Security
+
+- Bot tokens are never accepted as source metadata; only opaque secret references are stored.
+- Provider errors are reduced to an allowlisted diagnostic vocabulary.
+- The collector is disabled by default and runs in a separate Compose profile.
+
 Planned next (Enterprise, out of this repository — see [ROADMAP.md](ROADMAP.md)):
 automated dark/deep-web feeds, real-time collection, k-anonymity breach
 enrichment, real MISP/OpenCTI connector transport with encrypted secret vault

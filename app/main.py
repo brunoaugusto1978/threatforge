@@ -14,6 +14,7 @@ from app.database import Base, engine, get_db
 from app.models import Brand, BrandFinding, Observable, User
 from app.routers import (
     cases_routes,
+    collection_routes,
     credentials_routes,
     dashboard_routes,
     surface_routes,
@@ -43,6 +44,7 @@ from fastapi import Request as _Request  # noqa: E402
 from fastapi.responses import JSONResponse as _JSONResponse  # noqa: E402
 from app.routers import integrations_routes
 from app.routers import license_routes
+from app.collection import runtime as collection_runtime
 
 
 @app.exception_handler(features.EnterpriseFeatureRequired)
@@ -51,6 +53,7 @@ async def _enterprise_feature_required(request: _Request, exc: features.Enterpri
     return _JSONResponse(status_code=402, content=features.payment_required_detail(exc.feature))
 
 Base.metadata.create_all(bind=engine)
+collection_runtime.bootstrap_enterprise_extensions(replace=True)
 ensure_operator()
 
 if config.CORS_ORIGINS:
@@ -91,6 +94,7 @@ app.include_router(brands.router)
 app.include_router(cases_routes.router)
 app.include_router(cases_routes.finding_router)
 app.include_router(integrations_routes.router)
+app.include_router(collection_routes.router)
 app.include_router(exposure_routes.router)
 app.include_router(timeline_routes.router)
 app.include_router(correlation_routes.router)

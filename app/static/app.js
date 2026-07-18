@@ -1678,6 +1678,12 @@ const ACTIONS = {
   integrationModalSave: (_id, btn) => integrationModalSave(btn.dataset.name),
   integrationModalTest: (_id, btn) => integrationModalTest(btn.dataset.name),
   integrationModalClose: () => integrationModalClose(),
+  telegramManage: (_id, btn) => telegramManage(btn.dataset.locked === "1"),
+  telegramAddConnection: () => telegramAddConnection(),
+  telegramTestConnection: (id) => telegramTestConnection(id),
+  telegramToggleConnection: (id, btn) => telegramToggleConnection(id, btn.dataset.enabled === "1"),
+  telegramAddSource: (id) => telegramAddSource(id),
+  telegramToggleSource: (id, btn) => telegramToggleSource(id, btn.dataset.enabled === "1"),
   expTab: (_id, btn) => exposureTab(btn.dataset.name),
   expApplyFilters: () => applyExposureFilters(),
   expTriage: (id) => triageExposure(id),
@@ -1709,11 +1715,20 @@ document.addEventListener("click", (e) => {
 async function viewIntegrations() {
   const m = $("#main");
   m.innerHTML = `<h2 class="title">Integrations</h2>
-    <p class="muted" style="margin-top:-6px">Connect ThreatForge to external threat-intel platforms. Premium connectors require a ThreatForge Enterprise license.</p>
-    <div id="intgList">loading…</div>`;
-  let items = [];
-  try { items = await api("GET", "/integrations"); }
-  catch (e) { $("#intgList").textContent = e.message; return; }
+    <p class="muted" style="margin-top:-6px">Connect ThreatForge to external intelligence platforms and authorized inbound collection. Telegram Intelligence is separate from outbound Telegram notifications.</p>
+    <div id="intgList">loading…</div>
+    <div id="telegramManager" style="margin-top:18px"></div>`;
+  let integrations = [], collections = [];
+  try {
+    [integrations, collections] = await Promise.all([
+      api("GET", "/integrations"),
+      api("GET", "/collection/catalog"),
+    ]);
+  } catch (e) { $("#intgList").textContent = e.message; return; }
+  const items = [
+    ...integrations.map(x => ({...x, surface: "integration"})),
+    ...collections.map(x => ({...x, surface: "collection"})),
+  ];
   if (!items.length) { $("#intgList").innerHTML = '<span class="muted">No integrations available.</span>'; return; }
   const canConfig = can("admin");
   $("#intgList").innerHTML = `<div class="cards" style="grid-template-columns:repeat(auto-fill,minmax(260px,1fr))">${
@@ -1723,9 +1738,13 @@ async function viewIntegrations() {
         ? '<span class="muted" title="ThreatForge Enterprise" style="border:1px solid var(--line);border-radius:10px;padding:1px 8px;font-size:12px">Enterprise 🔒</span>'
         : '<span class="muted" style="border:1px solid var(--line);border-radius:10px;padding:1px 8px;font-size:12px">Available</span>';
       const caps = (it.capabilities || []).map(c => `<code style="font-size:11px;background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:1px 5px;margin:0 4px 4px 0;display:inline-block">${esc(c)}</code>`).join("");
-      const btn = canConfig
-        ? `<button class="sm ghost" data-action="integrationConfigure" data-name="${esc(it.name)}" data-locked="${locked ? "1" : "0"}">${locked ? "Configure (Enterprise)" : "Configure"}</button>`
-        : '<span class="muted" style="font-size:12px">Admin only</span>';
+      let btn;
+      if (!canConfig) btn = '<span class="muted" style="font-size:12px">Admin only</span>';
+      else if (it.surface === "collection") {
+        btn = `<button class="sm ghost" data-action="telegramManage" data-locked="${locked ? "1" : "0"}">${locked ? "Manage (Enterprise)" : "Manage sources"}</button>`;
+      } else {
+        btn = `<button class="sm ghost" data-action="integrationConfigure" data-name="${esc(it.name)}" data-locked="${locked ? "1" : "0"}">${locked ? "Configure (Enterprise)" : "Configure"}</button>`;
+      }
       return `<div class="panel" style="display:flex;flex-direction:column;gap:8px">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
           <b>${esc(it.title)}</b>${badge}
@@ -1736,6 +1755,102 @@ async function viewIntegrations() {
       </div>`;
     }).join("")
   }</div>`;
+}
+
+function _tgHealthBadge(health) {
+  const state = String((health && health.state) || "pending");
+  return `<span class="muted" style="border:1px solid var(--line);border-radius:10px;padding:1px 8px;font-size:12px">${esc(state)}</span>`;
+}
+
+async function telegramManage(locked) {
+  const host = $("#telegramManager");
+  if (!host) return;
+  if (locked) {
+    try { await api("GET", "/collection/connections"); }
+    catch (e) { toast(enterpriseUpgradeMessage(e.detail || {}, "Telegram Intelligence requires a ThreatForge Enterprise license."), true); }
+    return;
+  }
+  host.innerHTML = `<div class="panel"><h3 style="margin-top:0">Telegram Intelligence sources</h3><p class="muted">Loading authorized connections…</p></div>`;
+  let connections = [], sources = [];
+  try {
+    [connections, sources] = await Promise.all([
+      api("GET", "/collection/connections"),
+      api("GET", "/collection/sources"),
+    ]);
+  } catch (e) {
+    host.innerHTML = `<div class="panel"><h3 style="margin-top:0">Telegram Intelligence sources</h3><p class="muted">${esc(e.message || "Unable to load sources.")}</p></div>`;
+    return;
+  }
+  const byConnection = new Map();
+  for (const src of sources) {
+    if (!byConnection.has(src.connection_id)) byConnection.set(src.connection_id, []);
+    byConnection.get(src.connection_id).push(src);
+  }
+  const rows = connections.length ? connections.map(conn => {
+    const srcs = byConnection.get(conn.id) || [];
+    const sourceRows = srcs.length ? srcs.map(src => `<tr>
+      <td>${esc(src.name || src.source_ref)}</td><td><code>${esc(src.source_ref)}</code></td><td>${esc(src.kind)}</td><td>${esc(src.status)}</td>
+      <td>${can("admin") ? `<button class="sm ghost" data-action="telegramToggleSource" data-id="${src.id}" data-enabled="${src.enabled ? "1" : "0"}">${src.enabled ? "Pause" : "Enable"}</button>` : ""}</td>
+    </tr>`).join("") : '<tr><td colspan="5" class="muted">No authorized source configured.</td></tr>';
+    return `<div class="panel" style="margin-top:12px">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><div><b>${esc(conn.name)}</b> <span class="muted">@${esc(conn.bot_username || "unverified")}</span></div>${_tgHealthBadge(conn.health)}</div>
+      <div class="muted" style="font-size:12px;margin-top:6px">Credential reference: ${conn.credential_configured ? "configured" : "missing"}; cursor: ${conn.cursor_configured ? "active" : "not started"}</div>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+        <button class="sm ghost" data-action="telegramTestConnection" data-id="${conn.id}">Test connection</button>
+        <button class="sm ghost" data-action="telegramToggleConnection" data-id="${conn.id}" data-enabled="${conn.enabled ? "1" : "0"}">${conn.enabled ? "Disable collector" : "Enable collector"}</button>
+        <button class="sm ghost" data-action="telegramAddSource" data-id="${conn.id}">Add authorized source</button>
+      </div>
+      <table style="margin-top:12px"><thead><tr><th>Source</th><th>Chat ID</th><th>Kind</th><th>Status</th><th></th></tr></thead><tbody>${sourceRows}</tbody></table>
+    </div>`;
+  }).join("") : '<div class="panel"><p class="muted">No Telegram connection configured. Add an opaque environment secret reference; never paste the bot token into ThreatForge.</p></div>';
+  host.innerHTML = `<div class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><div><h3 style="margin:0">Telegram Intelligence sources</h3><p class="muted" style="margin:4px 0 0">Authorized Bot API collection only. Links and message content are rendered as inert text.</p></div>${can("admin") ? '<button class="sm" data-action="telegramAddConnection">Add connection</button>' : ""}</div></div>${rows}`;
+}
+
+async function telegramAddConnection() {
+  const name = prompt("Connection name", "CBG Telegram POC");
+  if (!name) return;
+  const ref = prompt("Opaque bot-token reference", "secretref://file/telegram-collection-bot-token");
+  if (!ref) return;
+  try {
+    await api("POST", "/collection/connections", {name, provider:"telegram", bot_token_ref:ref, poll_timeout_seconds:20});
+    toast("Telegram connection created. Test it before collection.");
+    telegramManage(false);
+  } catch (e) { toast(e.message || "Failed to create connection", true); }
+}
+
+async function telegramTestConnection(id) {
+  try {
+    const result = await api("POST", `/collection/connections/${id}/test`, {activate:true});
+    toast(result.ok ? "Telegram Bot API connection verified" : `Connection failed: ${(result.diagnostic && result.diagnostic.code) || "provider_error"}`, !result.ok);
+    telegramManage(false);
+  } catch (e) { toast(e.message || "Connection test failed", true); }
+}
+
+async function telegramToggleConnection(id, enabled) {
+  try {
+    await api("PATCH", `/collection/connections/${id}`, {enabled: !enabled});
+    toast(!enabled ? "Collector enabled" : "Collector disabled");
+    telegramManage(false);
+  } catch (e) { toast(e.message || "Failed to update connection", true); }
+}
+
+async function telegramAddSource(connectionId) {
+  const source_ref = prompt("Authorized Telegram chat ID (for example -1001234567890)", "");
+  if (!source_ref) return;
+  const name = prompt("Source display name", "CBG controlled group") || "";
+  try {
+    await api("POST", `/collection/connections/${connectionId}/sources`, {source_ref, name, kind:"group", enabled:true});
+    toast("Authorized source added");
+    telegramManage(false);
+  } catch (e) { toast(e.message || "Failed to add source", true); }
+}
+
+async function telegramToggleSource(id, enabled) {
+  try {
+    await api("PATCH", `/collection/sources/${id}`, {enabled: !enabled});
+    toast(!enabled ? "Source enabled" : "Source paused");
+    telegramManage(false);
+  } catch (e) { toast(e.message || "Failed to update source", true); }
 }
 
 // -----------------------------------------------------------------------------
