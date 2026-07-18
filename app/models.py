@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     CheckConstraint,
+    ForeignKeyConstraint,
     Index,
     JSON,
     Boolean,
@@ -11,6 +12,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -741,5 +743,312 @@ class IntegrationConnection(Base):
     secrets_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+
+# ===========================================================================
+# Telegram Intelligence — provider-neutral collection & alerting (v0.11.0)
+# ---------------------------------------------------------------------------
+# Community persists structure only. Real secrets live in the Secret Resolver
+# (only opaque references are stored here — ``secret_refs``); in the POC no
+# original provider payload is retained (see app/collection/envelope.py).
+#
+# Residual requirements + corrective audit findings encoded below:
+#   #1  collection_connection.enabled (bool, default False) drives activation.
+#   C1  the Bot API update cursor belongs to the CONNECTION (one per bot),
+#       not to each source; sources under one connection share one cursor.
+#   #2  alert_outbox → tenant_alert_channel by composite same-tenant FK.
+#   #3/C3 config_json holds only non-secret parameters; ``secret_refs`` holds
+#       opaque Secret Resolver references; ``secrets_metadata`` presence only.
+#   #4  outbox delivery state lives only in columns.
+#   #5  alert_outbox.dedup_key UNIQUE.
+#   #6  collection_source_test_request stores the nonce hash, not the nonce.
+#   #7  provider_account_ref exclusivity across tenants (partial unique).
+#   C2  history preservation: no ON DELETE CASCADE on connection→source,
+#       source→event, connection→test_request, channel→outbox — physical
+#       deletes are RESTRICTed; lifecycle uses soft delete.
+#   #9  soft delete + partial unique (deleted_at IS NULL).
+#   #11 retention columns (redacted_text/context/purged_at/policy/legal_hold).
+#   C8  analysis state machine columns on collection_event
+#       (attempts/next_attempt_at/locked_by/locked_at/processed_at/error_code/
+#        analysis_version/analysis_json).
+# ===========================================================================
+class CollectionConnection(Base):
+    """A provider connection (e.g. one Telegram bot) owned by a tenant."""
+    __tablename__ = "collection_connection"
+    __table_args__ = (
+        Index(
+            "uq_coll_conn_tenant_name_live", "tenant_id", "name",
+            unique=True,
+            sqlite_where=text("deleted_at IS NULL"),
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        Index(
+            "uq_coll_conn_active_identity", "provider", "provider_account_ref",
+            unique=True,
+            sqlite_where=text("enabled = 1 AND deleted_at IS NULL AND provider_account_ref IS NOT NULL"),
+            postgresql_where=text("enabled = true AND deleted_at IS NULL AND provider_account_ref IS NOT NULL"),
+        ),
+        UniqueConstraint("id", "tenant_id", name="uq_coll_conn_id_tenant"),
+        Index("ix_coll_conn_tenant", "tenant_id"),
+        Index("ix_coll_conn_provider", "provider"),
+        CheckConstraint(
+            "status IN ('pending','active','revoked')", name="ck_coll_conn_status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"))
+    provider: Mapped[str] = mapped_column(String(40))
+    name: Mapped[str] = mapped_column(String(80))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    provider_account_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # C1 — the provider update cursor lives on the CONNECTION. All sources under
+    # this connection share it; it advances in the same txn as event persistence.
+    cursor: Mapped[str | None] = mapped_column(String(190), nullable=True)
+    config_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    # C3 — opaque Secret Resolver references ({name: ref}); never the values.
+    secret_refs: Mapped[dict] = mapped_column(JSON, default=dict)
+    secrets_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+class CollectionSource(Base):
+    """A monitored source (channel/group/DM/test) under a connection."""
+    __tablename__ = "collection_source"
+    __table_args__ = (
+        Index(
+            "uq_coll_source_ref_live", "tenant_id", "connection_id", "source_ref",
+            unique=True,
+            sqlite_where=text("deleted_at IS NULL"),
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        # C2 — RESTRICT: physically deleting a connection that still has sources
+        # is blocked; lifecycle is soft delete.
+        ForeignKeyConstraint(
+            ["connection_id", "tenant_id"],
+            ["collection_connection.id", "collection_connection.tenant_id"],
+            ondelete="RESTRICT", name="fk_coll_source_conn_same_tenant",
+        ),
+        UniqueConstraint("id", "tenant_id", name="uq_coll_source_id_tenant"),
+        UniqueConstraint("id", "connection_id", "tenant_id",
+                         name="uq_coll_source_id_conn_tenant"),
+        Index("ix_coll_source_tenant", "tenant_id"),
+        Index("ix_coll_source_conn", "connection_id"),
+        CheckConstraint(
+            "status IN ('pending','active','paused','revoked')",
+            name="ck_coll_source_status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"))
+    connection_id: Mapped[int] = mapped_column(Integer)
+    provider: Mapped[str] = mapped_column(String(40))
+    source_ref: Mapped[str] = mapped_column(String(160))
+    kind: Mapped[str] = mapped_column(String(30), default="channel")
+    name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # C2 — activation switch mirrors the connection contract (#1).
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    config_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+class CollectionEvent(Base):
+    """A normalised (or rejected) provider update. No original payload in POC."""
+    __tablename__ = "collection_event"
+    __table_args__ = (
+        Index(
+            "uq_coll_event_external", "tenant_id", "source_id", "external_id_hash",
+            unique=True,
+            sqlite_where=text("external_id_hash <> '' AND processing_state <> 'rejected'"),
+            postgresql_where=text("external_id_hash <> '' AND processing_state <> 'rejected'"),
+        ),
+        Index("ix_coll_event_tenant", "tenant_id"),
+        Index("ix_coll_event_source", "source_id"),
+        Index("ix_coll_event_state", "processing_state"),
+        Index("ix_coll_event_finding", "finding_id"),
+        Index("ix_coll_event_next", "next_attempt_at"),
+        Index("ix_coll_event_locked", "locked_at"),
+        CheckConstraint(
+            "processing_state IN ('received','normalized','control','rejected',"
+            "'dead_letter','analyzing','analyzed','failed')",
+            name="ck_coll_event_state"),
+        CheckConstraint("attempts >= 0", name="ck_coll_event_attempts"),
+        ForeignKeyConstraint(
+            ["source_id", "tenant_id"],
+            ["collection_source.id", "collection_source.tenant_id"],
+            ondelete="RESTRICT", name="fk_coll_event_source_same_tenant",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"))
+    # Tenant-scoped composite FK prevents cross-tenant source references.
+    source_id: Mapped[int] = mapped_column(Integer)
+    provider: Mapped[str] = mapped_column(String(40))
+    external_id_hash: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    processing_state: Mapped[str] = mapped_column(String(20), default="received")
+    normalized_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    raw_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    content_version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    redaction_profile: Mapped[str] = mapped_column(String(40), default="default")
+    redacted_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    context_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_control: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
+    control_nonce_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    finding_id: Mapped[int | None] = mapped_column(
+        ForeignKey("exposure_finding.id", ondelete="SET NULL"), nullable=True)
+    case_id: Mapped[int | None] = mapped_column(
+        ForeignKey("investigation_cases.id", ondelete="SET NULL"), nullable=True)
+    # C8 — analysis state machine (per approved planning).
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    locked_by: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    analysis_version: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    analysis_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    # #11 — retention bookkeeping.
+    legal_hold: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
+    retention_policy: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    purged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class CollectionSourceTestRequest(Base):
+    """A TF-VERIFY test handshake. Stores the nonce hash, never the nonce (#6)."""
+    __tablename__ = "collection_source_test_request"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "nonce_hash", name="uq_coll_test_nonce"),
+        Index("ix_coll_test_tenant", "tenant_id"),
+        Index("ix_coll_test_conn", "connection_id"),
+        Index("ix_coll_test_status", "status"),
+        CheckConstraint(
+            "status IN ('pending','awaiting','verified','failed','expired')",
+            name="ck_coll_test_status"),
+        ForeignKeyConstraint(
+            ["connection_id", "tenant_id"],
+            ["collection_connection.id", "collection_connection.tenant_id"],
+            ondelete="RESTRICT", name="fk_coll_test_conn_same_tenant",
+        ),
+        ForeignKeyConstraint(
+            ["source_id", "connection_id", "tenant_id"],
+            ["collection_source.id", "collection_source.connection_id",
+             "collection_source.tenant_id"],
+            ondelete="RESTRICT", name="fk_coll_test_source_same_scope",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"))
+    # Composite scope FKs prevent cross-tenant/cross-connection requests.
+    connection_id: Mapped[int] = mapped_column(Integer)
+    source_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    provider: Mapped[str] = mapped_column(String(40))
+    nonce_hash: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    requested_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    telemetry_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class TenantAlertChannel(Base):
+    """A tenant's alert channel (telegram/webhook/email). Non-secret config (#3)."""
+    __tablename__ = "tenant_alert_channel"
+    __table_args__ = (
+        Index(
+            "uq_alert_channel_name_live", "tenant_id", "name",
+            unique=True,
+            sqlite_where=text("deleted_at IS NULL"),
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        UniqueConstraint("id", "tenant_id", name="uq_alert_channel_id_tenant"),
+        Index("ix_alert_channel_tenant", "tenant_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(80))
+    channel_type: Mapped[str] = mapped_column(String(20))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
+    config_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    # C3 — opaque Secret Resolver references ({name: ref}); never the values.
+    secret_refs: Mapped[dict] = mapped_column(JSON, default=dict)
+    secrets_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+class AlertOutbox(Base):
+    """Durable outbox row for one notification. State lives in columns (#4).
+
+    Bound to its channel by a composite same-tenant FK (#2) with RESTRICT (C2):
+    deleting a channel cannot destroy delivery history. Idempotent by
+    ``dedup_key`` UNIQUE (#5).
+    """
+    __tablename__ = "alert_outbox"
+    __table_args__ = (
+        UniqueConstraint("dedup_key", name="uq_alert_outbox_dedup"),
+        ForeignKeyConstraint(
+            ["alert_channel_id", "tenant_id"],
+            ["tenant_alert_channel.id", "tenant_alert_channel.tenant_id"],
+            ondelete="RESTRICT", name="fk_alert_outbox_channel_same_tenant",
+        ),
+        Index("ix_alert_outbox_tenant", "tenant_id"),
+        Index("ix_alert_outbox_channel", "alert_channel_id"),
+        Index("ix_alert_outbox_status", "status"),
+        Index("ix_alert_outbox_next", "next_attempt_at"),
+        CheckConstraint(
+            "status IN ('pending','sending','delivered','failed','dead_letter')",
+            name="ck_alert_outbox_status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"))
+    alert_channel_id: Mapped[int] = mapped_column(Integer)
+    finding_id: Mapped[int | None] = mapped_column(
+        ForeignKey("exposure_finding.id", ondelete="SET NULL"), nullable=True)
+    external_channel_ref: Mapped[str | None] = mapped_column(String(190), nullable=True)
+    template: Mapped[str] = mapped_column(String(80))
+    template_version: Mapped[str] = mapped_column(String(40), default="1")
+    dedup_key: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    payload_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow)

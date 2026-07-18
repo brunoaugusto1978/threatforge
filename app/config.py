@@ -11,7 +11,7 @@ DATABASE_URL: str = os.environ.get("DATABASE_URL", "sqlite:///./threatforge.db")
 
 # Single source of truth for the app/service version (FastAPI docs, /health, etc).
 # Keep this in sync with the release tag; do not hardcode the version elsewhere.
-APP_VERSION: str = "0.10.1"
+APP_VERSION: str = "0.11.0"
 
 # --- Auth / sessão ---
 # Segredo para assinar JWT. Se vazio, cai no API_KEY (defina um próprio em prod).

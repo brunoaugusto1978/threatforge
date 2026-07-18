@@ -33,6 +33,12 @@ class Feature(str, Enum):
     FEEDS_DARKWEB = "feeds.darkweb"
     FEEDS_REALTIME = "feeds.realtime"
     FEEDS_ENRICHMENT = "feeds.enrichment"
+    # Telegram Intelligence (v0.11.0). Provider-neutral collection/analysis seams
+    # live in Community; the real Bot API provider + intent classifier live in the
+    # private threatforge-enterprise package. Two narrow, explicit keys — no broad
+    # commercial alias may satisfy them (see _ENTERPRISE_ALIASES below).
+    COLLECTION_TELEGRAM = "collection.telegram"
+    ANALYSIS_TELEGRAM = "analysis.telegram"
 
 
 # Features que exigem licença ativa. Tudo aqui é Enterprise; vendável por flag.
@@ -45,6 +51,8 @@ PREMIUM: set[Feature] = {
     Feature.FEEDS_DARKWEB,
     Feature.FEEDS_REALTIME,
     Feature.FEEDS_ENRICHMENT,
+    Feature.COLLECTION_TELEGRAM,
+    Feature.ANALYSIS_TELEGRAM,
 }
 
 # Rótulos amigáveis usados na mensagem 402 (mantém a string do PDF original).
@@ -57,6 +65,8 @@ _FEATURE_LABEL: dict[str, str] = {
     Feature.FEEDS_DARKWEB.value: "Dark/deep web feeds",
     Feature.FEEDS_REALTIME.value: "Real-time collection",
     Feature.FEEDS_ENRICHMENT.value: "Feed enrichment",
+    Feature.COLLECTION_TELEGRAM.value: "Telegram intelligence collection",
+    Feature.ANALYSIS_TELEGRAM.value: "Telegram intelligence analysis",
 }
 
 # Canonical public key -> set of license keys that also satisfy it. The canonical
@@ -71,6 +81,12 @@ _ENTERPRISE_ALIASES: dict[str, set[str]] = {
     Feature.FEEDS_DARKWEB.value: {Feature.FEEDS_DARKWEB.value, "advanced_connectors"},
     Feature.FEEDS_REALTIME.value: {Feature.FEEDS_REALTIME.value, "advanced_connectors", "scheduled_reports"},
     Feature.FEEDS_ENRICHMENT.value: {Feature.FEEDS_ENRICHMENT.value, "advanced_connectors"},
+    # Telegram keys deliberately map ONLY to themselves. A broad commercial bundle
+    # such as ``advanced_connectors``/``enterprise_integrations`` must NOT unlock
+    # Telegram collection/analysis — the Enterprise license has to grant the exact
+    # canonical key. This keeps the v0.11.0 feature contract auditable.
+    Feature.COLLECTION_TELEGRAM.value: {Feature.COLLECTION_TELEGRAM.value},
+    Feature.ANALYSIS_TELEGRAM.value: {Feature.ANALYSIS_TELEGRAM.value},
 }
 
 
