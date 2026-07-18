@@ -19,3 +19,5 @@ security-reports/
 evidencias/
 backups/
 *.zip
+.env.enterprise.local
+.enterprise-build/

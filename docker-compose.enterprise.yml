@@ -1,0 +1,20 @@
+services:
+  api:
+    image: threatforge-enterprise-api:0.11.0-local
+
+    build:
+      context: .
+      dockerfile: Dockerfile.enterprise
+      args:
+        BASE_IMAGE: community-api:latest
+
+    environment:
+      THREATFORGE_EDITION: enterprise
+      THREATFORGE_ENTERPRISE_LICENSE_FILE: /run/secrets/threatforge-license.json
+      THREATFORGE_ENTERPRISE_PUBLIC_KEY_FILE: /run/secrets/threatforge-license-public.pem
+      THREATFORGE_ENTERPRISE_LICENSE_KEY_ID: ${THREATFORGE_ENTERPRISE_LICENSE_KEY_ID}
+      THREATFORGE_ENTERPRISE_INSTALLATION_ID: ${THREATFORGE_ENTERPRISE_INSTALLATION_ID}
+
+    volumes:
+      - ${THREATFORGE_ENTERPRISE_LICENSE_HOST_FILE}:/run/secrets/threatforge-license.json:ro
+      - ${THREATFORGE_ENTERPRISE_PUBLIC_KEY_HOST_FILE}:/run/secrets/threatforge-license-public.pem:ro

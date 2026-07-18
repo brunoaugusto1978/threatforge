@@ -1,0 +1,12 @@
+ARG BASE_IMAGE=community-api:latest
+FROM ${BASE_IMAGE}
+
+USER root
+
+COPY .enterprise-build/ /tmp/threatforge-enterprise/
+
+RUN python -m pip install --no-cache-dir \
+      /tmp/threatforge-enterprise/*.whl \
+    && rm -rf /tmp/threatforge-enterprise
+
+USER appuser
