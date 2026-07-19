@@ -604,7 +604,7 @@ WIZ_SAVE[5] = async () => true;
 function navigate(view) {
   document.querySelectorAll("#nav button").forEach(b =>
     b.classList.toggle("active", b.dataset.view === view));
-  ({ dashboard: viewDashboard, iocs: viewIocs, brands: viewBrands, watchlist: viewWatchlist,
+  return ({ dashboard: viewDashboard, iocs: viewIocs, brands: viewBrands, watchlist: viewWatchlist,
      org: viewOrg, users: viewUsers, audit: viewAudit, cases: viewCases,
      integrations: viewIntegrations, exposure: viewExposure,
      credentials: viewCredentials }[view] || viewDashboard)();
@@ -640,6 +640,8 @@ function renderDashboard(o) {
     cardHtml(s.monitored_assets_active, "Active monitored assets"),
     cardHtml(s.credential_identities_high_risk, "High-risk credential identities", s.credential_identities_high_risk > 0),
     cardHtml(s.integrations_connected, "Integrations connected"),
+    cardHtml(s.telegram_sources_active, "Active Telegram sources"),
+    cardHtml(s.telegram_events_total, "Telegram events"),
     cardHtml(s.exposure_ingests_total, "Imports processed"),
   ].join("");
 
@@ -745,16 +747,44 @@ function dashRecentIngests(items) {
   return `<table><thead><tr><th>ID</th><th>Source</th><th>Parser</th><th>File</th><th>Records</th><th>Created</th><th>Deduped</th><th>Errors</th><th>Status</th><th>When</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
+function _dashCollectorPill(state) {
+  const value = String(state || "pending");
+  const colors = {
+    healthy: "#2e7d32", paused: "#b8860b", pending: "#555",
+    not_configured: "#555", degraded: "#b8860b",
+    unauthorized: "#b71c1c", offline: "#b71c1c",
+  };
+  return _pill(value.replaceAll("_", " "), colors[value] || "#555", "#fff");
+}
+
 function dashIntegrationsStatus(items) {
   if (!items || !items.length) return '<p class="muted">No integrations in the catalog.</p>';
-  const rows = items.map(it => `
-    <tr>
-      <td><b>${esc(it.title)}</b>${it.premium ? ' <span class="muted" style="font-size:11px">(Enterprise)</span>' : ""}</td>
-      <td>${it.license_enabled ? _pill("enabled", "#2e7d32", "#fff") : _pill("locked", "#555", "#fff")}</td>
-      <td>${it.connected ? (it.connection_enabled ? _pill("connected", "#2e7d32", "#fff") : _pill("saved (disabled)", "#b8860b", "#fff")) : _pill("not connected", "#555", "#fff")}</td>
-    </tr>`).join("");
-  return `<table><thead><tr><th>Integration</th><th>License</th><th>Connection</th></tr></thead><tbody>${rows}</tbody></table>
-    <div style="margin-top:10px"><button class="sm ghost" data-action="dashGotoIntegrations">Manage integrations</button></div>`;
+  const hasTelegram = items.some(it => it.surface === "collection");
+  const rows = items.map(it => {
+    const isCollection = it.surface === "collection";
+    const connection = it.connected
+      ? (it.connection_enabled ? _pill("connected", "#2e7d32", "#fff") : _pill("saved (disabled)", "#b8860b", "#fff"))
+      : (Number(it.connection_count || 0) > 0 ? _pill("unverified", "#b8860b", "#fff") : _pill("not connected", "#555", "#fff"));
+    const sources = isCollection
+      ? `${esc(it.active_source_count || 0)} active / ${esc(it.source_count || 0)}`
+      : '<span class="muted">—</span>';
+    const collector = isCollection
+      ? `${_dashCollectorPill(it.collector_state)}${it.event_count !== null && it.event_count !== undefined ? `<div class="muted" style="font-size:11px;margin-top:4px">${esc(it.event_count)} events</div>` : ""}`
+      : '<span class="muted">—</span>';
+    return `
+      <tr>
+        <td><b>${esc(it.title)}</b>${it.premium ? ' <span class="muted" style="font-size:11px">(Enterprise)</span>' : ""}</td>
+        <td>${it.license_enabled ? _pill("enabled", "#2e7d32", "#fff") : _pill("locked", "#555", "#fff")}</td>
+        <td>${connection}</td>
+        <td>${sources}</td>
+        <td>${collector}</td>
+      </tr>`;
+  }).join("");
+  return `<table><thead><tr><th>Integration</th><th>License</th><th>Connection</th><th>Sources</th><th>Collector</th></tr></thead><tbody>${rows}</tbody></table>
+    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="sm ghost" data-action="dashGotoIntegrations">Manage integrations</button>
+      ${hasTelegram ? '<button class="sm ghost" data-action="dashGotoTelegramSources">Manage Telegram sources</button>' : ""}
+    </div>`;
 }
 
 // ---- IOCs ----
@@ -1684,6 +1714,9 @@ const ACTIONS = {
   telegramToggleConnection: (id, btn) => telegramToggleConnection(id, btn.dataset.enabled === "1"),
   telegramAddSource: (id) => telegramAddSource(id),
   telegramToggleSource: (id, btn) => telegramToggleSource(id, btn.dataset.enabled === "1"),
+  telegramEventFilter: (id) => telegramSetEventSource(id),
+  telegramEventsRefresh: () => telegramLoadEvents(true),
+  telegramEventsOlder: () => telegramLoadEvents(false),
   expTab: (_id, btn) => exposureTab(btn.dataset.name),
   expApplyFilters: () => applyExposureFilters(),
   expTriage: (id) => triageExposure(id),
@@ -1703,6 +1736,12 @@ const ACTIONS = {
   dashFindingView: () => { EXPOSURE_TAB = "findings"; navigate("exposure"); },
   dashAssetView: () => { EXPOSURE_TAB = "assets"; navigate("exposure"); },
   dashGotoIntegrations: () => navigate("integrations"),
+  dashGotoTelegramSources: async () => {
+    await navigate("integrations");
+    await telegramManage(false);
+    const target = $("#telegramManager");
+    if (target) target.scrollIntoView({behavior:"smooth", block:"start"});
+  },
 };
 document.addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-action]");
@@ -1757,9 +1796,35 @@ async function viewIntegrations() {
   }</div>`;
 }
 
+let TG_EVENT_SOURCE = 0;
+let TG_EVENT_ROWS = [];
+let TG_EVENT_HAS_MORE = false;
+const TG_EVENT_PAGE_SIZE = 25;
+
 function _tgHealthBadge(health) {
   const state = String((health && health.state) || "pending");
   return `<span class="muted" style="border:1px solid var(--line);border-radius:10px;padding:1px 8px;font-size:12px">${esc(state)}</span>`;
+}
+
+function _tgWhen(value) {
+  const ts = String(value || "");
+  return ts ? `${esc(ts.slice(0, 10))} ${esc(ts.slice(11, 19))}` : "—";
+}
+
+function _tgMetric(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? String(number) : "0";
+}
+
+function _tgConnectionTelemetry(conn) {
+  const health = conn.health || {};
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:7px;margin-top:10px">
+    <div class="panel" style="padding:8px"><span class="muted" style="font-size:11px">Last success</span><div style="font-size:12px">${_tgWhen(health.last_success_at)}</div></div>
+    <div class="panel" style="padding:8px"><span class="muted" style="font-size:11px">Last event</span><div style="font-size:12px">${_tgWhen(health.last_event_at)}</div></div>
+    <div class="panel" style="padding:8px"><span class="muted" style="font-size:11px">Persisted</span><div>${_tgMetric(health.persisted_events)}</div></div>
+    <div class="panel" style="padding:8px"><span class="muted" style="font-size:11px">Ignored</span><div>${_tgMetric(health.ignored_updates)}</div></div>
+    <div class="panel" style="padding:8px"><span class="muted" style="font-size:11px">Deduplicated</span><div>${_tgMetric(health.deduplicated_updates)}</div></div>
+  </div>`;
 }
 
 async function telegramManage(locked) {
@@ -1795,6 +1860,7 @@ async function telegramManage(locked) {
     return `<div class="panel" style="margin-top:12px">
       <div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><div><b>${esc(conn.name)}</b> <span class="muted">@${esc(conn.bot_username || "unverified")}</span></div>${_tgHealthBadge(conn.health)}</div>
       <div class="muted" style="font-size:12px;margin-top:6px">Credential reference: ${conn.credential_configured ? "configured" : "missing"}; cursor: ${conn.cursor_configured ? "active" : "not started"}</div>
+      ${_tgConnectionTelemetry(conn)}
       <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
         <button class="sm ghost" data-action="telegramTestConnection" data-id="${conn.id}">Test connection</button>
         <button class="sm ghost" data-action="telegramToggleConnection" data-id="${conn.id}" data-enabled="${conn.enabled ? "1" : "0"}">${conn.enabled ? "Disable collector" : "Enable collector"}</button>
@@ -1803,7 +1869,81 @@ async function telegramManage(locked) {
       <table style="margin-top:12px"><thead><tr><th>Source</th><th>Chat ID</th><th>Kind</th><th>Status</th><th></th></tr></thead><tbody>${sourceRows}</tbody></table>
     </div>`;
   }).join("") : '<div class="panel"><p class="muted">No Telegram connection configured. Add an opaque environment secret reference; never paste the bot token into ThreatForge.</p></div>';
-  host.innerHTML = `<div class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><div><h3 style="margin:0">Telegram Intelligence sources</h3><p class="muted" style="margin:4px 0 0">Authorized Bot API collection only. Links and message content are rendered as inert text.</p></div>${can("admin") ? '<button class="sm" data-action="telegramAddConnection">Add connection</button>' : ""}</div></div>${rows}`;
+  const events = can("analyst")
+    ? `<div id="telegramEvents" style="margin-top:14px"></div>`
+    : '<div class="panel" style="margin-top:14px"><h3 style="margin-top:0">Recent collected events</h3><p class="muted">Analyst or admin access is required to read redacted evidence.</p></div>';
+  host.innerHTML = `<div class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><div><h3 style="margin:0">Telegram Intelligence sources</h3><p class="muted" style="margin:4px 0 0">Authorized Bot API collection only. Links and message content are rendered as inert text.</p></div>${can("admin") ? '<button class="sm" data-action="telegramAddConnection">Add connection</button>' : ""}</div></div>${rows}${events}`;
+  host.dataset.telegramSources = JSON.stringify(sources.map(src => ({id: src.id, name: src.name || src.source_ref})));
+  if (can("analyst")) await telegramLoadEvents(true);
+}
+
+function _tgEventContext(context) {
+  const ctx = context || {};
+  const parts = [];
+  if (ctx.update_kind) parts.push(`kind: ${esc(ctx.update_kind)}`);
+  if (ctx.chat_type) parts.push(`chat: ${esc(ctx.chat_type)}`);
+  if (ctx.forwarded) parts.push("forwarded");
+  if (ctx.has_attachment) parts.push("attachment");
+  if (Number(ctx.entity_count || 0) > 0) parts.push(`entities: ${esc(ctx.entity_count)}`);
+  return parts.join(" · ");
+}
+
+function _tgRenderEvents() {
+  const host = $("#telegramEvents");
+  if (!host) return;
+  let sources = [];
+  try { sources = JSON.parse($("#telegramManager").dataset.telegramSources || "[]"); }
+  catch (_) { sources = []; }
+  const filters = [{id: 0, name: "All sources"}].concat(sources).map(src =>
+    `<button class="sm ${Number(src.id) === Number(TG_EVENT_SOURCE) ? "" : "ghost"}" data-action="telegramEventFilter" data-id="${esc(src.id)}">${esc(src.name)}</button>`
+  ).join(" ");
+  const rows = TG_EVENT_ROWS.length ? TG_EVENT_ROWS.map(event => {
+    const context = _tgEventContext(event.context);
+    const text = event.redacted_text
+      ? `<div style="white-space:pre-wrap;word-break:break-word;margin-top:7px;padding:9px;border:1px solid var(--line);border-radius:6px;background:var(--panel2)">${esc(event.redacted_text)}</div>`
+      : '<div class="muted" style="margin-top:7px">No textual content.</div>';
+    return `<div class="panel" style="margin-top:9px">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
+        <div><b>${esc(event.source_name)}</b> <span class="muted" style="font-size:12px">#${esc(event.id)}</span></div>
+        <span class="muted" style="font-size:12px">${_tgWhen(event.occurred_at || event.created_at)}</span>
+      </div>
+      <div class="muted" style="font-size:12px;margin-top:3px">${esc(event.state)}${context ? ` · ${context}` : ""}${event.text_truncated ? " · truncated" : ""}</div>
+      ${text}
+    </div>`;
+  }).join("") : '<div class="panel" style="margin-top:9px"><p class="muted">No collected events for this filter.</p></div>';
+  host.innerHTML = `<div class="panel">
+    <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap">
+      <div><h3 style="margin:0">Recent collected events</h3><p class="muted" style="margin:4px 0 0">Redacted evidence only. URLs, markup and message content are inert.</p></div>
+      <button class="sm ghost" data-action="telegramEventsRefresh">Refresh</button>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">${filters}</div>
+  </div>${rows}${TG_EVENT_HAS_MORE ? '<div style="margin-top:10px;text-align:center"><button class="sm ghost" data-action="telegramEventsOlder">Load older</button></div>' : ""}`;
+}
+
+async function telegramLoadEvents(reset) {
+  const host = $("#telegramEvents");
+  if (!host) return;
+  if (reset) {
+    TG_EVENT_ROWS = [];
+    TG_EVENT_HAS_MORE = false;
+    host.innerHTML = '<div class="panel"><p class="muted">Loading redacted evidence…</p></div>';
+  }
+  const params = new URLSearchParams({limit: String(TG_EVENT_PAGE_SIZE)});
+  if (TG_EVENT_SOURCE) params.set("source_id", String(TG_EVENT_SOURCE));
+  if (!reset && TG_EVENT_ROWS.length) params.set("before_id", String(TG_EVENT_ROWS[TG_EVENT_ROWS.length - 1].id));
+  try {
+    const page = await api("GET", `/collection/events?${params.toString()}`);
+    TG_EVENT_ROWS = reset ? page : TG_EVENT_ROWS.concat(page);
+    TG_EVENT_HAS_MORE = page.length === TG_EVENT_PAGE_SIZE;
+    _tgRenderEvents();
+  } catch (e) {
+    host.innerHTML = `<div class="panel"><h3 style="margin-top:0">Recent collected events</h3><p class="muted">${esc(e.message || "Unable to load collected events.")}</p></div>`;
+  }
+}
+
+function telegramSetEventSource(sourceId) {
+  TG_EVENT_SOURCE = Number(sourceId || 0);
+  telegramLoadEvents(true);
 }
 
 async function telegramAddConnection() {

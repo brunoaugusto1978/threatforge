@@ -15,7 +15,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import audit, config, features
-from app.auth import Principal, current_tenant_id, require_admin, require_viewer
+from app.auth import (
+    Principal, current_tenant_id, require_admin, require_analyst, require_viewer,
+)
 from app.collection import registry, runtime, service
 from app.database import get_db
 from app.models import CollectionEvent, CollectionSource
@@ -77,6 +79,30 @@ class SourceCreate(BaseModel):
 
 class SourceStateUpdate(BaseModel):
     enabled: bool
+
+
+_EVENT_CONTEXT_FIELDS = {
+    "chat_type",
+    "update_kind",
+    "forwarded",
+    "has_text",
+    "entity_count",
+    "has_attachment",
+}
+_EVENT_TEXT_LIMIT = 4000
+
+
+def _safe_event_context(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {key: value[key] for key in _EVENT_CONTEXT_FIELDS if key in value}
+
+
+def _event_text(value: Any) -> tuple[str, bool]:
+    text = value if isinstance(value, str) else ""
+    if len(text) <= _EVENT_TEXT_LIMIT:
+        return text, False
+    return text[:_EVENT_TEXT_LIMIT] + "…[truncated]", True
 
 
 def _audit(
@@ -485,12 +511,29 @@ def update_source_state(
 
 @router.get("/events")
 def list_events(
+    request: Request,
     source_id: int | None = Query(default=None),
-    limit: int = Query(default=50, ge=1, le=200),
+    before_id: int | None = Query(default=None, ge=1),
+    state: Literal[
+        "received", "normalized", "control", "rejected", "dead_letter",
+        "analyzing", "analyzed", "failed"
+    ] | None = Query(default=None),
+    limit: int = Query(default=25, ge=1, le=100),
     db: Session = Depends(get_db),
     tid: int = Depends(current_tenant_id),
+    principal: Principal = Depends(require_analyst),
 ):
+    """List tenant-scoped, redacted collection evidence.
+
+    The route never returns raw provider payloads, secret references, external
+    identifiers or unrestricted context. Pagination uses the stable event id.
+    """
     _gate()
+    if source_id is not None:
+        try:
+            service.get_source(db, tenant_id=tid, source_id=source_id)
+        except service.NotFound:
+            raise HTTPException(status_code=404, detail="Source not found.") from None
     stmt = (
         select(CollectionEvent, CollectionSource)
         .join(
@@ -498,25 +541,52 @@ def list_events(
             (CollectionSource.id == CollectionEvent.source_id)
             & (CollectionSource.tenant_id == CollectionEvent.tenant_id),
         )
-        .where(CollectionEvent.tenant_id == tid)
+        .where(
+            CollectionEvent.tenant_id == tid,
+            CollectionEvent.purged_at.is_(None),
+        )
     )
     if source_id is not None:
         stmt = stmt.where(CollectionEvent.source_id == source_id)
+    if before_id is not None:
+        stmt = stmt.where(CollectionEvent.id < before_id)
+    if state is not None:
+        stmt = stmt.where(CollectionEvent.processing_state == state)
     rows = db.execute(
         stmt.order_by(CollectionEvent.id.desc()).limit(limit)
     ).all()
-    return [
+    result = []
+    for event, source in rows:
+        text, truncated = _event_text(event.redacted_text)
+        result.append(
+            {
+                "id": event.id,
+                "source_id": event.source_id,
+                "source_name": source.name or source.source_ref,
+                "provider": event.provider,
+                "state": event.processing_state,
+                "occurred_at": event.occurred_at,
+                "created_at": event.created_at,
+                "redacted_text": text,
+                "text_truncated": truncated,
+                "context": _safe_event_context(event.context_json),
+                "finding_id": event.finding_id,
+                "case_id": event.case_id,
+            }
+        )
+    _audit(
+        db,
+        principal,
+        tid,
+        request,
+        "collection.events_viewed",
+        "collection_event",
+        source_id,
         {
-            "id": event.id,
-            "source_id": event.source_id,
-            "source_name": source.name or source.source_ref,
-            "provider": event.provider,
-            "state": event.processing_state,
-            "occurred_at": event.occurred_at,
-            "created_at": event.created_at,
-            "redacted_text": event.redacted_text or "",
-            "context": dict(event.context_json or {}),
-            "analysis": dict(event.analysis_json or {}),
-        }
-        for event, source in rows
-    ]
+            "rows": len(result),
+            "source_id": source_id,
+            "before_id": before_id,
+            "state": state,
+        },
+    )
+    return result

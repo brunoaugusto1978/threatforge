@@ -64,6 +64,27 @@ license signing key is never mounted.
 9. Disable the source or connection immediately to stop new ingestion. Existing
    evidence remains preserved.
 
+## Phase 2B observability and evidence surface
+
+The isolated collector uses a file heartbeat and a worker-specific Docker
+healthcheck. It does not inherit the API HTTP probe. A healthy container means
+the collection loop is alive; provider authorization and ingestion failures
+remain visible in the connection health state as `healthy`, `degraded`,
+`unauthorized` or `offline`.
+
+Connection telemetry is stored in the existing `config_json._health` object, so
+Phase 2B requires no database migration. Empty polling cycles preserve
+`last_event_at`, prior success metadata and cumulative counters. Persisted event
+counts are rebuilt from tenant-scoped evidence rows after restart.
+
+Analysts and administrators can read **Recent collected events** from the web
+interface. The surface consumes `GET /collection/events` with source filtering
+and id-based pagination. It returns only redacted text and an allowlisted subset
+of normalized context; it never returns raw Bot API payloads, secret references,
+external identifiers or unrestricted analysis data. Every evidence-list access
+is tenant-scoped and audited as `collection.events_viewed`. URLs and markup are
+rendered as inert text.
+
 ## POC classification test set
 
 These examples are for the later analysis phase and must be treated as hostile
@@ -86,3 +107,12 @@ Stopping/removing the collector or Enterprise overlay does not delete tenant
 records. Never run `docker compose down -v`, `docker volume rm` or a volume prune
 as part of an edition switch. Preserve database and evidence volumes and keep
 issues open until the full acceptance criteria are validated.
+
+## Main dashboard visibility
+
+The operational dashboard includes Telegram Intelligence as a first-class
+inbound collection surface. It reports license state, verified connection
+state, active/total authorized sources, collector health, and persisted event
+count without exposing bot tokens, opaque secret references, chat IDs, raw
+payloads, or message text. A stale worker heartbeat is represented as
+`offline`; outbound Telegram notifications remain a separate capability.

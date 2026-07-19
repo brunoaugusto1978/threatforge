@@ -1,4 +1,4 @@
-"""GET /dashboard/overview — v0.9.4 real-data operational dashboard.
+"""GET /dashboard/overview — v0.11.0 real-data operational dashboard.
 
 Covers the release contract for :mod:`app.routers.dashboard_routes`:
 
@@ -113,6 +113,12 @@ def test_overview_reflects_real_data_no_mocking(tenant_admin_client):
     assert empty["recent_cases"] == []
     assert empty["recent_exposure_findings"] == []
     assert empty["top_exposed_assets"] == []
+    assert empty["summary"]["telegram_sources_active"] == 0
+    assert empty["summary"]["telegram_events_total"] == 0
+    telegram_empty = next(it for it in empty["integrations"] if it["name"] == "telegram-intelligence")
+    assert telegram_empty["surface"] == "collection"
+    assert telegram_empty["connected"] is False
+    assert telegram_empty["collector_state"] == "not_configured"
 
     # IOC
     ro = client.post("/observables", json={"type": "ip", "value": "203.0.113.10"})
@@ -330,7 +336,7 @@ def test_overview_never_exposes_integration_secrets_or_raw_config(tenant_admin_c
         assert banned not in flat, banned
 
     integrations = {it["name"]: it for it in body["integrations"]}
-    assert set(integrations) == {"misp", "opencti", "generic"}
+    assert set(integrations) == {"misp", "opencti", "generic", "telegram-intelligence"}
     assert integrations["generic"]["connected"] is True
     assert integrations["generic"]["connection_enabled"] is True
     assert integrations["generic"]["license_enabled"] is True
@@ -338,13 +344,112 @@ def test_overview_never_exposes_integration_secrets_or_raw_config(tenant_admin_c
     # not fabricated "connected" flags.
     assert integrations["misp"]["connected"] is False
     assert integrations["misp"]["license_enabled"] is False
-    # Only the reduced, safe fields are present per integration.
+    # Only the reduced, safe fields are present per integration/collection surface.
+    safe_fields = {
+        "name", "title", "premium", "license_enabled", "connected",
+        "connection_enabled", "surface", "connection_count",
+        "enabled_connection_count", "source_count", "active_source_count",
+        "event_count", "collector_state", "last_success_at", "last_event_at",
+    }
     for it in body["integrations"]:
-        assert set(it) == {"name", "title", "premium", "license_enabled",
-                           "connected", "connection_enabled"}
+        assert set(it) == safe_fields
 
     assert body["summary"]["integrations_connected"] == 1
-    assert body["summary"]["integrations_catalog_total"] == 3
+    assert body["summary"]["integrations_catalog_total"] == 4
+
+
+# ---------------------------------------------------------------------------
+# Telegram Intelligence is a first-class dashboard surface
+# ---------------------------------------------------------------------------
+def test_overview_includes_telegram_collection_health_sources_and_events(
+    tenant_admin_client, monkeypatch,
+):
+    _enable(monkeypatch, "collection.telegram")
+
+    from app.database import SessionLocal
+    from app.models import (CollectionConnection, CollectionEvent,
+                            CollectionSource, Tenant, utcnow)
+
+    now = utcnow().isoformat()
+    with SessionLocal() as db:
+        tid = db.query(Tenant).first().id
+        conn = CollectionConnection(
+            tenant_id=tid, provider="telegram", name="CBG Telegram POC",
+            enabled=True, status="active", provider_account_ref="8770625350",
+            cursor="110122819",
+            config_json={
+                "poll_timeout_seconds": 20,
+                "_health": {
+                    "state": "healthy", "checked_at": now,
+                    "last_success_at": now, "last_event_at": now,
+                },
+            },
+            secret_refs={"bot_token": "secretref://file/redacted"},
+            secrets_metadata={"bot_token": {"configured": True}},
+        )
+        db.add(conn)
+        db.flush()
+        source = CollectionSource(
+            tenant_id=tid, connection_id=conn.id, provider="telegram",
+            source_ref="-5107651859", kind="group", name="Sala de Conteúdo",
+            enabled=True, status="active",
+        )
+        db.add(source)
+        db.flush()
+        db.add(CollectionEvent(
+            tenant_id=tid, source_id=source.id, provider="telegram",
+            external_id_hash="a" * 64, processing_state="normalized",
+            redacted_text="safe redacted text", occurred_at=utcnow(),
+        ))
+        db.commit()
+
+    response = tenant_admin_client.get("/dashboard/overview")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    telegram = next(it for it in body["integrations"] if it["name"] == "telegram-intelligence")
+
+    assert telegram["license_enabled"] is True
+    assert telegram["connected"] is True
+    assert telegram["connection_enabled"] is True
+    assert telegram["connection_count"] == 1
+    assert telegram["active_source_count"] == 1
+    assert telegram["source_count"] == 1
+    assert telegram["event_count"] == 1
+    assert telegram["collector_state"] == "healthy"
+    assert telegram["last_success_at"] == now
+    assert telegram["last_event_at"] == now
+
+    assert body["summary"]["telegram_connections_total"] == 1
+    assert body["summary"]["telegram_sources_active"] == 1
+    assert body["summary"]["telegram_events_total"] == 1
+    assert body["summary"]["integrations_connected"] == 1
+
+    # Secret references and chat IDs are never exposed by the dashboard.
+    assert "secretref://" not in response.text
+    assert "-5107651859" not in response.text
+
+
+def test_overview_marks_stale_telegram_health_offline(tenant_admin_client, monkeypatch):
+    _enable(monkeypatch, "collection.telegram")
+
+    from datetime import timedelta
+    from app.database import SessionLocal
+    from app.models import CollectionConnection, Tenant, utcnow
+
+    stale = (utcnow() - timedelta(minutes=10)).isoformat()
+    with SessionLocal() as db:
+        tid = db.query(Tenant).first().id
+        db.add(CollectionConnection(
+            tenant_id=tid, provider="telegram", name="stale",
+            enabled=True, status="active", provider_account_ref="bot-stale",
+            config_json={"_health": {"state": "healthy", "checked_at": stale}},
+            secret_refs={}, secrets_metadata={},
+        ))
+        db.commit()
+
+    body = tenant_admin_client.get("/dashboard/overview").json()
+    telegram = next(it for it in body["integrations"] if it["name"] == "telegram-intelligence")
+    assert telegram["collector_state"] == "offline"
 
 
 # ---------------------------------------------------------------------------

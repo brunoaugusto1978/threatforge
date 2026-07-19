@@ -1,4 +1,4 @@
-"""Operational Dashboard Overview (v0.9.4) — tenant-scoped, viewer+.
+"""Operational Dashboard Overview (v0.11.0) — tenant-scoped, viewer+.
 
 Replaces the old "just /stats" Overview with a single aggregation endpoint
 that gives an operator a real, at-a-glance read of CTI/DRP/Exposure Monitoring
@@ -49,7 +49,8 @@ from sqlalchemy.orm import Session
 from app import config, exposure_ingest as ing, features, integrations, risk
 from app.auth import Principal, current_tenant_id, require_viewer
 from app.database import get_db
-from app.models import (Brand, BrandFinding, CredentialIdentity,
+from app.models import (Brand, BrandFinding, CollectionConnection,
+                        CollectionEvent, CollectionSource, CredentialIdentity,
                         ExposureFinding, ExposureIngestBatch, IntegrationConnection,
                         InvestigationCase, MonitoredAsset, Observable, utcnow)
 
@@ -75,6 +76,124 @@ EXPOSURE_STATUSES = ("new", "triaging", "confirmed", "mitigated", "closed",
 EXPOSURE_OPEN_STATUSES = {"new", "triaging", "confirmed"}
 
 BRAND_FINDING_PRIORITY_VERDICTS = {"malicious", "suspicious"}
+
+_COLLECTION_HEALTH_STATES = {"healthy", "degraded", "unauthorized", "offline", "pending"}
+_COLLECTION_STATE_PRIORITY = ("unauthorized", "offline", "degraded", "pending", "healthy")
+_COLLECTION_STALE_AFTER_SECONDS = 120
+
+
+def _parse_iso(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _latest_iso(values: list[str | None]) -> str | None:
+    parsed = [(_parse_iso(value), value) for value in values]
+    valid = [(dt, value) for dt, value in parsed if dt is not None]
+    if not valid:
+        return None
+    return str(max(valid, key=lambda item: item[0])[1])
+
+
+def _telegram_collection_status(db: Session, tid: int) -> dict:
+    """Return a reduced, tenant-scoped Telegram Intelligence dashboard row.
+
+    Only operational columns and ``config_json._health`` are consumed. Opaque
+    secret references and secret metadata are not selected from the database.
+    """
+    rows = db.execute(
+        select(
+            CollectionConnection.id,
+            CollectionConnection.enabled,
+            CollectionConnection.status,
+            CollectionConnection.provider_account_ref,
+            CollectionConnection.cursor,
+            CollectionConnection.config_json,
+        ).where(
+            CollectionConnection.tenant_id == tid,
+            CollectionConnection.provider == "telegram",
+            CollectionConnection.deleted_at.is_(None),
+        )
+    ).all()
+
+    source_total = db.scalar(
+        select(func.count()).select_from(CollectionSource).where(
+            CollectionSource.tenant_id == tid,
+            CollectionSource.provider == "telegram",
+            CollectionSource.deleted_at.is_(None),
+        )
+    ) or 0
+    source_active = db.scalar(
+        select(func.count()).select_from(CollectionSource).where(
+            CollectionSource.tenant_id == tid,
+            CollectionSource.provider == "telegram",
+            CollectionSource.deleted_at.is_(None),
+            CollectionSource.enabled == True,  # noqa: E712
+        )
+    ) or 0
+    event_total = db.scalar(
+        select(func.count()).select_from(CollectionEvent).where(
+            CollectionEvent.tenant_id == tid,
+            CollectionEvent.provider == "telegram",
+        )
+    ) or 0
+
+    enabled_rows = [row for row in rows if bool(row.enabled)]
+    verified = any(bool(row.provider_account_ref) for row in rows)
+    health_rows: list[dict] = []
+    for row in enabled_rows:
+        config_json = row.config_json if isinstance(row.config_json, dict) else {}
+        health = config_json.get("_health")
+        health_rows.append(dict(health) if isinstance(health, dict) else {"state": "pending"})
+
+    if not rows:
+        collector_state = "not_configured"
+    elif not enabled_rows:
+        collector_state = "paused"
+    else:
+        states: list[str] = []
+        now = utcnow()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        for health in health_rows:
+            state = str(health.get("state") or "pending")
+            if state not in _COLLECTION_HEALTH_STATES:
+                state = "degraded"
+            checked_at = _parse_iso(health.get("checked_at"))
+            if checked_at is None:
+                state = "pending"
+            elif (now - checked_at).total_seconds() > _COLLECTION_STALE_AFTER_SECONDS:
+                state = "offline"
+            states.append(state)
+        collector_state = next(
+            (state for state in _COLLECTION_STATE_PRIORITY if state in states),
+            "pending",
+        )
+
+    return {
+        "name": "telegram-intelligence",
+        "title": "Telegram Intelligence",
+        "premium": True,
+        "license_enabled": features.is_enabled(features.Feature.COLLECTION_TELEGRAM),
+        "connected": verified,
+        "connection_enabled": bool(enabled_rows),
+        "surface": "collection",
+        "connection_count": len(rows),
+        "enabled_connection_count": len(enabled_rows),
+        "source_count": int(source_total),
+        "active_source_count": int(source_active),
+        "event_count": int(event_total),
+        "collector_state": collector_state,
+        "last_success_at": _latest_iso([h.get("last_success_at") for h in health_rows]),
+        "last_event_at": _latest_iso([h.get("last_event_at") for h in health_rows]),
+    }
 
 
 def _iso(dt: datetime | None) -> str | None:
@@ -182,7 +301,11 @@ def dashboard_overview(
             .where(IntegrationConnection.tenant_id == tid)
         ).all()
     }
-    integrations_connected = sum(1 for d in descriptors if d.name in connected_rows)
+    telegram_status = _telegram_collection_status(db, tid)
+    integrations_connected = (
+        sum(1 for d in descriptors if d.name in connected_rows)
+        + (1 if telegram_status["connected"] else 0)
+    )
 
     summary = {
         "iocs_total": iocs_total,
@@ -201,8 +324,13 @@ def dashboard_overview(
         "credential_identities_total": identities_total,
         "credential_identities_active": identities_active,
         "credential_identities_high_risk": identities_high_risk,
-        "integrations_catalog_total": len(descriptors),
+        "integrations_catalog_total": len(descriptors) + 1,
         "integrations_connected": integrations_connected,
+        "telegram_connections_total": telegram_status["connection_count"],
+        "telegram_connections_enabled": telegram_status["enabled_connection_count"],
+        "telegram_sources_total": telegram_status["source_count"],
+        "telegram_sources_active": telegram_status["active_source_count"],
+        "telegram_events_total": telegram_status["event_count"],
     }
 
     # ---------------- distributions ----------------
@@ -314,7 +442,17 @@ def dashboard_overview(
             "license_enabled": features.is_enabled(d.feature),
             "connected": d.name in connected_rows,
             "connection_enabled": bool(enabled_flag) if enabled_flag is not None else False,
+            "surface": "integration",
+            "connection_count": 1 if d.name in connected_rows else 0,
+            "enabled_connection_count": 1 if bool(enabled_flag) else 0,
+            "source_count": None,
+            "active_source_count": None,
+            "event_count": None,
+            "collector_state": "not_applicable",
+            "last_success_at": None,
+            "last_event_at": None,
         })
+    integrations_status.append(telegram_status)
 
     return {
         "generated_at": _iso(utcnow()),

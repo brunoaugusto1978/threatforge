@@ -222,14 +222,31 @@ def set_connection_enabled(
 def set_connection_health(
     db: Session, *, tenant_id: int, connection_id: int, health: dict
 ) -> CollectionConnection:
+    """Merge sanitized operational telemetry into ``config_json._health``.
+
+    Empty polling cycles must not erase the last observed event timestamp or
+    cumulative counters.  Provider failures likewise preserve the last known
+    success/event metadata while replacing the current state and diagnostic.
+    """
     conn = _get_connection(db, tenant_id, connection_id)
     allowed = {
         "state", "checked_at", "last_success_at", "last_event_at",
-        "lag_seconds", "error_code", "retry_after_seconds", "ignored_updates",
-        "processed_updates",
+        "lag_seconds", "error_code", "retry_after_seconds",
+        "processed_updates", "deduplicated_updates", "rejected_updates",
+        "ignored_updates", "persisted_events",
+        "last_cycle_processed", "last_cycle_deduplicated",
+        "last_cycle_rejected", "last_cycle_ignored",
     }
-    clean = {k: v for k, v in dict(health or {}).items() if k in allowed}
-    conn.config_json = {**(conn.config_json or {}), "_health": clean}
+    incoming = {k: v for k, v in dict(health or {}).items() if k in allowed}
+    current = connection_health(conn)
+    merged = dict(current)
+    for key, value in incoming.items():
+        # An empty provider value means "no new event in this cycle", not that
+        # the historical timestamp disappeared.
+        if key in {"last_success_at", "last_event_at"} and value in (None, ""):
+            continue
+        merged[key] = value
+    conn.config_json = {**(conn.config_json or {}), "_health": merged}
     conn.updated_at = utcnow()
     db.flush()
     return conn

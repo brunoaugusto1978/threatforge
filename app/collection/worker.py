@@ -1,9 +1,12 @@
 """Isolated collection worker for provider-neutral inbound intelligence.
 
-The worker is a separate process from FastAPI.  It polls only enabled
+The worker is a separate process from FastAPI. It polls only enabled
 connections, dispatches transient updates to enabled tenant-scoped sources and
 uses :func:`app.collection.ingest.ingest_update`, which persists each event and
 advances the connection cursor in the same transaction.
+
+Phase 2B adds an explicit worker heartbeat and durable operational telemetry.
+Empty polling cycles preserve the last event timestamp and cumulative counters.
 """
 from __future__ import annotations
 
@@ -14,13 +17,18 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import features
-from app.collection import ingest, registry, runtime, service
+from app.collection import healthcheck, ingest, registry, runtime, service
 from app.database import SessionLocal
-from app.models import CollectionConnection, CollectionSource, utcnow
+from app.models import (
+    CollectionConnection,
+    CollectionEvent,
+    CollectionSource,
+    utcnow,
+)
 
 LOG = logging.getLogger("threatforge.collection.worker")
 
@@ -32,6 +40,19 @@ def _iso_now() -> str:
 def _cursor(raw: dict[str, Any]) -> str | None:
     value = raw.get("update_id")
     return str(value) if value is not None else None
+
+
+def _as_non_negative_int(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
 @dataclass(frozen=True)
@@ -56,6 +77,41 @@ def _health_dict(health: Any) -> dict[str, Any]:
     return {"state": "degraded", "checked_at": _iso_now(), "error_code": "provider_error"}
 
 
+def _event_metrics(
+    db: Session, *, tenant_id: int, connection_id: int
+) -> dict[str, Any]:
+    """Return tenant-scoped persisted metrics for one connection.
+
+    Counting persisted rows makes the telemetry self-healing after restart and
+    also recovers events that existed before Phase 2B was deployed.
+    """
+    source_ids = select(CollectionSource.id).where(
+        CollectionSource.tenant_id == tenant_id,
+        CollectionSource.connection_id == connection_id,
+    )
+    base = (
+        CollectionEvent.tenant_id == tenant_id,
+        CollectionEvent.source_id.in_(source_ids),
+    )
+    persisted = db.scalar(
+        select(func.count(CollectionEvent.id)).where(*base)
+    ) or 0
+    rejected = db.scalar(
+        select(func.count(CollectionEvent.id)).where(
+            *base, CollectionEvent.processing_state == "rejected"
+        )
+    ) or 0
+    last_event = db.scalar(
+        select(func.max(CollectionEvent.occurred_at)).where(*base)
+    )
+    return {
+        "persisted_events": int(persisted),
+        "processed_updates": max(0, int(persisted) - int(rejected)),
+        "rejected_updates": int(rejected),
+        "last_event_at": _as_utc(last_event).isoformat() if last_event else "",
+    }
+
+
 def _advance_ignored(
     db: Session, *, tenant_id: int, connection_id: int, cursor: str | None
 ) -> None:
@@ -66,6 +122,23 @@ def _advance_ignored(
     )
     conn.cursor = cursor
     conn.updated_at = utcnow()
+    db.commit()
+
+
+def _record_failure_health(
+    db: Session,
+    *,
+    tenant_id: int,
+    connection_id: int,
+    health: dict[str, Any],
+) -> None:
+    """Persist a failure state without destroying historical telemetry."""
+    service.set_connection_health(
+        db,
+        tenant_id=tenant_id,
+        connection_id=connection_id,
+        health=health,
+    )
     db.commit()
 
 
@@ -81,7 +154,7 @@ def run_connection_once(
 
     provider = registry.providers.get(conn.provider)
     if provider is None:
-        service.set_connection_health(
+        _record_failure_health(
             db,
             tenant_id=tenant_id,
             connection_id=connection_id,
@@ -91,14 +164,13 @@ def run_connection_once(
                 "error_code": "provider_unavailable",
             },
         )
-        db.commit()
         return WorkerOutcome(
             connection_id, "failed", cursor=conn.cursor, error_code="provider_unavailable"
         )
 
     secret_ref = (conn.secret_refs or {}).get("bot_token")
     if not secret_ref:
-        service.set_connection_health(
+        _record_failure_health(
             db,
             tenant_id=tenant_id,
             connection_id=connection_id,
@@ -108,7 +180,6 @@ def run_connection_once(
                 "error_code": "credential_unavailable",
             },
         )
-        db.commit()
         return WorkerOutcome(
             connection_id, "failed", cursor=conn.cursor, error_code="credential_unavailable"
         )
@@ -117,7 +188,7 @@ def run_connection_once(
         batch = provider.poll(secret_ref, conn.cursor, conn.config_json or {})
     except Exception as exc:  # provider boundary: sanitize, never log str(exc)
         diagnostic = runtime.provider_diagnostic(exc)
-        service.set_connection_health(
+        _record_failure_health(
             db,
             tenant_id=tenant_id,
             connection_id=connection_id,
@@ -128,7 +199,6 @@ def run_connection_once(
                 "retry_after_seconds": diagnostic["retry_after_seconds"],
             },
         )
-        db.commit()
         LOG.warning(
             "collection poll failed provider=%s connection_id=%s code=%s",
             conn.provider,
@@ -169,7 +239,12 @@ def run_connection_once(
                 db, source=source, raw=raw, normalizer=provider.normalize
             )
         except ingest.IngestInfrastructureError:
-            service.set_connection_health(
+            current_health = service.connection_health(
+                service.get_connection(
+                    db, tenant_id=tenant_id, connection_id=connection_id
+                )
+            )
+            _record_failure_health(
                 db,
                 tenant_id=tenant_id,
                 connection_id=connection_id,
@@ -177,11 +252,18 @@ def run_connection_once(
                     "state": "degraded",
                     "checked_at": _iso_now(),
                     "error_code": "ingest_infrastructure_error",
-                    "processed_updates": processed,
-                    "ignored_updates": ignored,
+                    "last_cycle_processed": processed,
+                    "last_cycle_deduplicated": dedup,
+                    "last_cycle_rejected": rejected,
+                    "last_cycle_ignored": ignored,
+                    "deduplicated_updates": _as_non_negative_int(
+                        current_health.get("deduplicated_updates")
+                    ) + dedup,
+                    "ignored_updates": _as_non_negative_int(
+                        current_health.get("ignored_updates")
+                    ) + ignored,
                 },
             )
-            db.commit()
             return WorkerOutcome(
                 connection_id,
                 "failed",
@@ -201,8 +283,43 @@ def run_connection_once(
         else:
             processed += 1
 
+    current = service.get_connection(
+        db, tenant_id=tenant_id, connection_id=connection_id
+    )
+    previous_health = service.connection_health(current)
+    metrics = _event_metrics(
+        db, tenant_id=tenant_id, connection_id=connection_id
+    )
     health = _health_dict(batch.health)
-    health.update({"processed_updates": processed, "ignored_updates": ignored})
+    # Prefer the timestamp derived from persisted evidence. It also recovers
+    # pre-Phase-2B rows when the current poll is empty.
+    if metrics["last_event_at"]:
+        health["last_event_at"] = metrics["last_event_at"]
+    health.update(
+        {
+            "persisted_events": metrics["persisted_events"],
+            "processed_updates": max(
+                _as_non_negative_int(previous_health.get("processed_updates")),
+                metrics["processed_updates"],
+            ),
+            "rejected_updates": max(
+                _as_non_negative_int(previous_health.get("rejected_updates")),
+                metrics["rejected_updates"],
+            ),
+            "deduplicated_updates": _as_non_negative_int(
+                previous_health.get("deduplicated_updates")
+            ) + dedup,
+            "ignored_updates": _as_non_negative_int(
+                previous_health.get("ignored_updates")
+            ) + ignored,
+            "last_cycle_processed": processed,
+            "last_cycle_deduplicated": dedup,
+            "last_cycle_rejected": rejected,
+            "last_cycle_ignored": ignored,
+            "error_code": "",
+            "retry_after_seconds": None,
+        }
+    )
     service.set_connection_health(
         db,
         tenant_id=tenant_id,
@@ -254,11 +371,23 @@ def main() -> int:
     if enabled not in {"1", "true", "yes", "on"}:
         LOG.info("collection worker disabled by configuration")
         return 0
-    interval = max(5, min(int(os.getenv("THREATFORGE_COLLECTION_POLL_INTERVAL", "15")), 300))
+    interval = max(
+        5,
+        min(int(os.getenv("THREATFORGE_COLLECTION_POLL_INTERVAL", "15")), 300),
+    )
+    healthcheck.touch_heartbeat()
     while True:
-        with SessionLocal() as db:
-            outcomes = run_all_once(db)
-            LOG.info("collection cycle connections=%s", len(outcomes))
+        healthcheck.touch_heartbeat()
+        try:
+            with SessionLocal() as db:
+                outcomes = run_all_once(db)
+                LOG.info("collection cycle connections=%s", len(outcomes))
+        except Exception as exc:  # keep the isolated loop alive; never log secrets
+            LOG.error(
+                "collection cycle failed error_type=%s", type(exc).__name__
+            )
+        finally:
+            healthcheck.touch_heartbeat()
         time.sleep(interval)
 
 
