@@ -127,29 +127,239 @@ def render_case_markdown(case, notes, evidence, edition: str = "community") -> s
     return "\n".join(L)
 
 
-def _case_report(case, edition: str = "community", **_) -> dict:
-    """Non-secret report payload for the Enterprise PDF renderer.
+_CASE_SEVERITY = {
+    "critico": "critical",
+    "crítico": "critical",
+    "critical": "critical",
+    "alto": "high",
+    "alta": "high",
+    "high": "high",
+    "medio": "medium",
+    "médio": "medium",
+    "media": "medium",
+    "média": "medium",
+    "medium": "medium",
+    "baixo": "low",
+    "baixa": "low",
+    "low": "low",
+    "info": "informational",
+    "informational": "informational",
+}
 
-    No secrets: no storage keys, no file paths, no evidence binaries — only case
-    metadata the analyst already sees.
+
+def _canonical_case_severity(value) -> str:
+    return _CASE_SEVERITY.get(str(value or "").strip().casefold(), "informational")
+
+
+def _source_label(value) -> str:
+    source = str(value or "").strip().casefold()
+    if source == "telegram_intelligence":
+        return "Telegram Intelligence"
+    if source == "file_import":
+        return "File Import"
+    return source.replace("_", " ").title() or "Threat Intelligence"
+
+
+def _as_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _case_report(
+    case,
+    edition: str = "community",
+    *,
+    tenant_name: str | None = None,
+    intelligence: dict | None = None,
+    exposure_finding: dict | None = None,
+    **_,
+) -> dict:
+    """Build a safe case report payload for the Enterprise PDF renderer.
+
+    The payload is deliberately metadata-only. It excludes raw provider text,
+    actor/chat identifiers, payloads, fingerprints, secrets, storage keys and
+    license internals. Intelligence cases receive a structured summary based on
+    tenant-scoped correlation metadata supplied by the route.
     """
     cid = getattr(case, "id", "")
     title = getattr(case, "title", None) or f"Investigation Case {cid}"
-    findings: list[dict] = []
     snap = getattr(case, "finding_snapshot", None)
-    if isinstance(snap, dict):
+    snapshot = snap if isinstance(snap, dict) else {}
+    snapshot_intel = (
+        snapshot.get("intelligence")
+        if isinstance(snapshot.get("intelligence"), dict)
+        else {}
+    )
+    intel = intelligence if isinstance(intelligence, dict) else {}
+    finding = exposure_finding if isinstance(exposure_finding, dict) else {}
+
+    finding_id = finding.get("id") or intel.get("finding_id") or snapshot.get("exposure_finding_id")
+    source = finding.get("source") or intel.get("source") or snapshot.get("source") or ""
+    source_label = _source_label(source)
+    decision = intel.get("decision") or snapshot_intel.get("latest_decision") or snapshot_intel.get("decision") or ""
+    confidence = intel.get("confidence_score")
+    if confidence in (None, ""):
+        confidence = snapshot_intel.get("confidence_score")
+    confidence_score = _as_int(confidence, 0)
+    correlation_family = intel.get("correlation_family") or snapshot_intel.get("correlation_family") or ""
+    event_ids = [
+        _as_int(item)
+        for item in (intel.get("event_ids") or [])
+        if _as_int(item) > 0
+    ]
+    event_count = _as_int(intel.get("correlated_event_count"), len(event_ids))
+    human_review = bool(intel.get("human_review_required", bool(intel)))
+    first_activity = str(intel.get("first_event_at") or "")
+    last_activity = str(intel.get("last_activity_at") or "")
+
+    canonical_severity = _canonical_case_severity(
+        finding.get("severity") or getattr(case, "severity", "")
+    )
+    risk_score = _as_int(
+        finding.get("risk_score"),
+        confidence_score or _as_int(snapshot.get("score"), 0),
+    )
+    risk_score = max(0, min(100, risk_score))
+
+    is_intelligence = bool(intel or source.endswith("_intelligence"))
+    findings: list[dict] = []
+    recommendations: list[dict] = []
+    next_steps: list[str] = []
+    case_context: dict = {}
+
+    if is_intelligence:
+        target_label = (
+            finding.get("target_label")
+            or snapshot_intel.get("target_label")
+            or title
+        )
+        refs = ", ".join(f"#{item}" for item in event_ids) or "none"
+        review_label = "required" if human_review else "not required"
+        finding_title = finding.get("title") or title
+        finding_reference = f"#{finding_id}" if finding_id else "not recorded"
+        technical_description = (
+            f"An inbound intelligence signal was correlated to the monitored target "
+            f"{target_label}. The incident consolidates {event_count} authorized "
+            f"provider event(s) under finding {finding_reference}. Message content and "
+            f"provider identities are excluded from this report."
+        )
+        technical_context = (
+            f"Decision: {decision or 'not recorded'}; correlation family: "
+            f"{correlation_family or 'not recorded'}; correlated events: {event_count}; "
+            f"first activity: {first_activity or 'not recorded'}; last activity: "
+            f"{last_activity or 'not recorded'}; safe event references: {refs}; "
+            f"human review: {review_label}."
+        )
         findings.append({
-            "title": str(snap.get("domain") or snap.get("title") or "finding"),
-            "severity": str(getattr(case, "severity", "") or ""),
-            "summary": "",
+            "title": str(finding_title),
+            "severity": canonical_severity,
+            "description": technical_description,
+            "recommendation": (
+                "Perform analyst review, validate the target and surrounding context, "
+                "preserve collected evidence, assess potentially affected assets, "
+                "document the disposition and continue monitoring the authorized source."
+            ),
+            "evidence": [{
+                "source": source_label,
+                "value": f"Finding #{finding_id}" if finding_id else "Correlated intelligence finding",
+                "context": technical_context,
+                "confidence": f"{confidence_score}/100" if confidence_score else "not recorded",
+            }],
         })
+        executive_summary = (
+            f"Investigation case #{cid} is {getattr(case, 'status', '')} with "
+            f"{canonical_severity} severity and a risk score of {risk_score}/100. "
+            f"{source_label} correlated {event_count} event(s) to finding "
+            f"{finding_reference}. Human review is {review_label}."
+        )
+        recommendations = [
+            {
+                "title": "Perform analyst review",
+                "priority": canonical_severity,
+                "description": "Validate the classification, target and conversation context before escalation.",
+                "owner": "Security Operations",
+            },
+            {
+                "title": "Preserve collected evidence",
+                "priority": "high",
+                "description": "Maintain evidence integrity and chain-of-custody records for the correlated events.",
+                "owner": "Security Operations",
+            },
+            {
+                "title": "Assess affected assets",
+                "priority": "high",
+                "description": "Determine whether credentials, identities, domains or internal services may be affected.",
+                "owner": "Incident Response",
+            },
+            {
+                "title": "Document disposition",
+                "priority": "medium",
+                "description": "Record validation results, response decisions and case status changes.",
+                "owner": "Case Owner",
+            },
+            {
+                "title": "Continue source monitoring",
+                "priority": "medium",
+                "description": "Continue monitoring the authorized intelligence source for related activity.",
+                "owner": "Cyber Threat Intelligence",
+            },
+        ]
+        next_steps = [
+            "Review the safe correlation metadata and available evidence.",
+            "Validate the monitored target and potential business impact.",
+            "Record analyst disposition and response actions in the case.",
+            "Continue monitoring for additional related events.",
+        ]
+        case_context = {
+            "case_id": str(cid),
+            "status": str(getattr(case, "status", "") or ""),
+            "severity": canonical_severity,
+            "source": source_label,
+            "finding_id": str(finding_id or ""),
+            "decision": str(decision or ""),
+            "confidence_score": confidence_score,
+            "correlation_family": str(correlation_family or ""),
+            "correlated_event_count": event_count,
+            "first_activity": first_activity,
+            "last_activity": last_activity,
+            "event_references": [f"#{item}" for item in event_ids],
+            "human_review_required": human_review,
+        }
+    else:
+        finding_title = str(snapshot.get("domain") or snapshot.get("title") or title)
+        findings.append({
+            "title": finding_title,
+            "severity": canonical_severity,
+            "description": str(getattr(case, "description", None) or "Investigation case finding."),
+            "recommendation": "Review the case evidence and document the analyst disposition.",
+            "evidence": [],
+        })
+        executive_summary = (
+            f"Investigation case #{cid} ({getattr(case, 'status', '')}) with "
+            f"{canonical_severity} severity."
+        )
+        recommendations = [{
+            "title": "Complete analyst review",
+            "priority": canonical_severity,
+            "description": "Review available case evidence and document the final disposition.",
+            "owner": "Case Owner",
+        }]
+        next_steps = ["Review evidence and notes.", "Record the case disposition."]
+
     return {
-        "tenant_name": str(getattr(case, "tenant_id", "") or ""),
+        "tenant_name": str(tenant_name or f"Tenant {getattr(case, 'tenant_id', '')}"),
         "report_title": str(title),
-        "executive_summary": f"Investigation case #{cid} ({getattr(case, 'status', '')}).",
-        "risk_score": int(getattr(case, "risk_score", 0) or 0),
+        "executive_summary": executive_summary,
+        "risk_score": risk_score,
+        "overall_severity": canonical_severity,
         "findings": findings,
         "report_id": f"case-{cid}",
+        "prepared_for": str(tenant_name or ""),
+        "recommendations": recommendations,
+        "next_steps": next_steps,
+        "case_context": case_context,
     }
 
 

@@ -129,3 +129,20 @@ the controlled POC runbook, start it with:
       up -d --no-build collector
 
 Disabling a connection/source stops new ingestion without deleting evidence.
+
+## Canonical PDF entitlement
+
+The public entitlement for premium PDF generation is `export.pdf`. The private
+Enterprise package accepts the historical alias `premium_pdf_reports` for
+backward compatibility, but new licenses and UI capability checks use the
+canonical key. A license accepted by `/license/capabilities` must also pass the
+private PDF renderer; this consistency is covered by integration tests.
+
+## Intelligence-aware case PDF validation
+
+A licensed `GET /cases/<id>/export.pdf` response represents one investigation
+case. For an intelligence-linked case, validate that the report contains the
+case risk score and canonical severity, linked finding, source, decision,
+confidence, correlated-event count, first/last activity and safe event references.
+The report must not expose raw provider content, actor/chat identifiers, storage
+paths, fingerprints, secrets or the internal license identifier.

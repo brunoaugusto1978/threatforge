@@ -89,7 +89,32 @@
   .card .n { font-size: 30px; font-weight: 700; }
   .card .l { color: var(--muted); font-size: 12px; margin-top: 4px; }
   .card.alert .n { color: var(--orange); }
-  /* Dashboard Overview (v0.9.4) */
+  .intel-metric-card { width: 100%; color: var(--txt); text-align: left; display: flex;
+    flex-direction: column; align-items: flex-start; background: var(--panel); border: 1px solid var(--line);
+    transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease; }
+  .intel-metric-card:hover { background: var(--panel2); border-color: #465468; transform: translateY(-1px); }
+  .intel-metric-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(59,130,246,.28); }
+  .intel-metric-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .intel-metric-card .n, .intel-metric-card .l { display: block; }
+  .intel-card-hint { color: var(--accent); font-size: 11px; margin-top: 9px; }
+  .dash-metric-card { width: 100%; color: var(--txt); text-align: left; display: flex;
+    flex-direction: column; align-items: flex-start; background: var(--panel); border: 1px solid var(--line);
+    transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease; }
+  .dash-metric-card:hover { background: var(--panel2); border-color: #465468; transform: translateY(-1px); }
+  .dash-metric-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(59,130,246,.28); }
+  .dash-metric-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .dash-metric-card .n, .dash-metric-card .l { display: block; }
+  .dash-card-hint { color: var(--accent); font-size: 11px; margin-top: 9px; }
+  .dash-metric-summary { border-color: #344257; }
+  .dash-summary-head { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; }
+  .dash-summary-head h3 { margin: 3px 0 0; }
+  .dash-summary-value { font-size: 34px; font-weight: 700; line-height: 1; }
+  .dash-summary-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .dash-summary-list { display: grid; grid-template-columns: repeat(auto-fit,minmax(170px,1fr));
+    gap: 8px; margin: 4px 0 12px; }
+  .dash-summary-list > div { display: flex; justify-content: space-between; gap: 10px;
+    padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel2); }
+  /* Dashboard Overview (v0.11.0 interactive metrics) */
   .dashgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
   .dashgrid .panel { margin-bottom: 0; }
   .distlist { display: flex; flex-direction: column; gap: 8px; }
@@ -100,6 +125,41 @@
   .dist-n { font-size: 12px; text-align: right; }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
     padding: 16px 18px; margin-bottom: 18px; }
+  .intel-hero { display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+  .intel-hero h2 { margin: 0 0 5px; }
+  .intel-toolbar { display: grid; grid-template-columns: repeat(auto-fit,minmax(145px,1fr));
+    gap: 10px; align-items: end; }
+  .intel-toolbar label { margin-top: 0; }
+  .intel-toolbar input, .intel-toolbar select { width: 100%; }
+  .intel-layout { display: grid; grid-template-columns: minmax(0,2fr) minmax(280px,1fr);
+    gap: 14px; align-items: start; }
+  .intel-event { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 16px; margin-bottom: 10px; }
+  .intel-event:hover { border-color: #3a4655; }
+  .intel-meta { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start;
+    flex-wrap: wrap; }
+  .intel-text { white-space: pre-wrap; word-break: break-word; margin-top: 8px; padding: 10px;
+    border: 1px solid var(--line); border-radius: 6px; background: var(--panel2); max-height: 180px; overflow: auto; }
+  .intel-source-list { display: flex; flex-direction: column; gap: 8px; }
+  .intel-source { border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+  .intel-source:last-child { border-bottom: 0; padding-bottom: 0; }
+  .intel-metric-summary { border-color: #344257; }
+  .intel-summary-head { display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; }
+  .intel-summary-head h3 { margin: 3px 0 0; }
+  .intel-summary-value { font-size: 34px; font-weight: 700; line-height: 1; }
+  .intel-summary-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .intel-summary-list { display: grid; grid-template-columns: repeat(auto-fit,minmax(150px,1fr));
+    gap: 8px; margin: 4px 0 12px; }
+  .intel-summary-list > div { display: flex; justify-content: space-between; gap: 10px;
+    padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel2); }
+  .intel-filter-status { margin-top: 12px; padding: 8px 10px; display: flex; align-items: center;
+    justify-content: space-between; gap: 10px; border: 1px solid #344257; border-radius: 6px; background: var(--panel2); }
+  @media (max-width: 900px) {
+    header { align-items: flex-start; flex-wrap: wrap; }
+    nav { width: 100%; overflow-x: auto; padding-bottom: 3px; }
+    .intel-layout, .dashgrid { grid-template-columns: 1fr; }
+  }
   .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
   .row > div { display: flex; flex-direction: column; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -213,6 +273,7 @@
       <div class="logo">Threat<span>Forge</span></div>
       <nav id="nav">
         <button data-view="dashboard" class="active">Dashboard</button>
+        <button data-view="intelligence">Intelligence</button>
         <button data-view="iocs">IOCs</button>
         <button data-view="brands">Brands</button>
         <button data-view="watchlist">Watchlist</button>

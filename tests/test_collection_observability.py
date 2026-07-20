@@ -192,10 +192,14 @@ def test_collector_compose_overrides_api_http_healthcheck():
     assert "127.0.0.1:8000/health" not in collector
 
 
-def test_static_ui_renders_redacted_events_as_escaped_inert_text():
+def test_static_ui_moves_redacted_events_to_intelligence_workspace():
     source = Path("app/static/app.js").read_text(encoding="utf-8")
-    assert "Recent collected events" in source
-    assert 'api("GET", `/collection/events?${params.toString()}`)' in source
+    html = Path("app/static/index.html").read_text(encoding="utf-8")
+    assert 'data-view="intelligence"' in html
+    assert "Intelligence Feed" in source
+    assert 'api("GET", `/intelligence/events?${params.toString()}`)' in source
     assert "${esc(event.redacted_text)}" in source
-    assert "Load older" in source
+    assert "Load older events" in source
     assert "Redacted evidence only" in source
+    assert 'id="telegramEvents"' not in source
+    assert "telegramLoadEvents" not in source

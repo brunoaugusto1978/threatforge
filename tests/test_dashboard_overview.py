@@ -21,6 +21,8 @@ the suite.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 
 def _pw(label: str) -> str:
     """Match the deterministic synthetic password helper used in conftest."""
@@ -391,7 +393,7 @@ def test_overview_includes_telegram_collection_health_sources_and_events(
         db.flush()
         source = CollectionSource(
             tenant_id=tid, connection_id=conn.id, provider="telegram",
-            source_ref="-5107651859", kind="group", name="Sala de Conteúdo",
+            source_ref="-1001234567890", kind="group", name="Grupo QA Autorizado",
             enabled=True, status="active",
         )
         db.add(source)
@@ -423,10 +425,24 @@ def test_overview_includes_telegram_collection_health_sources_and_events(
     assert body["summary"]["telegram_sources_active"] == 1
     assert body["summary"]["telegram_events_total"] == 1
     assert body["summary"]["integrations_connected"] == 1
+    assert body["summary"]["intelligence_events_total"] == 1
+    assert body["summary"]["intelligence_events_24h"] == 1
+    assert body["summary"]["intelligence_sources_total"] == 1
+    assert body["summary"]["intelligence_sources_active"] == 1
+    assert body["summary"]["intelligence_connections_enabled"] == 1
 
-    # Secret references and chat IDs are never exposed by the dashboard.
+    intelligence = body["intelligence"]
+    assert intelligence["license_enabled"] is True
+    assert intelligence["events_total"] == 1
+    assert intelligence["events_24h"] == 1
+    assert intelligence["sources_active"] == 1
+    assert intelligence["collector_state"] == "healthy"
+    assert intelligence["last_event_at"] is not None
+
+    # Secret references, chat IDs and message text are never exposed by the dashboard.
     assert "secretref://" not in response.text
-    assert "-5107651859" not in response.text
+    assert "-1001234567890" not in response.text
+    assert "safe redacted text" not in response.text
 
 
 def test_overview_marks_stale_telegram_health_offline(tenant_admin_client, monkeypatch):
@@ -525,3 +541,19 @@ def test_overview_is_tenant_scoped(fresh_app):
     # No cross-tenant leakage in either direction.
     assert case_a not in {c["id"] for c in body_b["recent_cases"]}
     assert case_b1 not in {c["id"] for c in body_a["recent_cases"]}
+
+def test_dashboard_static_ui_has_interactive_metric_summaries():
+    html = Path("app/static/index.html").read_text(encoding="utf-8")
+    source = Path("app/static/app.js").read_text(encoding="utf-8")
+    readme = Path("README.md").read_text(encoding="utf-8")
+
+    assert 'data-action="dashboardMetric"' in source
+    assert 'id="dashboardMetricSummary"' in source
+    assert "renderDashboardMetricSummary" in source
+    assert 'data-action="dashboardMetricAction"' in source
+    assert 'aria-pressed="${active ? "true" : "false"}"' in source
+    assert "dash-metric-card" in html
+    assert "dash-metric-summary" in html
+    assert "Selected dashboard metric" in source
+    assert "Review 24h Intelligence" in source
+    assert "Dashboard KPI cards are keyboard-accessible" in readme

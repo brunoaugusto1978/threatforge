@@ -5,6 +5,23 @@ const $ = (sel) => document.querySelector(sel);
 let ME = null;
 
 let SUPPORT_TENANT = null;  // operator in support mode inside a tenant
+let LICENSE_CAPABILITIES = null;
+
+async function licenseCapabilities() {
+  if (LICENSE_CAPABILITIES) return LICENSE_CAPABILITIES;
+  try {
+    LICENSE_CAPABILITIES = await api("GET", "/license/capabilities");
+  } catch (_) {
+    // Fail closed visually. The export endpoint remains authoritative.
+    LICENSE_CAPABILITIES = { edition: "community", features: {} };
+  }
+  return LICENSE_CAPABILITIES;
+}
+
+function capabilityEnabled(capabilities, feature) {
+  return Boolean(capabilities && capabilities.features
+    && capabilities.features[feature] === true);
+}
 
 async function api(method, path, body) {
   const opts = { method, headers: {}, credentials: "same-origin" };
@@ -102,6 +119,7 @@ async function logout() {
   try { await api("POST", "/auth/logout"); } catch {}
   ME = null;
   SUPPORT_TENANT = null;
+  LICENSE_CAPABILITIES = null;
   $("#supportBanner").classList.add("hidden");
   showOnly("login");
   $("#password").value = "";
@@ -604,22 +622,183 @@ WIZ_SAVE[5] = async () => true;
 function navigate(view) {
   document.querySelectorAll("#nav button").forEach(b =>
     b.classList.toggle("active", b.dataset.view === view));
-  return ({ dashboard: viewDashboard, iocs: viewIocs, brands: viewBrands, watchlist: viewWatchlist,
-     org: viewOrg, users: viewUsers, audit: viewAudit, cases: viewCases,
-     integrations: viewIntegrations, exposure: viewExposure,
-     credentials: viewCredentials }[view] || viewDashboard)();
+  return ({ dashboard: viewDashboard, intelligence: viewIntelligence, iocs: viewIocs,
+     brands: viewBrands, watchlist: viewWatchlist, org: viewOrg, users: viewUsers,
+     audit: viewAudit, cases: viewCases, integrations: viewIntegrations,
+     exposure: viewExposure, credentials: viewCredentials }[view] || viewDashboard)();
 }
 
+let DASH_OVERVIEW = null;
+let DASH_METRIC_SELECTED = "intelligence_events_24h";
+
 async function viewDashboard() {
+  DASH_METRIC_SELECTED = "intelligence_events_24h";
   const m = $("#main");
   m.innerHTML = `<h2 class="title">Overview</h2><div id="dashBody">loading…</div>`;
   try {
     const o = await api("GET", "/dashboard/overview");
+    DASH_OVERVIEW = o;
     $("#dashBody").innerHTML = renderDashboard(o);
   } catch (e) { $("#dashBody").textContent = e.message; }
 }
-function cardHtml(n, label, alert = false) {
-  return `<div class="card ${alert ? "alert" : ""}"><div class="n">${esc(n)}</div><div class="l">${esc(label)}</div></div>`;
+
+function _dashMetricCard(n, label, metric, alert = false) {
+  const active = DASH_METRIC_SELECTED === metric;
+  return `<button type="button" class="card dash-metric-card ${alert ? "alert" : ""} ${active ? "active" : ""}"
+    data-action="dashboardMetric" data-metric="${esc(metric)}" aria-pressed="${active ? "true" : "false"}">
+    <span class="n">${esc(n)}</span><span class="l">${esc(label)}</span><span class="dash-card-hint">View summary</span>
+  </button>`;
+}
+
+function _dashSummaryRows(items) {
+  return `<div class="dash-summary-list">${items.map(([label, value]) => `<div><span class="muted">${esc(label)}</span><b>${esc(value)}</b></div>`).join("")}</div>`;
+}
+
+function renderDashboardMetricSummary(o, metric) {
+  const s = o.summary || {};
+  const intelligence = o.intelligence || {};
+  const recentImports = o.recent_ingests || [];
+  const recentCases = o.recent_cases || [];
+  const recentFindings = o.recent_exposure_findings || [];
+  const topAssets = o.top_exposed_assets || [];
+  const highCases = Number((o.cases_by_severity || {}).critico || 0) + Number((o.cases_by_severity || {}).alto || 0);
+  const cards = {
+    iocs_total: {
+      title: "Indicators (IOCs)", value: s.iocs_total || 0,
+      description: "Tenant-scoped indicators currently registered in ThreatForge.",
+      rows: [["Malicious", s.iocs_malicious || 0], ["Other verdicts", Math.max(0, Number(s.iocs_total || 0) - Number(s.iocs_malicious || 0))]],
+      action: "Open IOCs",
+    },
+    iocs_malicious: {
+      title: "Malicious IOCs", value: s.iocs_malicious || 0,
+      description: "Indicators whose current verdict is malicious and require operational attention.",
+      rows: [["All IOCs", s.iocs_total || 0], ["Malicious", s.iocs_malicious || 0]],
+      action: "Review IOCs",
+    },
+    brands_active: {
+      title: "Active brands", value: s.brands_active || 0,
+      description: "Brands currently enabled for monitoring and Digital Risk Protection workflows.",
+      rows: [["Registered brands", s.brands_total || 0], ["Priority findings", s.brand_findings_priority || 0]],
+      action: "Open Brands",
+    },
+    brand_findings_priority: {
+      title: "Priority brand findings", value: s.brand_findings_priority || 0,
+      description: "High-priority brand findings that should be reviewed before routine monitoring results.",
+      rows: [["All brand findings", s.brand_findings_total || 0], ["Active brands", s.brands_active || 0]],
+      action: "Review brand findings",
+    },
+    cases_open: {
+      title: "Open cases", value: s.cases_open || 0,
+      description: "Investigation cases that remain open in the current tenant.",
+      rows: [["All cases", s.cases_total || 0], ["Critical / high", highCases], ["Correlated intelligence events", s.intelligence_case_events_total || 0], ["Recent shown", recentCases.length]],
+      action: "Open Cases",
+    },
+    intelligence_case_events_total: {
+      title: "Case-linked intelligence events", value: s.intelligence_case_events_total || 0,
+      description: "Intelligence events correlated into investigation cases. Multiple events may belong to one deduplicated case.",
+      rows: [["Open cases", s.cases_open || 0], ["All cases", s.cases_total || 0], ["Correlated events", s.intelligence_case_events_total || 0]],
+      action: "Open Cases",
+    },
+    exposure_findings_open: {
+      title: "Open exposure findings", value: s.exposure_findings_open || 0,
+      description: "Exposure findings that have not reached a terminal review state.",
+      rows: [["All exposure findings", s.exposure_findings_total || 0], ["Recent shown", recentFindings.length], ["Active assets", s.monitored_assets_active || 0]],
+      action: "Open Exposure findings",
+    },
+    monitored_assets_active: {
+      title: "Active monitored assets", value: s.monitored_assets_active || 0,
+      description: "Assets currently included in tenant-scoped exposure monitoring.",
+      rows: [["All monitored assets", s.monitored_assets_total || 0], ["Exposed assets shown", topAssets.length]],
+      action: "Open monitored assets",
+    },
+    credential_identities_high_risk: {
+      title: "High-risk credential identities", value: s.credential_identities_high_risk || 0,
+      description: "Credential identities whose current risk band is high and should be triaged.",
+      rows: [["All identities", s.credential_identities_total || 0], ["Active identities", s.credential_identities_active || 0]],
+      action: "Open Credentials",
+    },
+    integrations_connected: {
+      title: "Connected integrations", value: s.integrations_connected || 0,
+      description: "Configured integration or collection surfaces currently connected for this tenant.",
+      rows: [["Catalog entries", s.integrations_catalog_total || 0], ["Connected", s.integrations_connected || 0]],
+      action: "Manage integrations",
+    },
+    intelligence_sources_active: {
+      title: "Active intelligence sources", value: s.intelligence_sources_active || 0,
+      description: "Authorized inbound intelligence sources currently active across enabled collectors.",
+      rows: [["All sources", s.intelligence_sources_total || 0], ["Enabled collectors", s.intelligence_connections_enabled || 0], ["Collector", intelligence.collector_state || "not configured"]],
+      action: "Open Intelligence",
+    },
+    intelligence_events_24h: {
+      title: "Intelligence events (24h)", value: s.intelligence_events_24h || 0,
+      description: "Redacted intelligence events collected in the last 24 hours. Full evidence remains in the Intelligence Workspace.",
+      rows: [["Total events", s.intelligence_events_total || 0], ["Active sources", s.intelligence_sources_active || 0], ["Collector", intelligence.collector_state || "not configured"], ["Last event", _tgWhen(intelligence.last_event_at)]],
+      action: "Review 24h Intelligence",
+    },
+    exposure_ingests_total: {
+      title: "Imports processed", value: s.exposure_ingests_total || 0,
+      description: "Exposure intake batches processed for the current tenant.",
+      rows: [["Recent imports shown", recentImports.length], ["Created records", recentImports.reduce((total, row) => total + Number(row.created_count || 0), 0)], ["Errors", recentImports.reduce((total, row) => total + Number(row.error_count || 0), 0)]],
+      action: "Review recent imports",
+    },
+  };
+  const selectedMetric = cards[metric] ? metric : "intelligence_events_24h";
+  const selected = cards[selectedMetric];
+  return `<div class="panel dash-metric-summary" aria-live="polite">
+    <div class="dash-summary-head"><div><span class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em">Selected dashboard metric</span><h3>${esc(selected.title)}</h3></div><div class="dash-summary-value">${esc(selected.value)}</div></div>
+    <p class="muted">${esc(selected.description)}</p>
+    ${_dashSummaryRows(selected.rows)}
+    <div class="dash-summary-actions"><button class="sm" data-action="dashboardMetricAction" data-metric="${esc(selectedMetric)}">${esc(selected.action)}</button></div>
+  </div>`;
+}
+
+function dashboardMetric(metric) {
+  DASH_METRIC_SELECTED = metric || "intelligence_events_24h";
+  document.querySelectorAll(".dash-metric-card").forEach(card => {
+    const active = card.dataset.metric === DASH_METRIC_SELECTED;
+    card.classList.toggle("active", active);
+    card.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+  const host = $("#dashboardMetricSummary");
+  if (host && DASH_OVERVIEW) host.innerHTML = renderDashboardMetricSummary(DASH_OVERVIEW, DASH_METRIC_SELECTED);
+}
+
+async function dashboardMetricAction(metric) {
+  switch (metric) {
+    case "iocs_total":
+    case "iocs_malicious":
+      return navigate("iocs");
+    case "brands_active":
+    case "brand_findings_priority":
+      return navigate("brands");
+    case "cases_open":
+    case "intelligence_case_events_total":
+      return navigate("cases");
+    case "exposure_findings_open":
+      EXPOSURE_TAB = "findings";
+      return navigate("exposure");
+    case "monitored_assets_active":
+      EXPOSURE_TAB = "assets";
+      return navigate("exposure");
+    case "credential_identities_high_risk":
+      return navigate("credentials");
+    case "integrations_connected":
+      return navigate("integrations");
+    case "intelligence_sources_active":
+      await navigate("intelligence");
+      return intelligenceMetric("sources_active");
+    case "intelligence_events_24h":
+      await navigate("intelligence");
+      intelligenceMetric("events_24h");
+      return intelligenceMetricFilter("events_24h");
+    case "exposure_ingests_total": {
+      const target = $("#dashRecentImports");
+      if (target) target.scrollIntoView({behavior:"smooth", block:"start"});
+      return;
+    }
+    default:
+      return;
+  }
 }
 
 // ---- Overview: real-data aggregation from GET /dashboard/overview ----
@@ -631,23 +810,25 @@ const _DASH_EXP_STATUS_ORDER = ["new", "triaging", "confirmed", "mitigated", "cl
 function renderDashboard(o) {
   const s = o.summary || {};
   const cards = [
-    cardHtml(s.iocs_total, "IOCs"),
-    cardHtml(s.iocs_malicious, "Malicious IOCs", s.iocs_malicious > 0),
-    cardHtml(s.brands_active, "Active brands"),
-    cardHtml(s.brand_findings_priority, "Priority brand findings", s.brand_findings_priority > 0),
-    cardHtml(s.cases_open, "Open cases", s.cases_open > 0),
-    cardHtml(s.exposure_findings_open, "Open exposure findings", s.exposure_findings_open > 0),
-    cardHtml(s.monitored_assets_active, "Active monitored assets"),
-    cardHtml(s.credential_identities_high_risk, "High-risk credential identities", s.credential_identities_high_risk > 0),
-    cardHtml(s.integrations_connected, "Integrations connected"),
-    cardHtml(s.telegram_sources_active, "Active Telegram sources"),
-    cardHtml(s.telegram_events_total, "Telegram events"),
-    cardHtml(s.exposure_ingests_total, "Imports processed"),
+    _dashMetricCard(s.iocs_total, "IOCs", "iocs_total"),
+    _dashMetricCard(s.iocs_malicious, "Malicious IOCs", "iocs_malicious", s.iocs_malicious > 0),
+    _dashMetricCard(s.brands_active, "Active brands", "brands_active"),
+    _dashMetricCard(s.brand_findings_priority, "Priority brand findings", "brand_findings_priority", s.brand_findings_priority > 0),
+    _dashMetricCard(s.cases_open, "Open cases", "cases_open", s.cases_open > 0),
+    _dashMetricCard(s.intelligence_case_events_total, "Case-linked intelligence events", "intelligence_case_events_total", s.intelligence_case_events_total > 0),
+    _dashMetricCard(s.exposure_findings_open, "Open exposure findings", "exposure_findings_open", s.exposure_findings_open > 0),
+    _dashMetricCard(s.monitored_assets_active, "Active monitored assets", "monitored_assets_active"),
+    _dashMetricCard(s.credential_identities_high_risk, "High-risk credential identities", "credential_identities_high_risk", s.credential_identities_high_risk > 0),
+    _dashMetricCard(s.integrations_connected, "Integrations connected", "integrations_connected"),
+    _dashMetricCard(s.intelligence_sources_active, "Active intelligence sources", "intelligence_sources_active"),
+    _dashMetricCard(s.intelligence_events_24h, "Intelligence events (24h)", "intelligence_events_24h"),
+    _dashMetricCard(s.exposure_ingests_total, "Imports processed", "exposure_ingests_total"),
   ].join("");
 
   const gen = (o.generated_at || "").slice(0, 19).replace("T", " ");
   return `
-    <div class="cards" style="margin-bottom:18px">${cards}</div>
+    <div class="cards" style="margin-bottom:12px">${cards}</div>
+    <div id="dashboardMetricSummary">${renderDashboardMetricSummary(o, DASH_METRIC_SELECTED)}</div>
     <div class="dashgrid">
       <div class="panel"><h3 style="margin-top:0">Cases by severity</h3>${distList(o.cases_by_severity, _DASH_CASE_SEV_ORDER, SEV_COLOR, severityLabel)}</div>
       <div class="panel"><h3 style="margin-top:0">Cases by status</h3>${distList(o.cases_by_status, _DASH_CASE_STATUS_ORDER, {}, null)}</div>
@@ -660,9 +841,10 @@ function renderDashboard(o) {
     </div>
     <div class="dashgrid">
       <div class="panel"><h3 style="margin-top:0">Top exposed assets</h3>${dashTopAssets(o.top_exposed_assets)}</div>
-      <div class="panel"><h3 style="margin-top:0">Integrations status</h3>${dashIntegrationsStatus(o.integrations)}</div>
+      <div class="panel"><h3 style="margin-top:0">Intelligence operations</h3>${dashIntelligenceSummary(o.intelligence)}</div>
     </div>
-    <div class="panel"><h3 style="margin-top:0">Recent imports</h3>${dashRecentIngests(o.recent_ingests)}</div>
+    <div class="panel"><h3 style="margin-top:0">Integrations status</h3>${dashIntegrationsStatus(o.integrations)}</div>
+    <div class="panel" id="dashRecentImports"><h3 style="margin-top:0">Recent imports</h3>${dashRecentIngests(o.recent_ingests)}</div>
     <p class="muted" style="font-size:11px;margin-top:6px">Generated at ${esc(gen)} UTC · tenant #${esc(o.tenant_id)}</p>`;
 }
 
@@ -692,10 +874,11 @@ function dashRecentCases(items) {
       <td><b>${esc(c.title)}</b></td>
       <td><span style="color:${SEV_COLOR[c.severity] || "var(--muted)"}">${esc(severityLabel(c.severity))}</span></td>
       <td class="muted">${esc(c.status)}</td>
+      <td>${caseIntelligenceCell(c.intelligence)}</td>
       <td class="muted">${esc((c.created_at || "").slice(0, 16).replace("T", " "))}</td>
       <td>${actBtn("dashCaseView", c.id, "View")}</td>
     </tr>`).join("");
-  return `<table><thead><tr><th>ID</th><th>Title</th><th>Severity</th><th>Status</th><th>Created</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  return `<table><thead><tr><th>ID</th><th>Title</th><th>Severity</th><th>Status</th><th>Intelligence</th><th>Created</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 function dashRecentFindings(items) {
@@ -757,6 +940,23 @@ function _dashCollectorPill(state) {
   return _pill(value.replaceAll("_", " "), colors[value] || "#555", "#fff");
 }
 
+function dashIntelligenceSummary(data) {
+  data = data || {};
+  const enabled = Boolean(data.license_enabled);
+  const lastEvent = _tgWhen(data.last_event_at);
+  const lastSuccess = _tgWhen(data.last_success_at);
+  return `<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px">
+    <div><span class="muted" style="font-size:11px">Collector</span><div style="margin-top:4px">${_dashCollectorPill(data.collector_state)}</div></div>
+    <div><span class="muted" style="font-size:11px">License</span><div style="margin-top:4px">${enabled ? _pill("enabled", "#2e7d32", "#fff") : _pill("locked", "#555", "#fff")}</div></div>
+    <div><span class="muted" style="font-size:11px">Events (24h)</span><div class="v">${esc(data.events_24h || 0)}</div></div>
+    <div><span class="muted" style="font-size:11px">Total events</span><div class="v">${esc(data.events_total || 0)}</div></div>
+    <div><span class="muted" style="font-size:11px">Active sources</span><div class="v">${esc(data.sources_active || 0)} / ${esc(data.sources_total || 0)}</div></div>
+    <div><span class="muted" style="font-size:11px">Enabled connections</span><div class="v">${esc(data.connections_enabled || 0)}</div></div>
+  </div>
+  <div class="muted" style="font-size:12px;margin-top:10px">Last event: ${lastEvent} · Last successful cycle: ${lastSuccess}</div>
+  <div style="margin-top:10px"><button class="sm" data-action="dashGotoIntelligence">Open Intelligence workspace</button></div>`;
+}
+
 function dashIntegrationsStatus(items) {
   if (!items || !items.length) return '<p class="muted">No integrations in the catalog.</p>';
   const hasTelegram = items.some(it => it.surface === "collection");
@@ -785,6 +985,451 @@ function dashIntegrationsStatus(items) {
       <button class="sm ghost" data-action="dashGotoIntegrations">Manage integrations</button>
       ${hasTelegram ? '<button class="sm ghost" data-action="dashGotoTelegramSources">Manage Telegram sources</button>' : ""}
     </div>`;
+}
+
+// ---------- Intelligence Workspace (provider-neutral collection operations) ----------
+let INTEL_OVERVIEW = null;
+let INTEL_ROWS = [];
+let INTEL_HAS_MORE = false;
+let INTEL_NEXT_BEFORE = null;
+let INTEL_METRIC_SELECTED = "events_24h";
+let INTEL_METRIC_FILTER = null;
+const INTEL_PAGE_SIZE = 25;
+
+function _intelStateBadge(state) {
+  const value = String(state || "received");
+  const colors = {
+    analyzed: "#2e7d32", normalized: "#1565c0", analyzing: "#1565c0",
+    received: "#555", control: "#6a1b9a", rejected: "#b71c1c",
+    dead_letter: "#b71c1c", failed: "#b8860b",
+  };
+  return _pill(value.replaceAll("_", " "), colors[value] || "#555", "#fff");
+}
+
+function _intelDecisionBadge(analysis) {
+  analysis = analysis || {};
+  if (!analysis.decision) return "";
+  const score = Number(analysis.score || 0);
+  const color = score >= 80 ? "#c0392b" : score >= 60 ? "#d9772e" : score >= 40 ? "#b8860b" : "#555";
+  return _pill(`${String(analysis.decision).replaceAll("_", " ")} · ${score}`, color, "#fff", "Explainable analysis decision and confidence score");
+}
+
+function _intelAnalysisPanel(analysis) {
+  analysis = analysis || {};
+  if (!analysis.decision) return '<p class="muted">This event has not been analyzed yet.</p>';
+  const target = analysis.matched_target || {};
+  const factors = (analysis.factors || []).filter(item => item && item.matched).map(item => {
+    const sign = Number(item.weight || 0) >= 0 ? "+" : "";
+    return `<li><b>${esc(item.code.replaceAll("_", " "))}</b> <span class="muted">(${sign}${esc(item.weight)})</span>${item.detail ? ` — ${esc(item.detail)}` : ""}</li>`;
+  }).join("");
+  const signals = [
+    (analysis.matched_target_terms || []).length ? `target: ${(analysis.matched_target_terms || []).join(", ")}` : "",
+    (analysis.matched_threat_terms || []).length ? `threat: ${(analysis.matched_threat_terms || []).join(", ")}` : "",
+    (analysis.matched_intent_terms || []).length ? `intent: ${(analysis.matched_intent_terms || []).join(", ")}` : "",
+    (analysis.matched_email_domains || []).length ? `email domain: ${(analysis.matched_email_domains || []).join(", ")}` : "",
+  ].filter(Boolean).join(" · ");
+  return `<div class="panel" style="margin-top:10px">
+    <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap">
+      <div><span class="muted" style="font-size:11px;text-transform:uppercase">Automated analysis</span><h4 style="margin:3px 0 0">${esc(String(analysis.decision).replaceAll("_", " "))}</h4></div>
+      <div style="font-size:26px;font-weight:800">${esc(analysis.score || 0)}<span class="muted" style="font-size:12px"> / 100</span></div>
+    </div>
+    <div class="muted" style="font-size:12px;margin-top:5px">Confidence: ${esc(analysis.confidence || "—")} · Severity: ${esc(analysis.severity || "—")} · Category: ${esc(analysis.threat_category || "—")}${analysis.correlation_family ? ` · Correlation: ${esc(analysis.correlation_family)}` : ""}</div>
+    ${target.label ? `<div style="margin-top:7px"><b>Matched target:</b> ${esc(target.label)}${target.criticality ? ` <span class="muted">(${esc(target.criticality)})</span>` : ""}</div>` : ""}
+    ${signals ? `<div class="muted" style="font-size:12px;margin-top:5px">${esc(signals)}</div>` : ""}
+    <h4 style="margin:10px 0 4px">Why this was detected</h4>
+    ${factors ? `<ul style="margin:4px 0 0;padding-left:20px">${factors}</ul>` : '<p class="muted">No matched scoring factors.</p>'}
+    <div class="muted" style="font-size:11px;margin-top:8px">Negation: ${analysis.negation ? "yes" : "no"} · Authorized context: ${analysis.authorized_context ? "yes" : "no"} · Informational context: ${analysis.informational_context ? "yes" : "no"} · Contextual target: ${analysis.contextual_match ? "yes" : "no"} · Context events: ${esc(analysis.context_event_count || 0)}${analysis.promotion && analysis.promotion.context_linked_event_count ? ` · Prior events linked: ${esc(analysis.promotion.context_linked_event_count)}` : ""}</div>
+  </div>`;
+}
+
+function _intelContext(context) {
+  const ctx = context || {};
+  const parts = [];
+  if (ctx.update_kind) parts.push(`kind: ${esc(ctx.update_kind)}`);
+  if (ctx.chat_type) parts.push(`source: ${esc(ctx.chat_type)}`);
+  if (ctx.forwarded) parts.push("forwarded");
+  if (ctx.has_attachment) parts.push("attachment");
+  if (Number(ctx.entity_count || 0) > 0) parts.push(`entities: ${esc(ctx.entity_count)}`);
+  if ((ctx.email_domains || []).length) parts.push(`email domain: ${esc((ctx.email_domains || []).join(", "))}`);
+  if (ctx.actor_ref) parts.push(`actor: ${esc(String(ctx.actor_ref).slice(0, 12))}…`);
+  return parts.join(" · ");
+}
+
+function _intelDistribution(values, emptyText) {
+  const entries = Object.entries(values || {}).filter(([, count]) => Number(count || 0) > 0);
+  if (!entries.length) return `<p class="muted">${esc(emptyText)}</p>`;
+  const max = Math.max(...entries.map(([, count]) => Number(count || 0)), 1);
+  return `<div class="distlist">${entries.map(([name, count]) => `<div class="dist-row">
+    <span class="dist-label">${esc(name.replaceAll("_", " "))}</span>
+    <div class="dist-bar"><i style="width:${Math.max(4, Math.round((Number(count || 0) / max) * 100))}%;background:var(--accent)"></i></div>
+    <span class="dist-n">${esc(count)}</span>
+  </div>`).join("")}</div>`;
+}
+
+function _intelCollectors(rows) {
+  if (!rows || !rows.length) return '<p class="muted">No collection worker configured.</p>';
+  return `<table><thead><tr><th>Connection</th><th>Provider</th><th>State</th><th>Last success</th><th>Last event</th></tr></thead><tbody>${rows.map(row => `<tr>
+    <td><b>${esc(row.name)}</b></td><td>${esc(row.provider)}</td><td>${_dashCollectorPill(row.state)}</td>
+    <td class="muted">${_tgWhen(row.last_success_at)}</td><td class="muted">${_tgWhen(row.last_event_at)}</td>
+  </tr>`).join("")}</tbody></table>`;
+}
+
+function _intelSources(rows) {
+  if (!rows || !rows.length) return '<p class="muted">No authorized intelligence source configured.</p>';
+  return `<div class="intel-source-list">${rows.map(row => `<div class="intel-source">
+    <div style="display:flex;justify-content:space-between;gap:8px"><b>${esc(row.name)}</b><span>${row.enabled ? _pill("active", "#2e7d32", "#fff") : _pill("paused", "#b8860b", "#fff")}</span></div>
+    <div class="muted" style="font-size:12px;margin-top:3px">${esc(row.provider)} · ${esc(row.kind)} · ${esc(row.event_count)} events</div>
+    <div class="muted" style="font-size:11px;margin-top:2px">Last event: ${_tgWhen(row.last_event_at)}</div>
+  </div>`).join("")}</div>`;
+}
+
+function _intelMetricCard(value, label, metric, alert = false) {
+  const active = INTEL_METRIC_SELECTED === metric;
+  return `<button type="button" class="card intel-metric-card ${alert ? "alert" : ""} ${active ? "active" : ""}"
+    data-action="intelligenceMetric" data-metric="${esc(metric)}" aria-pressed="${active ? "true" : "false"}">
+    <span class="n">${esc(value)}</span><span class="l">${esc(label)}</span><span class="intel-card-hint">View summary</span>
+  </button>`;
+}
+
+function _intelSummaryList(items, emptyText) {
+  if (!items || !items.length) return `<p class="muted" style="margin:0">${esc(emptyText)}</p>`;
+  return `<div class="intel-summary-list">${items.map(item => `<div><b>${esc(item.title)}</b><span class="muted">${esc(item.detail || "")}</span></div>`).join("")}</div>`;
+}
+
+function renderIntelligenceMetricSummary(o, metric) {
+  const s = o.summary || {};
+  const states = o.states || {};
+  const cards = {
+    events_24h: {
+      title: "Events collected in the last 24 hours",
+      value: s.events_24h || 0,
+      description: "Redacted intelligence events received across all authorized providers and sources during the rolling 24-hour window.",
+      detail: `${Number(s.events_24h || 0)} of ${Number(s.events_total || 0)} total retained events`,
+      action: '<button class="sm" data-action="intelligenceMetricFilter" data-metric="events_24h">Show these events in the feed</button>',
+    },
+    events_7d: {
+      title: "Events collected in the last 7 days",
+      value: s.events_7d || 0,
+      description: "Rolling seven-day collection volume for rapid trend review without exposing raw provider payloads.",
+      detail: `${Number(s.events_7d || 0)} of ${Number(s.events_total || 0)} total retained events`,
+      action: '<button class="sm" data-action="intelligenceMetricFilter" data-metric="events_7d">Show these events in the feed</button>',
+    },
+    events_total: {
+      title: "All retained intelligence events",
+      value: s.events_total || 0,
+      description: "Tenant-scoped events currently retained in the Intelligence Workspace after deduplication and redaction.",
+      detail: `Last event: ${_tgWhen(s.last_event_at)}`,
+      action: '<button class="sm" data-action="intelligenceMetricFilter" data-metric="events_total">Show the complete feed</button>',
+    },
+    pending_analysis: {
+      title: "Events pending or requiring analysis attention",
+      value: s.pending_analysis || 0,
+      description: "Events in received, normalized, analyzing or failed states. This metric highlights the operational analysis backlog.",
+      detailHtml: _intelSummaryList([
+        {title:"Received", detail:String(states.received || 0)},
+        {title:"Normalized", detail:String(states.normalized || 0)},
+        {title:"Analyzing", detail:String(states.analyzing || 0)},
+        {title:"Failed", detail:String(states.failed || 0)},
+      ], "No pending analysis states."),
+      action: '<button class="sm" data-action="intelligenceMetricFilter" data-metric="pending_analysis">Review pending events</button>',
+    },
+    sources_active: {
+      title: "Active authorized intelligence sources",
+      value: s.sources_active || 0,
+      description: "Sources currently enabled for authorized inbound collection within this tenant.",
+      detailHtml: _intelSummaryList((o.sources || []).filter(row => row.enabled).map(row => ({
+        title: row.name,
+        detail: `${row.provider} · ${row.kind} · ${row.event_count || 0} events`,
+      })), "No active sources configured."),
+      action: '<button class="sm ghost" data-action="dashGotoTelegramSources">Manage sources</button>',
+    },
+    connections_enabled: {
+      title: "Enabled collection connections",
+      value: s.connections_enabled || 0,
+      description: "Enabled provider connections and their current worker health state.",
+      detailHtml: _intelSummaryList((o.collectors || []).filter(row => row.enabled).map(row => ({
+        title: row.name,
+        detail: `${row.provider} · ${row.state} · last success ${_tgWhen(row.last_success_at)}`,
+      })), "No enabled collector connections."),
+      action: '<button class="sm ghost" data-action="dashGotoIntegrations">Manage integrations</button>',
+    },
+    linked_findings: {
+      title: "Events linked to findings",
+      value: s.linked_findings || 0,
+      description: "Collected events already promoted or associated with a tenant-scoped security finding.",
+      detail: Number(s.linked_findings || 0) > 0 ? "Use the filtered feed to inspect the supporting redacted evidence." : "No intelligence event is linked to a finding yet.",
+      action: '<button class="sm" data-action="intelligenceMetricFilter" data-metric="linked_findings">Show linked events</button>',
+    },
+    linked_cases: {
+      title: "Events linked to investigation cases",
+      value: s.linked_cases || 0,
+      description: "Collected events already associated with an investigation case and its audit trail.",
+      detail: Number(s.linked_cases || 0) > 0 ? "Use the filtered feed to inspect events connected to active investigations." : "No intelligence event is linked to a case yet.",
+      action: '<button class="sm" data-action="intelligenceMetricFilter" data-metric="linked_cases">Show linked events</button>',
+    },
+  };
+  const selectedMetric = cards[metric] ? metric : "events_24h";
+  const selected = cards[selectedMetric];
+  const feedMetrics = new Set(["events_24h", "events_7d", "events_total", "pending_analysis", "linked_findings", "linked_cases"]);
+  const canReadFeed = Boolean(o.license_enabled) && can("analyst");
+  const action = feedMetrics.has(selectedMetric) && !canReadFeed
+    ? '<span class="muted" style="font-size:12px">Analyst or admin access with an active collection entitlement is required to open the filtered feed.</span>'
+    : (selected.action || "");
+  return `<div class="panel intel-metric-summary" aria-live="polite">
+    <div class="intel-summary-head"><div><span class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em">Selected metric</span><h3>${esc(selected.title)}</h3></div><div class="intel-summary-value">${esc(selected.value)}</div></div>
+    <p class="muted" style="margin:0 0 10px">${esc(selected.description)}</p>
+    ${selected.detailHtml || `<p style="margin:0 0 12px">${esc(selected.detail || "")}</p>`}
+    <div class="intel-summary-actions">${action}</div>
+  </div>`;
+}
+
+function intelligenceMetric(metric) {
+  INTEL_METRIC_SELECTED = metric || "events_24h";
+  document.querySelectorAll(".intel-metric-card").forEach(card => {
+    const active = card.dataset.metric === INTEL_METRIC_SELECTED;
+    card.classList.toggle("active", active);
+    card.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+  const host = $("#intelligenceMetricSummary");
+  if (host && INTEL_OVERVIEW) host.innerHTML = renderIntelligenceMetricSummary(INTEL_OVERVIEW, INTEL_METRIC_SELECTED);
+}
+
+function _intelMetricFilterText(metric) {
+  return ({
+    events_24h: "Last 24 hours",
+    events_7d: "Last 7 days",
+    pending_analysis: "Pending analysis",
+    linked_findings: "Linked to findings",
+    linked_cases: "Linked to cases",
+    events_total: "All retained events",
+  })[metric] || "";
+}
+
+function renderIntelligenceMetricFilterStatus() {
+  const host = $("#intelMetricFilterStatus");
+  if (!host) return;
+  const label = _intelMetricFilterText(INTEL_METRIC_FILTER);
+  host.classList.toggle("hidden", !label);
+  host.innerHTML = label ? `<span>Metric filter: <b>${esc(label)}</b></span><button class="sm ghost" data-action="intelligenceClearMetricFilter">Clear</button>` : "";
+}
+
+async function intelligenceMetricFilter(metric) {
+  INTEL_METRIC_FILTER = metric === "events_total" ? null : metric;
+  for (const id of ["intelProvider", "intelSource", "intelState", "intelLink", "intelQuery"]) {
+    const node = $("#" + id); if (node) node.value = "";
+  }
+  renderIntelligenceMetricFilterStatus();
+  await intelligenceLoadEvents(true);
+  const feed = $("#intelligenceFeed");
+  if (feed) feed.scrollIntoView({behavior:"smooth", block:"start"});
+}
+
+async function intelligenceClearMetricFilter() {
+  INTEL_METRIC_FILTER = null;
+  renderIntelligenceMetricFilterStatus();
+  await intelligenceLoadEvents(true);
+}
+
+function renderIntelligenceOverview(o) {
+  const s = o.summary || {};
+  const cards = [
+    _intelMetricCard(s.events_24h || 0, "Events (24h)", "events_24h"),
+    _intelMetricCard(s.events_7d || 0, "Events (7d)", "events_7d"),
+    _intelMetricCard(s.events_total || 0, "Total events", "events_total"),
+    _intelMetricCard(s.pending_analysis || 0, "Pending analysis", "pending_analysis", Number(s.pending_analysis || 0) > 0),
+    _intelMetricCard(s.sources_active || 0, "Active sources", "sources_active"),
+    _intelMetricCard(s.connections_enabled || 0, "Enabled collectors", "connections_enabled"),
+    _intelMetricCard(s.linked_findings || 0, "Linked findings", "linked_findings"),
+    _intelMetricCard(s.linked_cases || 0, "Linked cases", "linked_cases"),
+  ].join("");
+  const locked = !o.license_enabled;
+  const upgrade = o.upgrade || {};
+  const lockPanel = locked ? `<div class="panel" style="border-color:#725d22">
+    <b>Enterprise collection is locked</b>
+    <p class="muted">The Intelligence catalog is visible, but event access requires an active collection entitlement.</p>
+    <span class="muted">${esc(upgrade.message || "Contact the ThreatForge maintainer for Enterprise licensing.")}</span>
+  </div>` : "";
+  return `${lockPanel}<div class="cards" style="margin-bottom:12px">${cards}</div>
+    <div id="intelligenceMetricSummary">${renderIntelligenceMetricSummary(o, INTEL_METRIC_SELECTED)}</div>
+    <div class="dashgrid">
+      <div class="panel"><h3 style="margin-top:0">Collector health</h3>
+        <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">${_dashCollectorPill(s.collector_state)}<span class="muted">Last event: ${_tgWhen(s.last_event_at)}</span></div>
+        ${_intelCollectors(o.collectors)}
+      </div>
+      <div class="panel"><h3 style="margin-top:0">Authorized sources</h3>${_intelSources(o.sources)}</div>
+    </div>
+    <div class="dashgrid">
+      <div class="panel"><h3 style="margin-top:0">Events by provider</h3>${_intelDistribution(o.providers, "No provider events yet.")}</div>
+      <div class="panel"><h3 style="margin-top:0">Processing states</h3>${_intelDistribution(o.states, "No processing states yet.")}</div>
+    </div>`;
+}
+
+function _intelFilterOptions(values, selected, allLabel) {
+  return [`<option value="">${esc(allLabel)}</option>`].concat((values || []).map(value => {
+    const item = typeof value === "object" ? value : {value, label:value};
+    return `<option value="${esc(item.value)}"${String(item.value) === String(selected || "") ? " selected" : ""}>${esc(item.label)}</option>`;
+  })).join("");
+}
+
+function intelligenceFilterPanel() {
+  const providers = Object.keys((INTEL_OVERVIEW && INTEL_OVERVIEW.providers) || {}).map(value => ({value, label:value}));
+  const sources = ((INTEL_OVERVIEW && INTEL_OVERVIEW.sources) || []).map(row => ({value:row.id, label:`${row.name} (${row.provider})`}));
+  const states = ["received", "normalized", "analyzing", "analyzed", "failed", "rejected", "dead_letter", "control"];
+  return `<div class="panel">
+    <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap">
+      <div><h3 style="margin:0">Intelligence Feed</h3><p class="muted" style="margin:4px 0 0">Redacted evidence only. Message content, URLs and markup are rendered as inert text.</p></div>
+      <button class="sm ghost" data-action="intelligenceRefresh">Refresh workspace</button>
+    </div>
+    <div id="intelMetricFilterStatus" class="intel-filter-status hidden"></div>
+    <div class="intel-toolbar" style="margin-top:12px">
+      <div><label for="intelProvider">Provider</label><select id="intelProvider">${_intelFilterOptions(providers, "", "All providers")}</select></div>
+      <div><label for="intelSource">Source</label><select id="intelSource">${_intelFilterOptions(sources, "", "All sources")}</select></div>
+      <div><label for="intelState">State</label><select id="intelState">${_intelFilterOptions(states, "", "All states")}</select></div>
+      <div><label for="intelLink">Linked</label><select id="intelLink"><option value="">Any linkage</option><option value="finding">Has finding</option><option value="case">Has case</option><option value="none">No finding/case</option></select></div>
+      <div style="grid-column:span 2"><label for="intelQuery">Search redacted text</label><input id="intelQuery" maxlength="200" placeholder="Keyword or phrase"></div>
+      <div style="display:flex;gap:7px"><button class="sm" data-action="intelligenceApplyFilters">Apply</button><button class="sm ghost" data-action="intelligenceResetFilters">Reset</button></div>
+    </div>
+  </div>`;
+}
+
+function renderIntelligenceFeed() {
+  const host = $("#intelligenceFeed");
+  if (!host) return;
+  const rows = INTEL_ROWS.length ? INTEL_ROWS.map(event => {
+    const context = _intelContext(event.context);
+    const text = event.redacted_text
+      ? `<div class="intel-text">${esc(event.redacted_text)}</div>`
+      : '<div class="muted" style="margin-top:8px">No textual content.</div>';
+    const links = [event.finding_id ? `finding #${esc(event.finding_id)}` : "", event.case_id ? `case #${esc(event.case_id)}` : ""].filter(Boolean).join(" · ");
+    return `<div class="intel-event">
+      <div class="intel-meta">
+        <div><b>${esc(event.source_name)}</b> <span class="muted">${esc(event.provider)} · event #${esc(event.id)}</span></div>
+        <span class="muted" style="font-size:12px">${_tgWhen(event.occurred_at || event.created_at)}</span>
+      </div>
+      <div class="muted" style="font-size:12px;margin-top:4px">${_intelStateBadge(event.state)} ${_intelDecisionBadge(event.analysis)}${context ? ` · ${context}` : ""}${event.text_truncated ? " · truncated" : ""}${links ? ` · ${links}` : ""}</div>
+      ${text}
+      <div style="margin-top:9px"><button class="sm ghost" data-action="intelligenceEventDetail" data-id="${esc(event.id)}">Open event detail</button></div>
+    </div>`;
+  }).join("") : '<div class="panel"><p class="muted">No intelligence events match the current filters.</p></div>';
+  host.innerHTML = `${rows}${INTEL_HAS_MORE ? '<div style="text-align:center;margin-top:10px"><button class="sm ghost" data-action="intelligenceLoadOlder">Load older events</button></div>' : ""}`;
+}
+
+function _intelligenceParams() {
+  const params = new URLSearchParams({limit:String(INTEL_PAGE_SIZE)});
+  const provider = $("#intelProvider") && $("#intelProvider").value;
+  const source = $("#intelSource") && $("#intelSource").value;
+  const state = $("#intelState") && $("#intelState").value;
+  const query = $("#intelQuery") && $("#intelQuery").value.trim();
+  const linked = $("#intelLink") && $("#intelLink").value;
+  if (provider) params.set("provider", provider);
+  if (source) params.set("source_id", source);
+  if (state) params.set("state", state);
+  if (query) params.set("query", query);
+  if (linked === "finding") params.set("has_finding", "true");
+  if (linked === "case") params.set("has_case", "true");
+  if (linked === "none") { params.set("has_finding", "false"); params.set("has_case", "false"); }
+  if (INTEL_METRIC_FILTER === "events_24h") params.set("occurred_from", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+  if (INTEL_METRIC_FILTER === "events_7d") params.set("occurred_from", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
+  if (INTEL_METRIC_FILTER === "pending_analysis") params.set("pending_analysis", "true");
+  if (INTEL_METRIC_FILTER === "linked_findings") params.set("has_finding", "true");
+  if (INTEL_METRIC_FILTER === "linked_cases") params.set("has_case", "true");
+  return params;
+}
+
+async function intelligenceLoadEvents(reset) {
+  const host = $("#intelligenceFeed");
+  if (!host) return;
+  if (reset) {
+    INTEL_ROWS = [];
+    INTEL_HAS_MORE = false;
+    INTEL_NEXT_BEFORE = null;
+    host.innerHTML = '<div class="panel"><p class="muted">Loading intelligence events…</p></div>';
+  }
+  renderIntelligenceMetricFilterStatus();
+  const params = _intelligenceParams();
+  if (!reset && INTEL_NEXT_BEFORE) params.set("before_id", String(INTEL_NEXT_BEFORE));
+  try {
+    const page = await api("GET", `/intelligence/events?${params.toString()}`);
+    const items = page.items || [];
+    INTEL_ROWS = reset ? items : INTEL_ROWS.concat(items);
+    INTEL_HAS_MORE = Boolean(page.has_more);
+    INTEL_NEXT_BEFORE = page.next_before_id || null;
+    renderIntelligenceFeed();
+  } catch (e) {
+    host.innerHTML = `<div class="panel"><p class="muted">${esc(e.message || "Unable to load intelligence events.")}</p></div>`;
+  }
+}
+
+async function intelligenceEventDetail(id) {
+  const host = $("#intelligenceDetail");
+  if (!host) return;
+  host.innerHTML = '<div class="panel"><p class="muted">Loading event detail…</p></div>';
+  try {
+    const event = await api("GET", `/intelligence/events/${id}`);
+    const context = _intelContext(event.context);
+    const text = event.redacted_text
+      ? `<div class="intel-text" style="max-height:360px">${esc(event.redacted_text)}</div>`
+      : '<p class="muted">No textual content.</p>';
+    host.innerHTML = `<div class="panel" style="position:sticky;top:12px">
+      <div style="display:flex;justify-content:space-between;gap:8px"><h3 style="margin:0">Event #${esc(event.id)}</h3>${_intelStateBadge(event.state)}</div>
+      <div class="muted" style="font-size:12px;margin-top:5px">${esc(event.provider)} · ${esc(event.source_name)} · ${_tgWhen(event.occurred_at || event.created_at)}</div>
+      ${context ? `<div class="muted" style="font-size:12px;margin-top:4px">${context}</div>` : ""}
+      ${text}
+      ${_intelAnalysisPanel(event.analysis)}
+      <table style="margin-top:10px"><tbody>
+        <tr><th>Redaction profile</th><td>${esc(event.redaction_profile || "default")}</td></tr>
+        <tr><th>Content version</th><td>${esc(event.content_version || 1)}</td></tr>
+        <tr><th>Analysis attempts</th><td>${esc(event.attempts || 0)}</td></tr>
+        <tr><th>Finding</th><td>${event.finding_id ? `#${esc(event.finding_id)}` : "—"}</td></tr>
+        <tr><th>Case</th><td>${event.case_id ? `#${esc(event.case_id)}` : "—"}</td></tr>
+        <tr><th>Rejection</th><td>${esc(event.rejection_reason || "—")}</td></tr>
+      </tbody></table>
+      <div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:10px">
+        ${event.finding_id ? `<button class="sm ghost" data-action="intelligenceOpenFinding" data-id="${esc(event.finding_id)}">Open finding #${esc(event.finding_id)}</button>` : ""}
+        ${event.case_id ? `<button class="sm" data-action="intelligenceOpenCase" data-id="${esc(event.case_id)}">Open case #${esc(event.case_id)}</button>` : ""}
+      </div>
+      <p class="muted" style="font-size:11px;margin-bottom:0">Raw provider payloads, external identifiers, fingerprints and secrets are never exposed by this view.</p>
+    </div>`;
+  } catch (e) {
+    host.innerHTML = `<div class="panel"><p class="muted">${esc(e.message || "Unable to load event detail.")}</p></div>`;
+  }
+}
+
+async function intelligenceApplyFilters() {
+  INTEL_METRIC_FILTER = null;
+  renderIntelligenceMetricFilterStatus();
+  await intelligenceLoadEvents(true);
+}
+
+async function intelligenceResetFilters() {
+  INTEL_METRIC_FILTER = null;
+  for (const id of ["intelProvider", "intelSource", "intelState", "intelLink", "intelQuery"]) {
+    const node = $("#" + id); if (node) node.value = "";
+  }
+  renderIntelligenceMetricFilterStatus();
+  await intelligenceLoadEvents(true);
+}
+
+async function intelligenceRefresh() {
+  await viewIntelligence();
+  toast("Intelligence workspace refreshed");
+}
+
+async function viewIntelligence() {
+  INTEL_METRIC_SELECTED = "events_24h";
+  INTEL_METRIC_FILTER = null;
+  const m = $("#main");
+  m.innerHTML = `<div class="intel-hero"><div><h2>Intelligence Workspace</h2><p class="muted" style="margin:0">Unified operational view for authorized inbound intelligence collection, analysis status and investigation linkage.</p></div><button class="sm ghost" data-action="dashGotoIntegrations">Manage integrations and sources</button></div><div id="intelligenceBody">loading…</div>`;
+  try {
+    INTEL_OVERVIEW = await api("GET", "/intelligence/overview");
+  } catch (e) {
+    $("#intelligenceBody").textContent = e.message;
+    return;
+  }
+  const canReadEvents = can("analyst") && INTEL_OVERVIEW.license_enabled;
+  $("#intelligenceBody").innerHTML = `${renderIntelligenceOverview(INTEL_OVERVIEW)}
+    ${canReadEvents ? `<div class="intel-layout"><div>${intelligenceFilterPanel()}<div id="intelligenceFeed"></div></div><div id="intelligenceDetail"><div class="panel"><h3 style="margin-top:0">Event detail</h3><p class="muted">Select an intelligence event to inspect its redacted evidence and investigation linkage.</p></div></div></div>` : `<div class="panel"><h3 style="margin-top:0">Intelligence Feed</h3><p class="muted">${INTEL_OVERVIEW.license_enabled ? "Analyst or admin access is required to read redacted evidence." : "An active Enterprise collection entitlement is required to read events."}</p></div>`}`;
+  if (canReadEvents) await intelligenceLoadEvents(true);
 }
 
 // ---- IOCs ----
@@ -1010,6 +1655,48 @@ function severityLabel(value) {
   return SEV_LABEL[value] || value || "";
 }
 
+function caseIntelligenceSource(value) {
+  return String(value || "").replaceAll("_", " ").replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function caseIntelligenceCell(summary) {
+  if (!summary) return '<span class="muted">—</span>';
+  const finding = summary.finding_id ? `finding #${esc(summary.finding_id)}` : "finding —";
+  const when = summary.last_activity_at
+    ? esc(String(summary.last_activity_at).slice(0, 16).replace("T", " "))
+    : "—";
+  return `<div><b>${esc(caseIntelligenceSource(summary.source || "intelligence"))}</b></div>
+    <div class="muted" style="font-size:11px">${finding} · ${esc(summary.correlated_event_count || 0)} correlated event${Number(summary.correlated_event_count || 0) === 1 ? "" : "s"}</div>
+    <div class="muted" style="font-size:11px">last activity ${when}</div>`;
+}
+
+function caseIntelligencePanel(summary) {
+  if (!summary) return "";
+  const eventIds = Array.isArray(summary.event_ids) && summary.event_ids.length
+    ? summary.event_ids.map(id => `#${esc(id)}`).join(", ")
+    : "—";
+  const first = summary.first_event_at
+    ? esc(String(summary.first_event_at).slice(0, 19).replace("T", " "))
+    : "—";
+  const last = summary.last_activity_at
+    ? esc(String(summary.last_activity_at).slice(0, 19).replace("T", " "))
+    : "—";
+  return `<div style="margin-top:10px;background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:10px">
+    <b>Intelligence correlation</b>
+    <div class="srow2" style="margin-top:8px">
+      <div><span class="muted" style="font-size:11px">Source</span><div>${esc(caseIntelligenceSource(summary.source || "intelligence"))}</div></div>
+      <div><span class="muted" style="font-size:11px">Finding</span><div>${summary.finding_id ? `#${esc(summary.finding_id)}` : "—"}</div></div>
+      <div><span class="muted" style="font-size:11px">Correlated events</span><div>${esc(summary.correlated_event_count || 0)}</div></div>
+      <div><span class="muted" style="font-size:11px">Human review</span><div>${summary.human_review_required ? "required" : "not required"}</div></div>
+      <div><span class="muted" style="font-size:11px">Decision</span><div>${esc(summary.decision || "—")}${summary.confidence_score !== null && summary.confidence_score !== undefined ? ` · ${esc(summary.confidence_score)}/100` : ""}</div></div>
+      <div><span class="muted" style="font-size:11px">Correlation family</span><div>${esc(summary.correlation_family || "—")}</div></div>
+      <div><span class="muted" style="font-size:11px">First event</span><div>${first}</div></div>
+      <div><span class="muted" style="font-size:11px">Last activity</span><div>${last}</div></div>
+    </div>
+    <div class="muted" style="font-size:11px;margin-top:8px">Safe event references: ${eventIds}. Message content and provider identities are not exposed here.</div>
+  </div>`;
+}
+
 function selectHtml(id, opts, current, disabled) {
   const o = opts.map((opt) => {
     const value = Array.isArray(opt) ? opt[0] : opt;
@@ -1084,10 +1771,11 @@ async function loadCases() {
         <td class="muted">${esc(c.status)}</td>
         <td class="muted">${c.brand_id ?? "—"}</td>
         <td class="muted">${c.assignee_user_id ?? "—"}</td>
+        <td>${caseIntelligenceCell(c.intelligence)}</td>
         <td class="muted">${esc((c.created_at || "").slice(0, 16).replace("T", " "))}</td>
         <td>${actBtn("caseView", c.id, "View")}</td>
       </tr>`).join("");
-    box.innerHTML = `<table><thead><tr><th>ID</th><th>Title</th><th>Severity</th><th>Status</th><th>Brand</th><th>Assignee</th><th>Created</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+    box.innerHTML = `<table><thead><tr><th>ID</th><th>Title</th><th>Severity</th><th>Status</th><th>Brand</th><th>Assignee</th><th>Intelligence</th><th>Created</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
   } catch (e) { $("#caseList").textContent = e.message; }
 }
 
@@ -1125,6 +1813,10 @@ async function openCaseFromFinding(brandId, findingId) {
 async function caseDetail(id) {
   let c;
   try { c = await api("GET", `/cases/${id}`); } catch (e) { toast(e.message, true); return; }
+  const capabilities = await licenseCapabilities();
+  const pdfEnabled = capabilityEnabled(capabilities, "export.pdf");
+  const pdfLabel = pdfEnabled ? "Export PDF" : "Export PDF 🔒";
+  const pdfTitle = pdfEnabled ? "Licensed PDF export" : "ThreatForge Enterprise feature";
   const admin = can("admin");
   const editable = can("analyst");
   const terminal = !CASE_ACTIVE.includes(c.status);
@@ -1162,6 +1854,7 @@ async function caseDetail(id) {
   $("#caseDetail").innerHTML = `<div class="panel" style="margin-top:14px;border-left:3px solid var(--accent)">
     <b>Case #${esc(c.id)}</b> <span class="muted">created ${esc((c.created_at || "").slice(0, 16).replace("T", " "))}${c.closed_at ? " · closed " + esc(c.closed_at.slice(0, 16).replace("T", " ")) : ""} · current status: <b>${esc(c.status)}</b></span>
     ${snap}
+    ${caseIntelligencePanel(c.intelligence)}
     <label>Title</label><input id="cd_title" style="width:100%" ${editable ? "" : "disabled"}>
     <label>Description</label><textarea id="cd_desc" style="width:100%;min-height:70px" ${editable ? "" : "disabled"}></textarea>
     <div class="srow2">
@@ -1174,7 +1867,7 @@ async function caseDetail(id) {
       ${lifecycle}
       <button class="ghost" data-action="caseExportMd" data-id="${esc(c.id)}">Export Markdown</button>
       <button class="ghost" data-action="caseExportStix" data-id="${esc(c.id)}" title="STIX 2.1 bundle">Export STIX</button>
-      <button class="ghost" data-action="caseExportPdf" data-id="${esc(c.id)}" title="ThreatForge Enterprise">Export PDF 🔒</button>
+      <button class="ghost" data-action="caseExportPdf" data-id="${esc(c.id)}" title="${esc(pdfTitle)}">${esc(pdfLabel)}</button>
     </div>
     <div class="err" id="cd_err"></div></div>
     <div id="caseNotes"></div>
@@ -1426,6 +2119,7 @@ async function exportCasePdf(id) {
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1500);
+    toast("PDF exported");
   } catch (e) {
     toast(e.message || "PDF export failed", true);
   }
@@ -1714,9 +2408,21 @@ const ACTIONS = {
   telegramToggleConnection: (id, btn) => telegramToggleConnection(id, btn.dataset.enabled === "1"),
   telegramAddSource: (id) => telegramAddSource(id),
   telegramToggleSource: (id, btn) => telegramToggleSource(id, btn.dataset.enabled === "1"),
-  telegramEventFilter: (id) => telegramSetEventSource(id),
-  telegramEventsRefresh: () => telegramLoadEvents(true),
-  telegramEventsOlder: () => telegramLoadEvents(false),
+  telegramVerifySource: (id, btn) => telegramVerifySource(
+    Number(btn.dataset.connectionId), id
+  ),
+  dashboardMetric: (_id, btn) => dashboardMetric(btn.dataset.metric),
+  dashboardMetricAction: (_id, btn) => dashboardMetricAction(btn.dataset.metric),
+  intelligenceMetric: (_id, btn) => intelligenceMetric(btn.dataset.metric),
+  intelligenceMetricFilter: (_id, btn) => intelligenceMetricFilter(btn.dataset.metric),
+  intelligenceClearMetricFilter: () => intelligenceClearMetricFilter(),
+  intelligenceApplyFilters: () => intelligenceApplyFilters(),
+  intelligenceResetFilters: () => intelligenceResetFilters(),
+  intelligenceRefresh: () => intelligenceRefresh(),
+  intelligenceLoadOlder: () => intelligenceLoadEvents(false),
+  intelligenceEventDetail: (id) => intelligenceEventDetail(id),
+  intelligenceOpenFinding: () => { EXPOSURE_TAB = "findings"; navigate("exposure"); },
+  intelligenceOpenCase: (id) => { navigate("cases"); setTimeout(() => caseDetail(id), 50); },
   expTab: (_id, btn) => exposureTab(btn.dataset.name),
   expApplyFilters: () => applyExposureFilters(),
   expTriage: (id) => triageExposure(id),
@@ -1736,6 +2442,7 @@ const ACTIONS = {
   dashFindingView: () => { EXPOSURE_TAB = "findings"; navigate("exposure"); },
   dashAssetView: () => { EXPOSURE_TAB = "assets"; navigate("exposure"); },
   dashGotoIntegrations: () => navigate("integrations"),
+  dashGotoIntelligence: () => navigate("intelligence"),
   dashGotoTelegramSources: async () => {
     await navigate("integrations");
     await telegramManage(false);
@@ -1796,11 +2503,6 @@ async function viewIntegrations() {
   }</div>`;
 }
 
-let TG_EVENT_SOURCE = 0;
-let TG_EVENT_ROWS = [];
-let TG_EVENT_HAS_MORE = false;
-const TG_EVENT_PAGE_SIZE = 25;
-
 function _tgHealthBadge(health) {
   const state = String((health && health.state) || "pending");
   return `<span class="muted" style="border:1px solid var(--line);border-radius:10px;padding:1px 8px;font-size:12px">${esc(state)}</span>`;
@@ -1855,7 +2557,7 @@ async function telegramManage(locked) {
     const srcs = byConnection.get(conn.id) || [];
     const sourceRows = srcs.length ? srcs.map(src => `<tr>
       <td>${esc(src.name || src.source_ref)}</td><td><code>${esc(src.source_ref)}</code></td><td>${esc(src.kind)}</td><td>${esc(src.status)}</td>
-      <td>${can("admin") ? `<button class="sm ghost" data-action="telegramToggleSource" data-id="${src.id}" data-enabled="${src.enabled ? "1" : "0"}">${src.enabled ? "Pause" : "Enable"}</button>` : ""}</td>
+      <td>${can("admin") ? `<div style="display:flex;gap:6px;flex-wrap:wrap"><button class="sm ghost" data-action="telegramVerifySource" data-id="${src.id}" data-connection-id="${conn.id}">Generate TF-VERIFY</button><button class="sm ghost" data-action="telegramToggleSource" data-id="${src.id}" data-enabled="${src.enabled ? "1" : "0"}">${src.enabled ? "Pause" : "Enable"}</button></div>` : ""}</td>
     </tr>`).join("") : '<tr><td colspan="5" class="muted">No authorized source configured.</td></tr>';
     return `<div class="panel" style="margin-top:12px">
       <div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><div><b>${esc(conn.name)}</b> <span class="muted">@${esc(conn.bot_username || "unverified")}</span></div>${_tgHealthBadge(conn.health)}</div>
@@ -1869,85 +2571,11 @@ async function telegramManage(locked) {
       <table style="margin-top:12px"><thead><tr><th>Source</th><th>Chat ID</th><th>Kind</th><th>Status</th><th></th></tr></thead><tbody>${sourceRows}</tbody></table>
     </div>`;
   }).join("") : '<div class="panel"><p class="muted">No Telegram connection configured. Add an opaque environment secret reference; never paste the bot token into ThreatForge.</p></div>';
-  const events = can("analyst")
-    ? `<div id="telegramEvents" style="margin-top:14px"></div>`
-    : '<div class="panel" style="margin-top:14px"><h3 style="margin-top:0">Recent collected events</h3><p class="muted">Analyst or admin access is required to read redacted evidence.</p></div>';
-  host.innerHTML = `<div class="panel"><div style="display:flex;justify-content:space-between;align-items:center"><div><h3 style="margin:0">Telegram Intelligence sources</h3><p class="muted" style="margin:4px 0 0">Authorized Bot API collection only. Links and message content are rendered as inert text.</p></div>${can("admin") ? '<button class="sm" data-action="telegramAddConnection">Add connection</button>' : ""}</div></div>${rows}${events}`;
-  host.dataset.telegramSources = JSON.stringify(sources.map(src => ({id: src.id, name: src.name || src.source_ref})));
-  if (can("analyst")) await telegramLoadEvents(true);
-}
-
-function _tgEventContext(context) {
-  const ctx = context || {};
-  const parts = [];
-  if (ctx.update_kind) parts.push(`kind: ${esc(ctx.update_kind)}`);
-  if (ctx.chat_type) parts.push(`chat: ${esc(ctx.chat_type)}`);
-  if (ctx.forwarded) parts.push("forwarded");
-  if (ctx.has_attachment) parts.push("attachment");
-  if (Number(ctx.entity_count || 0) > 0) parts.push(`entities: ${esc(ctx.entity_count)}`);
-  return parts.join(" · ");
-}
-
-function _tgRenderEvents() {
-  const host = $("#telegramEvents");
-  if (!host) return;
-  let sources = [];
-  try { sources = JSON.parse($("#telegramManager").dataset.telegramSources || "[]"); }
-  catch (_) { sources = []; }
-  const filters = [{id: 0, name: "All sources"}].concat(sources).map(src =>
-    `<button class="sm ${Number(src.id) === Number(TG_EVENT_SOURCE) ? "" : "ghost"}" data-action="telegramEventFilter" data-id="${esc(src.id)}">${esc(src.name)}</button>`
-  ).join(" ");
-  const rows = TG_EVENT_ROWS.length ? TG_EVENT_ROWS.map(event => {
-    const context = _tgEventContext(event.context);
-    const text = event.redacted_text
-      ? `<div style="white-space:pre-wrap;word-break:break-word;margin-top:7px;padding:9px;border:1px solid var(--line);border-radius:6px;background:var(--panel2)">${esc(event.redacted_text)}</div>`
-      : '<div class="muted" style="margin-top:7px">No textual content.</div>';
-    return `<div class="panel" style="margin-top:9px">
-      <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
-        <div><b>${esc(event.source_name)}</b> <span class="muted" style="font-size:12px">#${esc(event.id)}</span></div>
-        <span class="muted" style="font-size:12px">${_tgWhen(event.occurred_at || event.created_at)}</span>
-      </div>
-      <div class="muted" style="font-size:12px;margin-top:3px">${esc(event.state)}${context ? ` · ${context}` : ""}${event.text_truncated ? " · truncated" : ""}</div>
-      ${text}
-    </div>`;
-  }).join("") : '<div class="panel" style="margin-top:9px"><p class="muted">No collected events for this filter.</p></div>';
-  host.innerHTML = `<div class="panel">
-    <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap">
-      <div><h3 style="margin:0">Recent collected events</h3><p class="muted" style="margin:4px 0 0">Redacted evidence only. URLs, markup and message content are inert.</p></div>
-      <button class="sm ghost" data-action="telegramEventsRefresh">Refresh</button>
-    </div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">${filters}</div>
-  </div>${rows}${TG_EVENT_HAS_MORE ? '<div style="margin-top:10px;text-align:center"><button class="sm ghost" data-action="telegramEventsOlder">Load older</button></div>' : ""}`;
-}
-
-async function telegramLoadEvents(reset) {
-  const host = $("#telegramEvents");
-  if (!host) return;
-  if (reset) {
-    TG_EVENT_ROWS = [];
-    TG_EVENT_HAS_MORE = false;
-    host.innerHTML = '<div class="panel"><p class="muted">Loading redacted evidence…</p></div>';
-  }
-  const params = new URLSearchParams({limit: String(TG_EVENT_PAGE_SIZE)});
-  if (TG_EVENT_SOURCE) params.set("source_id", String(TG_EVENT_SOURCE));
-  if (!reset && TG_EVENT_ROWS.length) params.set("before_id", String(TG_EVENT_ROWS[TG_EVENT_ROWS.length - 1].id));
-  try {
-    const page = await api("GET", `/collection/events?${params.toString()}`);
-    TG_EVENT_ROWS = reset ? page : TG_EVENT_ROWS.concat(page);
-    TG_EVENT_HAS_MORE = page.length === TG_EVENT_PAGE_SIZE;
-    _tgRenderEvents();
-  } catch (e) {
-    host.innerHTML = `<div class="panel"><h3 style="margin-top:0">Recent collected events</h3><p class="muted">${esc(e.message || "Unable to load collected events.")}</p></div>`;
-  }
-}
-
-function telegramSetEventSource(sourceId) {
-  TG_EVENT_SOURCE = Number(sourceId || 0);
-  telegramLoadEvents(true);
+  host.innerHTML = `<div class="panel"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><div><h3 style="margin:0">Telegram Intelligence sources</h3><p class="muted" style="margin:4px 0 0">Control plane for authorized Bot API connections and sources. Collected evidence is reviewed in the Intelligence Workspace.</p></div><div style="display:flex;gap:7px;flex-wrap:wrap"><button class="sm ghost" data-action="dashGotoIntelligence">Open Intelligence workspace</button>${can("admin") ? '<button class="sm" data-action="telegramAddConnection">Add connection</button>' : ""}</div></div></div>${rows}`;
 }
 
 async function telegramAddConnection() {
-  const name = prompt("Connection name", "CBG Telegram POC");
+  const name = prompt("Connection name", "Telegram intelligence bot");
   if (!name) return;
   const ref = prompt("Opaque bot-token reference", "secretref://file/telegram-collection-bot-token");
   if (!ref) return;
@@ -1977,7 +2605,7 @@ async function telegramToggleConnection(id, enabled) {
 async function telegramAddSource(connectionId) {
   const source_ref = prompt("Authorized Telegram chat ID (for example -1001234567890)", "");
   if (!source_ref) return;
-  const name = prompt("Source display name", "CBG controlled group") || "";
+  const name = prompt("Source display name", "Authorized Telegram source") || "";
   try {
     await api("POST", `/collection/connections/${connectionId}/sources`, {source_ref, name, kind:"group", enabled:true});
     toast("Authorized source added");
@@ -1991,6 +2619,23 @@ async function telegramToggleSource(id, enabled) {
     toast(!enabled ? "Source enabled" : "Source paused");
     telegramManage(false);
   } catch (e) { toast(e.message || "Failed to update source", true); }
+}
+
+async function telegramVerifySource(connectionId, sourceId) {
+  try {
+    const issued = await api(
+      "POST",
+      `/collection/connections/${connectionId}/sources/${sourceId}/verify-request`,
+      {ttl_minutes: 30}
+    );
+    window.prompt(
+      "Copy this one-time TF-VERIFY message and send it in the authorized Telegram source before it expires. The plaintext nonce is not stored by ThreatForge.",
+      issued.message
+    );
+    toast(`Verification request #${issued.request_id} is awaiting confirmation`);
+  } catch (e) {
+    toast(e.message || "Failed to create source verification request", true);
+  }
 }
 
 // -----------------------------------------------------------------------------

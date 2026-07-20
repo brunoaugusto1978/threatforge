@@ -21,7 +21,14 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import features
-from app.collection import healthcheck, ingest, registry, runtime, service
+from app.collection import (
+    healthcheck,
+    ingest,
+    intelligence_analysis,
+    registry,
+    runtime,
+    service,
+)
 from app.database import SessionLocal
 from app.models import (
     CollectionConnection,
@@ -381,7 +388,12 @@ def main() -> int:
         try:
             with SessionLocal() as db:
                 outcomes = run_all_once(db)
-                LOG.info("collection cycle connections=%s", len(outcomes))
+                analysis_outcomes = intelligence_analysis.run_analysis_once(db)
+                LOG.info(
+                    "collection cycle connections=%s analyzed_events=%s",
+                    len(outcomes),
+                    len(analysis_outcomes),
+                )
         except Exception as exc:  # keep the isolated loop alive; never log secrets
             LOG.error(
                 "collection cycle failed error_type=%s", type(exc).__name__

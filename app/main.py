@@ -17,6 +17,7 @@ from app.routers import (
     collection_routes,
     credentials_routes,
     dashboard_routes,
+    intelligence_routes,
     surface_routes,
     correlation_routes,
     timeline_routes,
@@ -84,6 +85,7 @@ async def security_headers(request: Request, call_next):
 
 app.include_router(org_routes.router)
 app.include_router(dashboard_routes.router)
+app.include_router(intelligence_routes.router)
 app.include_router(tenants_routes.router)
 app.include_router(invites_routes.router)
 app.include_router(auth_routes.router)

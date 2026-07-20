@@ -40,13 +40,14 @@ Design constraints (unchanged from the rest of the Community codebase):
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app import config, exposure_ingest as ing, features, integrations, risk
+from app.case_intelligence import case_intelligence_summaries
 from app.auth import Principal, current_tenant_id, require_viewer
 from app.database import get_db
 from app.models import (Brand, BrandFinding, CollectionConnection,
@@ -196,9 +197,12 @@ def _telegram_collection_status(db: Session, tid: int) -> dict:
     }
 
 
-def _iso(dt: datetime | None) -> str | None:
+def _iso(dt: datetime | str | None) -> str | None:
     if dt is None:
         return None
+    if isinstance(dt, str):
+        parsed = _parse_iso(dt)
+        return parsed.isoformat() if parsed is not None else None
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.isoformat()
@@ -302,6 +306,54 @@ def dashboard_overview(
         ).all()
     }
     telegram_status = _telegram_collection_status(db, tid)
+
+    # Provider-neutral collection summary for the primary Dashboard. The
+    # detailed/redacted message feed belongs to the Intelligence Workspace;
+    # this surface exposes only operational aggregates and timestamps.
+    collection_event_filter = (
+        CollectionEvent.tenant_id == tid,
+        CollectionEvent.purged_at.is_(None),
+    )
+    intelligence_events_total = db.scalar(
+        select(func.count()).select_from(CollectionEvent).where(*collection_event_filter)
+    ) or 0
+    intelligence_events_24h = db.scalar(
+        select(func.count()).select_from(CollectionEvent).where(
+            *collection_event_filter,
+            CollectionEvent.created_at >= utcnow() - timedelta(hours=24),
+        )
+    ) or 0
+    intelligence_case_events_total = db.scalar(
+        select(func.count()).select_from(CollectionEvent).where(
+            *collection_event_filter,
+            CollectionEvent.case_id.is_not(None),
+        )
+    ) or 0
+    intelligence_sources_total = db.scalar(
+        select(func.count()).select_from(CollectionSource).where(
+            CollectionSource.tenant_id == tid,
+            CollectionSource.deleted_at.is_(None),
+        )
+    ) or 0
+    intelligence_sources_active = db.scalar(
+        select(func.count()).select_from(CollectionSource).where(
+            CollectionSource.tenant_id == tid,
+            CollectionSource.deleted_at.is_(None),
+            CollectionSource.enabled == True,  # noqa: E712
+        )
+    ) or 0
+    intelligence_connections_enabled = db.scalar(
+        select(func.count()).select_from(CollectionConnection).where(
+            CollectionConnection.tenant_id == tid,
+            CollectionConnection.deleted_at.is_(None),
+            CollectionConnection.enabled == True,  # noqa: E712
+        )
+    ) or 0
+    intelligence_last_event_at = db.scalar(
+        select(func.max(func.coalesce(CollectionEvent.occurred_at, CollectionEvent.created_at)))
+        .where(*collection_event_filter)
+    )
+
     integrations_connected = (
         sum(1 for d in descriptors if d.name in connected_rows)
         + (1 if telegram_status["connected"] else 0)
@@ -331,6 +383,25 @@ def dashboard_overview(
         "telegram_sources_total": telegram_status["source_count"],
         "telegram_sources_active": telegram_status["active_source_count"],
         "telegram_events_total": telegram_status["event_count"],
+        "intelligence_events_total": int(intelligence_events_total),
+        "intelligence_events_24h": int(intelligence_events_24h),
+        "intelligence_case_events_total": int(intelligence_case_events_total),
+        "intelligence_sources_total": int(intelligence_sources_total),
+        "intelligence_sources_active": int(intelligence_sources_active),
+        "intelligence_connections_enabled": int(intelligence_connections_enabled),
+    }
+
+    intelligence_summary = {
+        "license_enabled": features.is_enabled(features.Feature.COLLECTION_TELEGRAM),
+        "analysis_enabled": features.is_enabled(features.Feature.ANALYSIS_TELEGRAM),
+        "events_total": int(intelligence_events_total),
+        "events_24h": int(intelligence_events_24h),
+        "sources_total": int(intelligence_sources_total),
+        "sources_active": int(intelligence_sources_active),
+        "connections_enabled": int(intelligence_connections_enabled),
+        "collector_state": telegram_status["collector_state"],
+        "last_event_at": _iso(intelligence_last_event_at),
+        "last_success_at": telegram_status["last_success_at"],
     }
 
     # ---------------- distributions ----------------
@@ -341,10 +412,13 @@ def dashboard_overview(
 
     # ---------------- recent cases ----------------
     recent_cases = []
-    case_rows = db.scalars(
+    case_rows = list(db.scalars(
         select(InvestigationCase).where(InvestigationCase.tenant_id == tid)
         .order_by(InvestigationCase.created_at.desc(), InvestigationCase.id.desc())
         .limit(recent_limit)
+    ))
+    case_summaries = case_intelligence_summaries(
+        db, tenant_id=tid, cases=case_rows, include_event_ids=False
     )
     for c in case_rows:
         recent_cases.append({
@@ -355,6 +429,7 @@ def dashboard_overview(
             "brand_id": c.brand_id,
             "assignee_user_id": c.assignee_user_id,
             "created_at": _iso(c.created_at),
+            "intelligence": case_summaries.get(c.id),
         })
 
     # ---------------- recent exposure findings ----------------
@@ -467,4 +542,5 @@ def dashboard_overview(
         "recent_ingests": recent_ingests,
         "top_exposed_assets": top_exposed_assets,
         "integrations": integrations_status,
+        "intelligence": intelligence_summary,
     }

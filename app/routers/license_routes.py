@@ -11,11 +11,10 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from app import audit, config, enterprise_adapter, features
-from app.auth import Principal, require_admin
+from app.auth import Principal, require_admin, require_viewer
 from app.database import get_db
 
-router = APIRouter(prefix="/license", tags=["license"],
-                   dependencies=[Depends(require_admin)])
+router = APIRouter(prefix="/license", tags=["license"])
 
 
 def _normalized_reason(available: bool, valid: bool, raw: str | None) -> str:
@@ -67,7 +66,28 @@ def license_status_view() -> dict:
     }
 
 
-@router.get("/status")
+def license_capabilities_view() -> dict:
+    """Viewer-safe canonical feature flags used only for UI presentation.
+
+    This payload deliberately excludes license identifiers, customer metadata,
+    signatures, paths and keys. Backend feature gates remain authoritative.
+    """
+    allowed = set(features.allowed_features())
+    return {
+        "edition": config.EDITION,
+        "features": {
+            feature.value: feature.value in allowed
+            for feature in sorted(features.PREMIUM, key=lambda item: item.value)
+        },
+    }
+
+
+@router.get("/capabilities", dependencies=[Depends(require_viewer)])
+def license_capabilities(_principal: Principal = Depends(require_viewer)):
+    return license_capabilities_view()
+
+
+@router.get("/status", dependencies=[Depends(require_admin)])
 def license_status(request: Request,
                    db: Session = Depends(get_db),
                    principal: Principal = Depends(require_admin)):

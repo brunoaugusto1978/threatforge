@@ -217,6 +217,7 @@ def test_worker_main_uses_healthcheck_heartbeat(monkeypatch):
             return False
 
     touches = []
+    analysis_calls = []
 
     monkeypatch.setattr(
         worker.runtime,
@@ -251,6 +252,11 @@ def test_worker_main_uses_healthcheck_heartbeat(monkeypatch):
         "run_all_once",
         lambda db: [],
     )
+    monkeypatch.setattr(
+        worker.intelligence_analysis,
+        "run_analysis_once",
+        lambda db: analysis_calls.append(db) or [],
+    )
 
     def _stop_after_first_cycle(interval):
         raise _StopLoop()
@@ -265,3 +271,4 @@ def test_worker_main_uses_healthcheck_heartbeat(monkeypatch):
         worker.main()
 
     assert len(touches) == 3
+    assert len(analysis_calls) == 1

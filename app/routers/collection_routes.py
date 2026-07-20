@@ -7,6 +7,7 @@ card and returns the standard HTTP 402 body for actions.
 """
 from __future__ import annotations
 
+from datetime import timezone
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -20,7 +21,9 @@ from app.auth import (
 )
 from app.collection import registry, runtime, service
 from app.database import get_db
-from app.models import CollectionEvent, CollectionSource
+from app.models import (
+    CollectionEvent, CollectionSource, CollectionSourceTestRequest, utcnow,
+)
 
 router = APIRouter(
     prefix="/collection",
@@ -79,6 +82,10 @@ class SourceCreate(BaseModel):
 
 class SourceStateUpdate(BaseModel):
     enabled: bool
+
+
+class SourceVerificationRequest(BaseModel):
+    ttl_minutes: int = Field(default=30, ge=5, le=120)
 
 
 _EVENT_CONTEXT_FIELDS = {
@@ -478,6 +485,139 @@ def create_source(
         {"connection_id": connection_id, "provider": row.provider},
     )
     return _source_view(row)
+
+
+@router.post(
+    "/connections/{connection_id}/sources/{source_id}/verify-request",
+    status_code=201,
+)
+def request_source_verification(
+    connection_id: int,
+    source_id: int,
+    payload: SourceVerificationRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    tid: int = Depends(current_tenant_id),
+    principal: Principal = Depends(require_admin),
+):
+    """Issue a one-time TF-VERIFY message for an authorized source.
+
+    Only the nonce hash is persisted. The plaintext control message is returned
+    once to the authenticated tenant administrator and is never included in
+    the audit detail.
+    """
+    _gate()
+    try:
+        connection = service.get_connection(
+            db, tenant_id=tid, connection_id=connection_id
+        )
+        source = service.get_source(db, tenant_id=tid, source_id=source_id)
+        if source.connection_id != connection.id:
+            raise HTTPException(
+                status_code=404, detail="Source not found for connection."
+            )
+        if source.provider != connection.provider:
+            raise HTTPException(
+                status_code=409, detail="Source provider differs from connection."
+            )
+        issued = service.request_source_test(
+            db,
+            tenant_id=tid,
+            connection_id=connection.id,
+            source_id=source.id,
+            ttl_minutes=payload.ttl_minutes,
+            actor=principal.subject,
+        )
+        db.commit()
+    except service.NotFound:
+        db.rollback()
+        raise HTTPException(
+            status_code=404, detail="Connection or source not found."
+        ) from None
+    except (service.TenantMismatch, service.ProviderMismatch) as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+
+    _audit(
+        db,
+        principal,
+        tid,
+        request,
+        "collection.source_verification_requested",
+        "collection_source_test_request",
+        issued.request_id,
+        {
+            "connection_id": connection.id,
+            "source_id": source.id,
+            "provider": source.provider,
+            "ttl_minutes": payload.ttl_minutes,
+        },
+    )
+    return {
+        "request_id": issued.request_id,
+        "connection_id": connection.id,
+        "source_id": source.id,
+        "provider": source.provider,
+        "status": "awaiting",
+        "message": f"TF-VERIFY-{issued.nonce}",
+        "expires_at": issued.expires_at,
+    }
+
+
+@router.get("/source-tests/{request_id}")
+def get_source_verification_status(
+    request_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    tid: int = Depends(current_tenant_id),
+    principal: Principal = Depends(require_viewer),
+):
+    """Return tenant-scoped verification status without nonce material."""
+    _gate()
+    row = db.execute(
+        select(CollectionSourceTestRequest).where(
+            CollectionSourceTestRequest.id == request_id,
+            CollectionSourceTestRequest.tenant_id == tid,
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(
+            status_code=404, detail="Source verification request not found."
+        )
+
+    if row.status in {"pending", "awaiting"} and row.expires_at is not None:
+        expires_at = row.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at < utcnow():
+            row.status = "expired"
+            db.commit()
+
+    _audit(
+        db,
+        principal,
+        tid,
+        request,
+        "collection.source_verification_status_viewed",
+        "collection_source_test_request",
+        row.id,
+        {
+            "connection_id": row.connection_id,
+            "source_id": row.source_id,
+            "provider": row.provider,
+            "status": row.status,
+        },
+    )
+    return {
+        "request_id": row.id,
+        "connection_id": row.connection_id,
+        "source_id": row.source_id,
+        "provider": row.provider,
+        "status": row.status,
+        "requested_at": row.requested_at,
+        "verified_at": row.verified_at,
+        "expires_at": row.expires_at,
+    }
 
 
 @router.patch("/sources/{source_id}")

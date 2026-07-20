@@ -238,3 +238,170 @@ def test_failed_connection_without_explicit_diagnostic_is_sanitized(
         "retry_after_seconds": 30,
     }
     assert "secretref" not in tested.text
+
+
+def test_source_verification_request_is_one_time_tenant_scoped_and_audited(
+    tenant_admin_client, monkeypatch
+):
+    import hashlib
+
+    from app.database import SessionLocal
+    from app.models import AuditLog, CollectionSourceTestRequest
+
+    _enable(monkeypatch)
+    _register_fake()
+
+    connection = tenant_admin_client.post(
+        "/collection/connections",
+        json={
+            "name": "CBG verification bot",
+            "provider": "telegram",
+            "bot_token_ref": "secretref://file/telegram-collection-bot-token",
+        },
+    )
+    assert connection.status_code == 201, connection.text
+    connection_id = connection.json()["id"]
+
+    source = tenant_admin_client.post(
+        f"/collection/connections/{connection_id}/sources",
+        json={
+            "source_ref": "-1001234567890",
+            "name": "CBG controlled group",
+            "kind": "supergroup",
+            "enabled": True,
+        },
+    )
+    assert source.status_code == 201, source.text
+    source_id = source.json()["id"]
+
+    issued = tenant_admin_client.post(
+        f"/collection/connections/{connection_id}/sources/{source_id}/verify-request",
+        json={"ttl_minutes": 15},
+    )
+    assert issued.status_code == 201, issued.text
+    body = issued.json()
+    assert body["connection_id"] == connection_id
+    assert body["source_id"] == source_id
+    assert body["provider"] == "telegram"
+    assert body["status"] == "awaiting"
+    assert body["message"].startswith("TF-VERIFY-")
+    assert body["expires_at"]
+    assert "nonce_hash" not in body
+
+    raw_nonce = body["message"].removeprefix("TF-VERIFY-")
+    expected_hash = hashlib.sha256(raw_nonce.encode("utf-8")).hexdigest()
+
+    with SessionLocal() as db:
+        row = db.get(CollectionSourceTestRequest, body["request_id"])
+        assert row is not None
+        assert row.nonce_hash == expected_hash
+        assert raw_nonce not in row.nonce_hash
+        audit_row = db.query(AuditLog).filter(
+            AuditLog.action == "collection.source_verification_requested",
+            AuditLog.target_id == str(body["request_id"]),
+        ).one()
+        serialized_detail = str(audit_row.detail or {})
+        assert raw_nonce not in serialized_detail
+        assert "TF-VERIFY" not in serialized_detail
+
+    status = tenant_admin_client.get(
+        f"/collection/source-tests/{body['request_id']}"
+    )
+    assert status.status_code == 200, status.text
+    status_body = status.json()
+    assert status_body == {
+        "request_id": body["request_id"],
+        "connection_id": connection_id,
+        "source_id": source_id,
+        "provider": "telegram",
+        "status": "awaiting",
+        "requested_at": status_body["requested_at"],
+        "verified_at": None,
+        "expires_at": status_body["expires_at"],
+    }
+    assert raw_nonce not in status.text
+    assert "nonce_hash" not in status.text
+
+
+def test_source_verification_request_rejects_cross_connection_source(
+    tenant_admin_client, monkeypatch
+):
+    _enable(monkeypatch)
+    _register_fake()
+
+    def create_connection(name):
+        response = tenant_admin_client.post(
+            "/collection/connections",
+            json={
+                "name": name,
+                "provider": "telegram",
+                "bot_token_ref": f"secretref://file/{name}-token",
+            },
+        )
+        assert response.status_code == 201, response.text
+        return response.json()["id"]
+
+    first_connection = create_connection("first-bot")
+    second_connection = create_connection("second-bot")
+    source = tenant_admin_client.post(
+        f"/collection/connections/{second_connection}/sources",
+        json={
+            "source_ref": "-1005555555555",
+            "name": "Second source",
+            "kind": "channel",
+            "enabled": True,
+        },
+    )
+    assert source.status_code == 201, source.text
+
+    response = tenant_admin_client.post(
+        f"/collection/connections/{first_connection}/sources/{source.json()['id']}/verify-request",
+        json={"ttl_minutes": 30},
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Source not found for connection."
+
+
+def test_source_verification_status_is_tenant_scoped(fresh_app, monkeypatch):
+    _enable(monkeypatch)
+    _register_fake()
+    op = fresh_app
+    assert op.post(
+        "/setup/operator",
+        json={"email": "op@plat.com", "password": _pw("Operator")},
+    ).status_code == 201
+    tenant_a = _create_admin(op, "Tenant A", "verify-a@test.com")
+    tenant_b = _create_admin(op, "Tenant B", "verify-b@test.com")
+
+    connection = tenant_a.post(
+        "/collection/connections",
+        json={
+            "name": "tenant-a-verification",
+            "provider": "telegram",
+            "bot_token_ref": "secretref://file/tenant-a-verification-token",
+        },
+    )
+    assert connection.status_code == 201, connection.text
+    connection_id = connection.json()["id"]
+    source = tenant_a.post(
+        f"/collection/connections/{connection_id}/sources",
+        json={
+            "source_ref": "-1007777777777",
+            "name": "Tenant A source",
+            "kind": "supergroup",
+            "enabled": True,
+        },
+    )
+    assert source.status_code == 201, source.text
+    request = tenant_a.post(
+        f"/collection/connections/{connection_id}/sources/"
+        f"{source.json()['id']}/verify-request",
+        json={"ttl_minutes": 30},
+    )
+    assert request.status_code == 201, request.text
+
+    request_id = request.json()["request_id"]
+    assert tenant_a.get(f"/collection/source-tests/{request_id}").status_code == 200
+    cross_tenant = tenant_b.get(f"/collection/source-tests/{request_id}")
+    assert cross_tenant.status_code == 404
+    assert "TF-VERIFY" not in cross_tenant.text

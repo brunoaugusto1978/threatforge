@@ -14,6 +14,15 @@ This is a preview, not 1.0: feature-rich and tested, but schema/API/UI may still
 - Roadmap (Community × Enterprise): [`ROADMAP.md`](ROADMAP.md)
 - Governance & maintainer: [`GOVERNANCE.md`](GOVERNANCE.md)
 
+### Upcoming v0.11.0 — Telegram Intelligence and Intelligence Workspace
+
+Development of **v0.11.0** is in progress on versioned implementation branches.
+The release introduces an operational **Intelligence Workspace** for authorized
+inbound collection, provider-neutral event review, collector/source health,
+redacted evidence, tenant isolation and investigation linkage. The published
+release remains v0.10.1 until v0.11.0 completes runtime acceptance, versioning,
+tagging and release publication.
+
 ## Optional Enterprise Adapter
 
 ThreatForge Community can optionally integrate with the private ThreatForge Enterprise package when it is installed.
@@ -24,10 +33,12 @@ See [Optional Enterprise Adapter](docs/ENTERPRISE_ADAPTER.md).
 
 ## Product Strategy
 
-ThreatForge is planned as two editions:
+ThreatForge is delivered as two editions on the same release train, schema and API:
 
-- **Community Edition**: the open source CTI and Digital Risk Protection core.
-- **Enterprise Edition**: a future private/commercial edition with licensing, trial mode, premium reports and enterprise features.
+- **Community Edition**: the open source CTI and Digital Risk Protection core, distributed under AGPL-3.0-or-later.
+- **Enterprise Edition**: a private/commercial overlay with signed licensing, trial mode, premium providers, continuous intelligence collection and enterprise operational controls.
+
+Enterprise is installed as an overlay package; it is not a fork and does not require a separate database migration path.
 
 See [Product Strategy](PRODUCT_STRATEGY.md).
 
@@ -60,13 +71,36 @@ See [Product Strategy](PRODUCT_STRATEGY.md).
 - **Audit logs** — sensitive actions logged with user, operator, tenant, IP and user-agent context.
 - **Web hardening** — CSP, security headers, login rate limiting and generic authentication errors.
 
+### Intelligence Workspace (v0.11.0 in development)
+
+- **Operational overview** — provider-neutral totals, recent collection volume, processing states, active sources and collector health. Overview metric cards are keyboard-accessible and open contextual summaries with direct feed or configuration actions.
+- **Intelligence Feed** — tenant-scoped, redacted events with source/provider/state filters, text search and stable cursor pagination.
+- **Secure event detail** — inert redacted content, sanitized context, processing metadata and links to findings or cases; raw provider payloads, external identifiers, fingerprints and secrets are never exposed.
+- **Control-plane separation** — the **Integrations** view configures connections and authorized sources; collected evidence is reviewed in **Intelligence**.
+- **RBAC and audit** — viewer access to operational summaries; analyst/admin access to redacted evidence, with event-list and event-detail reads recorded in the audit trail.
+- **Telegram Intelligence** — authorized inbound Bot API collection is distinct from outbound Telegram alert notifications.
+- **Explainable automated analysis** — Enterprise classification correlates redacted text with tenant-scoped brands, public monitored assets and approved sensitive terms, recording matched target, threat intent, negation/context signals and a deterministic confidence score.
+- **Controlled promotion** — optional fail-safe policy can create an idempotent Exposure finding at the configured threshold and open one deduplicated investigation case at the higher threshold. Automatic notifications remain separate and require human review before response.
+
+Inbound collection flow:
+
+```text
+Authorized Telegram source → collection worker → normalized/redacted event
+→ Intelligence Workspace → analysis → finding/case
+```
+
+Outbound notification flow:
+
+```text
+ThreatForge finding → Telegram alert destination
+```
 
 ### Exposure, Surface and Credential Intelligence
 
 - **Exposure Monitoring** — monitored assets, findings, manual/authorized intake, deduplication and server-side redaction.
 - **Attack Surface Discovery** — passive discovery and manual import for subdomains, IPs and certificates.
 - **Credential Intelligence** — identity rollup, password-reuse grouping and VIP credential leak handling.
-- **Operational Dashboard** — tenant-scoped overview for cases, exposure findings, monitored assets and operational activity.
+- **Operational Dashboard** — tenant-scoped overview for cases, exposure findings, monitored assets, integrations and intelligence activity. Dashboard KPI cards are keyboard-accessible, open contextual summaries and provide direct navigation to the corresponding operational workspace.
 
 ### Investigation Cases and Review Workflow
 
@@ -507,13 +541,31 @@ Verdicts:
 | `CORS_ORIGINS` | no | Comma-separated allowed origins |
 | `ABUSECH_API_KEY` | no | abuse.ch Auth-Key for URLhaus |
 
+## Telegram Intelligence analysis policy (Enterprise v0.11.0)
+
+Automatic promotion is disabled by default. The collector reads these variables
+from the ignored local Enterprise environment file:
+
+| Variable | Default | Description |
+|---|---:|---|
+| `THREATFORGE_INTELLIGENCE_AUTO_FINDING` | `false` | Create an idempotent Exposure finding when the explainable score reaches the finding threshold. |
+| `THREATFORGE_INTELLIGENCE_AUTO_CASE` | `false` | Open/reuse an investigation case only when automatic finding creation is enabled and the case threshold is reached. |
+| `THREATFORGE_INTELLIGENCE_FINDING_THRESHOLD` | `60` | Minimum score for automatic finding creation. |
+| `THREATFORGE_INTELLIGENCE_CASE_THRESHOLD` | `80` | Minimum score for automatic case creation; never lower than the finding threshold. |
+| `THREATFORGE_INTELLIGENCE_ANALYSIS_BATCH_SIZE` | `25` | Maximum normalized events analyzed in one collector cycle. |
+
+The implementation is fail-safe: negation and approved-testing context prevent
+automatic promotion, repeated same-day evidence for the same target/category
+reuses the same finding and case, and raw message text is not copied into finding,
+case or audit metadata.
+
 ## Alert Configuration
 
 | Variable | Description |
 |---|---|
 | `ALERT_MIN_VERDICT` | Minimum verdict required to alert: `low`, `suspicious` or `malicious` |
-| `TELEGRAM_BOT_TOKEN` | Telegram bot token |
-| `TELEGRAM_CHAT_ID` | Destination chat ID |
+| `TELEGRAM_BOT_TOKEN` | Outbound Telegram alert bot token |
+| `TELEGRAM_CHAT_ID` | Outbound Telegram alert destination chat ID |
 | `ALERT_WEBHOOK_URL` | Webhook for Slack, Discord, Teams, SIEM or SOAR |
 | `SMTP_HOST` | SMTP server |
 | `SMTP_PORT` | SMTP port |
@@ -524,6 +576,11 @@ Verdicts:
 | `SMTP_STARTTLS` | Enables STARTTLS |
 
 Each alert channel is independent and best-effort. Failure in one channel does not block scans or the other channels.
+
+These variables configure **outbound notifications only**. Authorized inbound
+Telegram Intelligence collection uses an opaque Secret Resolver reference and
+the Enterprise collection worker; the bot token is never entered or returned
+through the Intelligence Workspace.
 
 ## Useful Commands
 
@@ -563,7 +620,7 @@ Use `docker compose down -v` only when you want to delete the local database and
 
 ThreatForge Community is the open source edition.
 
-ThreatForge Enterprise is planned as a private/commercial edition focused on:
+ThreatForge Enterprise is the private/commercial overlay focused on:
 
 - license management;
 - 90-day trial;
@@ -573,7 +630,10 @@ ThreatForge Enterprise is planned as a private/commercial edition focused on:
 - enterprise integrations;
 - advanced MSSP mode;
 - advanced audit and governance;
-- premium connectors.
+- premium connectors;
+- authorized continuous intelligence collection;
+- provider-specific collectors and analyzers;
+- Intelligence Workspace entitlements and enterprise operational controls.
 
 Enterprise-only modules must not be committed to this public repository.
 
@@ -582,6 +642,17 @@ Enterprise-only modules must not be committed to this public repository.
 ### Dashboard
 
 ![ThreatForge dashboard](docs/assets/screenshots/dashboard.png)
+
+The v0.11.0 Dashboard uses interactive, keyboard-accessible KPI cards. Selecting
+a metric opens a tenant-scoped contextual summary and a direct action to the
+corresponding operational workspace; the Dashboard does not expose raw Telegram
+messages, provider identifiers or secret references.
+
+The v0.11.0 release documentation will refresh the Dashboard screenshot and add
+validated screenshots for **Intelligence Overview**, **Intelligence Feed**,
+**Event Detail**, **Integrations** and **Telegram Source Management** after the
+final UI acceptance. Transitional development screens are not published as
+release screenshots.
 
 ### Indicators
 
@@ -623,7 +694,8 @@ See [Public Readiness Check](docs/PUBLIC_READINESS_CHECK.md).
 
 ## Roadmap
 
-ThreatForge Community is currently at **v0.10.1 Community Preview**.
+ThreatForge Community is currently published at **v0.10.1 Community Preview**.
+Development of **v0.11.0 — Telegram Intelligence and Intelligence Workspace** is in progress and will only become the current release after acceptance, version integration, tag creation and GitHub Release publication.
 The historical v0.7/v0.8/v0.9 milestones and the first v0.10 operational review workflow backend slice have already landed on `main`.
 Future work is tracked in the canonical roadmap:
 
@@ -667,6 +739,11 @@ and activating a license (see [`docs/ENTERPRISE_INSTALL.md`](docs/ENTERPRISE_INS
 | Markdown / JSON export, partial STIX 2.1 export | Yes | Yes |
 | PDF export (cases, credential dossiers) — `export.pdf` | Locked (402) | Yes |
 | MISP / OpenCTI / generic integrations — `integration.*` | Catalog + stubs (402) | Yes |
+| Intelligence Workspace operational catalog and provider-neutral UI | Visible catalog / locked event access | Yes |
+| Telegram Intelligence authorized inbound collection — `collection.telegram` | Locked (402) | Yes |
+| Telegram Intelligence analysis — `analysis.telegram` | Locked (402) | Yes |
+| Outbound Telegram finding notifications | Yes | Yes |
+| Collector/source health and collection observability | Visible status / locked operations | Yes |
 | Premium enrichment — `enrichment.premium` | Locked (402) | Yes |
 | Automated feeds (stealer / breach / paste / dark & deep web) | No | Yes |
 | Continuous monitoring & real-time alerts | No | Yes |
@@ -688,3 +765,65 @@ and return **HTTP 402** when invoked without an active license.
 
 Full details and worked examples: [`docs/LICENSE_FAQ.md`](docs/LICENSE_FAQ.md).
 Commercial licensing: **commercial@cbgsecurity.com.br** · Security: **security@cbgsecurity.com.br** · Community: **opensource@cbgsecurity.com.br**.
+
+### Conversation-aware Telegram intelligence (v0.11.0 in development)
+
+ThreatForge v0.11.0 adds privacy-preserving credential-exposure detection and bounded
+conversation correlation. E-mail local parts are removed while approved domains
+remain available as safe indicators; provider actors are represented only by a
+one-way pseudonymous reference. Related credential-exposure, claimed-access and
+market-continuation events reuse one finding and one investigation case.
+
+`TF-VERIFY` source controls are generated dynamically from the Integrations
+control plane and are valid only for the matching tenant, connection, source and
+unexpired pending request. The plaintext nonce is returned once and only its
+SHA-256 hash is stored. Static `TF-VERIFY-*` text never receives control status.
+
+Acceptance conversations and customer-specific evidence are maintained outside
+the product repositories. Source-controlled tests use neutral synthetic targets
+and identifiers only.
+
+### Investigation case correlation visibility (v0.11.0 in development)
+
+ThreatForge v0.11.0 makes deduplicated intelligence activity visible from the Cases and
+Dashboard surfaces. A repeated event can reuse an existing finding and case
+without creating duplicate investigations; the case list now shows the linked
+intelligence source, exposure finding reference, correlated-event count and last
+activity. The case detail adds the decision, confidence, correlation family,
+first/last event timestamps and a safe list of tenant-scoped event IDs.
+
+The Dashboard distinguishes the number of investigation cases from the number of
+intelligence events correlated into those cases. All values are computed from
+real tenant-scoped relations. These responses never read or expose message text,
+provider payloads, actor identifiers, chat identifiers, fingerprints or secret
+material.
+
+### License-aware premium actions (v0.11.0 in development)
+
+Premium actions use canonical feature keys end to end. The Cases UI reads the
+viewer-safe `/license/capabilities` projection for presentation only; the PDF
+endpoint remains the authority and records `feature.allowed` or `feature.denied`.
+A valid license granting `export.pdf` displays `Export PDF` without a lock and
+must generate a real PDF. License material, signatures, paths and installation
+secrets are never returned to the browser.
+
+### Intelligence-aware case PDF reports (v0.11.0 in development)
+
+Enterprise case PDF export now uses tenant-scoped case correlation metadata rather
+than a placeholder finding. A single-case report includes the tenant name, case
+status, canonical severity, risk score, linked finding, source, analysis decision,
+confidence, correlation family, correlated-event count, first/last activity, safe
+event references, human-review requirement and actionable recommendations.
+
+Severity values used by the Community case workflow (`baixo`, `medio`, `alto`,
+`critico`) are normalized to the Enterprise report vocabulary. Provider message
+content, actor/chat identifiers, raw payloads, fingerprints, storage paths and
+license identifiers are never included in the report. The export remains one PDF
+per investigation case; a consolidated multi-case report is a separate product
+capability.
+
+Report header semantics are explicit: `Tenant` identifies the monitored tenant,
+while `Prepared for` resolves to the institutional customer from the verified
+Enterprise license. A report-provided recipient is used only as a compatibility
+fallback when the signed license has no customer name. Long case titles are
+wrapped within the printable cover width so the report heading is never clipped.

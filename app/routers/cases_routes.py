@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import audit, config, evidence_store, exporters, features
+from app.case_intelligence import case_intelligence_summaries, case_pdf_report_context
 from app.auth import Principal, current_tenant_id, require_analyst, require_viewer
 from app.database import get_db
 from app.models import Brand, BrandFinding, CaseEvidence, CaseNote, CaseReview, InvestigationCase, User, utcnow
@@ -130,13 +131,27 @@ def list_cases(status: str | None = None, severity: str | None = None,
     if q:
         stmt = stmt.where(InvestigationCase.title.ilike(f"%{q}%"))
     stmt = stmt.order_by(InvestigationCase.created_at.desc()).limit(max(1, min(limit, 500))).offset(max(offset, 0))
-    return [CaseOut.model_validate(c).model_dump() for c in db.scalars(stmt)]
+    cases = list(db.scalars(stmt))
+    summaries = case_intelligence_summaries(
+        db, tenant_id=tid, cases=cases, include_event_ids=False
+    )
+    output = []
+    for case in cases:
+        row = CaseOut.model_validate(case).model_dump()
+        row["intelligence"] = summaries.get(case.id)
+        output.append(row)
+    return output
 
 
 @router.get("/{case_id}", dependencies=[Depends(require_viewer)])
 def get_case(case_id: int, db: Session = Depends(get_db),
              tid: int = Depends(current_tenant_id)):
-    return CaseOut.model_validate(_owned_case(db, case_id, tid)).model_dump()
+    case = _owned_case(db, case_id, tid)
+    row = CaseOut.model_validate(case).model_dump()
+    row["intelligence"] = case_intelligence_summaries(
+        db, tenant_id=tid, cases=[case], include_event_ids=True
+    ).get(case.id)
+    return row
 
 
 @router.patch("/{case_id}", dependencies=[Depends(require_analyst)])
@@ -444,7 +459,12 @@ def export_case_pdf(case_id: int, request: Request,
     """
     case = _owned_case(db, case_id, tid)  # tenant-scoped; cross-tenant -> 404
     try:
-        pdf_bytes = exporters.render_case_pdf(case, edition=config.EDITION)
+        report_context = case_pdf_report_context(
+            db, tenant_id=tid, case=case
+        )
+        pdf_bytes = exporters.render_case_pdf(
+            case, edition=config.EDITION, **report_context
+        )
     except features.EnterpriseFeatureRequired as exc:
         _audit(db, principal, tid, request, "feature.denied", case.id,
                {"feature": exc.feature, "edition": config.EDITION})

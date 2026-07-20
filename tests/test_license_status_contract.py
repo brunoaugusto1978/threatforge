@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from app.routers import license_routes
 
 
@@ -55,3 +57,35 @@ def test_incompatible_core_reason_is_public_and_fail_closed(monkeypatch):
     assert view["reason"] == "incompatible_core"
     assert view["core_compatible"] is False
     assert view["allowed_features"] == []
+
+
+def test_license_capabilities_view_is_canonical_and_secret_free(monkeypatch):
+    monkeypatch.setattr(
+        license_routes.features,
+        "allowed_features",
+        lambda: ["export.pdf", "analysis.telegram"],
+    )
+
+    view = license_routes.license_capabilities_view()
+
+    assert view["features"]["export.pdf"] is True
+    assert view["features"]["analysis.telegram"] is True
+    assert view["features"]["collection.telegram"] is False
+    assert set(view) == {"edition", "features"}
+
+    serialized = repr(view).lower()
+    for forbidden in (
+        "license_id",
+        "customer",
+        "signature",
+        "private_key",
+        "license_file",
+        "installation_id",
+    ):
+        assert forbidden not in serialized
+
+
+def test_license_capabilities_endpoint_is_viewer_safe_and_status_remains_admin_only():
+    source = Path("app/routers/license_routes.py").read_text(encoding="utf-8")
+    assert '@router.get("/capabilities", dependencies=[Depends(require_viewer)])' in source
+    assert '@router.get("/status", dependencies=[Depends(require_admin)])' in source
