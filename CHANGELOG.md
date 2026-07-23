@@ -1,5 +1,80 @@
 # Changelog
 
+All notable changes to ThreatForge Community are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+> Historical entries group features by development milestone. ThreatForge
+> remains a Community Preview until the stable 1.0 release.
+
+## [Unreleased]
+
+### Planned
+
+- Automated dark/deep-web feeds and real-time collection.
+- k-anonymity breach enrichment.
+- Production MISP/OpenCTI transport with encrypted secret storage and
+  anti-SSRF validation.
+- Additional Enterprise operational and reporting capabilities tracked in
+  [`ROADMAP.md`](ROADMAP.md).
+
+## [0.11.0] — 2026-07-22 — Telegram Intelligence and Intelligence Workspace
+
+### Added
+
+- Added the provider-neutral Intelligence Workspace with tenant-scoped
+  operational overview, redacted event feed and event-detail views.
+- Added licensed Telegram Intelligence connections, authorized sources,
+  source verification and collection-health APIs.
+- Added an isolated collection worker with a dedicated Compose profile,
+  heartbeat healthcheck and bounded polling.
+- Added Dashboard visibility for Telegram license availability, connection
+  state, authorized-source count, collector health, event totals and recent
+  activity.
+- Added conversation-aware intelligence analysis and deterministic
+  tenant-scoped correlation into exposure findings and investigation cases.
+- Added case correlation metadata, linked-event counts and recent
+  intelligence activity.
+- Added Enterprise/core compatibility metadata and canonical license
+  capability projections.
+- Added Alembic migration head `20260718_01_tgcoll`.
+
+### Security
+
+- Telegram bot tokens remain outside the database; only validated opaque
+  environment or file references are persisted.
+- Raw provider payloads, actor identifiers, chat identifiers, fingerprints
+  and secret references are not exposed through the Intelligence Workspace.
+- Connections, sources, events, findings and cases remain tenant-scoped.
+- Provider failures are reduced to an allowlisted diagnostic vocabulary.
+- Inbound Telegram Intelligence remains separate from outbound Telegram
+  finding notifications.
+- The collection worker is opt-in and isolated in its own Compose profile.
+
+### Validation
+
+- Community application version reported `0.11.0`.
+- Alembic current, head and database revision matched
+  `20260718_01_tgcoll`.
+- API, PostgreSQL and collector healthchecks passed.
+- A controlled authorized-source event was collected, persisted, analyzed
+  and reflected in the Intelligence Workspace and Dashboard.
+- Connection health reported no ignored, rejected or credential-resolution
+  errors during final runtime acceptance.
+- Historical events, findings and investigation cases remained preserved.
+- The optional Enterprise overlay reported compatible Community and
+  Enterprise versions with Telegram collection and analysis enabled.
+
+### Upgrade notes
+
+- Back up PostgreSQL and evidence volumes before upgrading.
+- Apply the Alembic migration before enabling the collection worker.
+- Configure credentials only through supported opaque secret references.
+- Start the collector through the `telegram-collector` Compose profile.
+- Community installations without an active Enterprise package retain the
+  visible catalog and license gates, while premium operations remain locked.
+
 ## [0.10.1] — Case Reviews Migration Hotfix
 
 ### Fixed
@@ -21,38 +96,6 @@
 ### Validation
 - `python -m pytest -q` — 74 passed, 1 warning.
 - `python -m app.selftest_isolation` — ALL TESTS PASSED.
-
-
-All notable changes to ThreatForge Community are documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and the project aims to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-> Historical entries group features by development milestone. Only the current
-> public preview carries a release date; earlier version headings summarize the
-> milestone in which each capability landed on `main`.
-
-## [Unreleased]
-
-### Added
-
-- Added a licensed Telegram Intelligence catalog and tenant-scoped connection/source API.
-- Added an isolated collector worker and private-provider registration seam.
-- Added opaque environment/file secret references and sanitized provider health.
-- Added Enterprise/core compatibility and version metadata to license status.
-- Added a controlled CBG Telegram POC runbook and explicit inbound/outbound boundary.
-
-### Security
-
-- Bot tokens are never accepted as source metadata; only opaque secret references are stored.
-- Provider errors are reduced to an allowlisted diagnostic vocabulary.
-- The collector is disabled by default and runs in a separate Compose profile.
-
-Planned next (Enterprise, out of this repository — see [ROADMAP.md](ROADMAP.md)):
-automated dark/deep-web feeds, real-time collection, k-anonymity breach
-enrichment, real MISP/OpenCTI connector transport with encrypted secret vault
-and anti-SSRF validation, premium PDF/export, and Enterprise packaging with
-license activation.
 
 ## [0.9.5] — Security Hardening
 

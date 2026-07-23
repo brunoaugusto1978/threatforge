@@ -6,22 +6,21 @@ ThreatForge is an open source platform for Cyber Threat Intelligence, Digital Ri
 
 ## Release status
 
-**Current release: v0.10.1 — Community Preview** (AGPL-3.0-or-later).
+**Current release: v0.11.0 — Community Preview** (AGPL-3.0-or-later).
 This is a preview, not 1.0: feature-rich and tested, but schema/API/UI may still evolve before a stable 1.0.
 
-- Release notes: [`docs/RELEASE_NOTES_v0.10.1.md`](docs/RELEASE_NOTES_v0.10.1.md)
+- Release notes: [`docs/RELEASE_NOTES_v0.11.0.md`](docs/RELEASE_NOTES_v0.11.0.md)
 - Changelog: [`CHANGELOG.md`](CHANGELOG.md)
 - Roadmap (Community × Enterprise): [`ROADMAP.md`](ROADMAP.md)
 - Governance & maintainer: [`GOVERNANCE.md`](GOVERNANCE.md)
 
-### Upcoming v0.11.0 — Telegram Intelligence and Intelligence Workspace
+### v0.11.0 — Telegram Intelligence and Intelligence Workspace
 
-Development of **v0.11.0** is in progress on versioned implementation branches.
-The release introduces an operational **Intelligence Workspace** for authorized
-inbound collection, provider-neutral event review, collector/source health,
-redacted evidence, tenant isolation and investigation linkage. The published
-release remains v0.10.1 until v0.11.0 completes runtime acceptance, versioning,
-tagging and release publication.
+ThreatForge Community v0.11.0 introduces an operational **Intelligence
+Workspace** for authorized inbound collection, provider-neutral event review,
+collector and source health, redacted evidence, tenant isolation and
+investigation linkage. Runtime acceptance validated the Community core and
+optional Enterprise overlay on the same schema and API release train.
 
 ## Optional Enterprise Adapter
 
@@ -71,7 +70,7 @@ See [Product Strategy](PRODUCT_STRATEGY.md).
 - **Audit logs** — sensitive actions logged with user, operator, tenant, IP and user-agent context.
 - **Web hardening** — CSP, security headers, login rate limiting and generic authentication errors.
 
-### Intelligence Workspace (v0.11.0 in development)
+### Intelligence Workspace (v0.11.0)
 
 - **Operational overview** — provider-neutral totals, recent collection volume, processing states, active sources and collector health. Overview metric cards are keyboard-accessible and open contextual summaries with direct feed or configuration actions.
 - **Intelligence Feed** — tenant-scoped, redacted events with source/provider/state filters, text search and stable cursor pagination.
@@ -648,11 +647,10 @@ a metric opens a tenant-scoped contextual summary and a direct action to the
 corresponding operational workspace; the Dashboard does not expose raw Telegram
 messages, provider identifiers or secret references.
 
-The v0.11.0 release documentation will refresh the Dashboard screenshot and add
-validated screenshots for **Intelligence Overview**, **Intelligence Feed**,
-**Event Detail**, **Integrations** and **Telegram Source Management** after the
-final UI acceptance. Transitional development screens are not published as
-release screenshots.
+The v0.11.0 runtime acceptance validated **Dashboard**, **Intelligence
+Overview**, **Intelligence Feed**, **Event Detail**, **Integrations** and
+**Telegram Source Management**. Customer-specific acceptance evidence and
+operational secrets remain outside the public product repository.
 
 ### Indicators
 
@@ -694,8 +692,8 @@ See [Public Readiness Check](docs/PUBLIC_READINESS_CHECK.md).
 
 ## Roadmap
 
-ThreatForge Community is currently published at **v0.10.1 Community Preview**.
-Development of **v0.11.0 — Telegram Intelligence and Intelligence Workspace** is in progress and will only become the current release after acceptance, version integration, tag creation and GitHub Release publication.
+ThreatForge Community is currently published at **v0.11.0 Community Preview**.
+ThreatForge v0.11.0 delivers Telegram Intelligence collection foundations, the provider-neutral Intelligence Workspace, source and collector observability, tenant-scoped correlation and dashboard integration.
 The historical v0.7/v0.8/v0.9 milestones and the first v0.10 operational review workflow backend slice have already landed on `main`.
 Future work is tracked in the canonical roadmap:
 
@@ -766,7 +764,7 @@ and return **HTTP 402** when invoked without an active license.
 Full details and worked examples: [`docs/LICENSE_FAQ.md`](docs/LICENSE_FAQ.md).
 Commercial licensing: **commercial@cbgsecurity.com.br** · Security: **security@cbgsecurity.com.br** · Community: **opensource@cbgsecurity.com.br**.
 
-### Conversation-aware Telegram intelligence (v0.11.0 in development)
+### Conversation-aware Telegram intelligence (v0.11.0)
 
 ThreatForge v0.11.0 adds privacy-preserving credential-exposure detection and bounded
 conversation correlation. E-mail local parts are removed while approved domains
@@ -783,7 +781,7 @@ Acceptance conversations and customer-specific evidence are maintained outside
 the product repositories. Source-controlled tests use neutral synthetic targets
 and identifiers only.
 
-### Investigation case correlation visibility (v0.11.0 in development)
+### Investigation case correlation visibility (v0.11.0)
 
 ThreatForge v0.11.0 makes deduplicated intelligence activity visible from the Cases and
 Dashboard surfaces. A repeated event can reuse an existing finding and case
@@ -798,7 +796,7 @@ real tenant-scoped relations. These responses never read or expose message text,
 provider payloads, actor identifiers, chat identifiers, fingerprints or secret
 material.
 
-### License-aware premium actions (v0.11.0 in development)
+### License-aware premium actions (v0.11.0)
 
 Premium actions use canonical feature keys end to end. The Cases UI reads the
 viewer-safe `/license/capabilities` projection for presentation only; the PDF
@@ -807,7 +805,7 @@ A valid license granting `export.pdf` displays `Export PDF` without a lock and
 must generate a real PDF. License material, signatures, paths and installation
 secrets are never returned to the browser.
 
-### Intelligence-aware case PDF reports (v0.11.0 in development)
+### Intelligence-aware case PDF reports (v0.11.0)
 
 Enterprise case PDF export now uses tenant-scoped case correlation metadata rather
 than a placeholder finding. A single-case report includes the tenant name, case
